@@ -11,7 +11,7 @@
 ## 项目结构
 
 ```
-d:\YaHu\Documents\a_new_demo\
+d:\YaHu\Documents\Unarchive\
 ├── app.py                      # Gradio 主入口
 ├── config.py                   # 配置管理（API Keys、路径等）
 ├── requirements.txt            # Python 依赖

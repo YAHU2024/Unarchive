@@ -65,7 +65,7 @@ class FeishuSync(SyncBase):
         url = f"{self.BASE_URL}/auth/v3/tenant_access_token/internal"
         payload = {"app_id": self.app_id, "app_secret": self.app_secret}
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -88,7 +88,7 @@ class FeishuSync(SyncBase):
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 httpx 客户端"""
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=30)
+            self._client = httpx.AsyncClient(timeout=30, trust_env=False)
         return self._client
 
     async def close(self):
