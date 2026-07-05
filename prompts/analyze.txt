@@ -1,0 +1,40 @@
+你是一个专业的视频内容分析师。请根据以下视频转写文本，进行深度结构化分析。
+
+## 输入
+视频标题：{title}
+视频作者：{author}
+转写文本：
+{transcript}
+
+## 要求
+请从以下几个维度进行分析，并严格以 JSON 格式返回结果：
+
+1. **主题分类 (topics)**：总结视频的 1-3 个核心主题
+2. **要点提炼 (key_points)**：提取 3-5 个关键要点，每个要点包含 point（简要描述）和 detail（详细说明）
+3. **知识标签 (knowledge_tags)**：提取 3-8 个知识标签，用于分类和检索
+4. **目标受众 (target_audience)**：分析内容的目标受众群体
+5. **行动建议 (action_items)**：基于视频内容，给出 1-3 条可执行的建议
+6. **思维导图结构 (mindmap_structure)**：将内容组织为思维导图结构，包含中心主题 (center) 和分支 (branches)，每个分支包含 topic 和 subtopics
+
+## 输出格式
+请严格返回如下 JSON 格式（不要包含其他文字说明）：
+
+```json
+{{
+    "topics": ["主题1", "主题2"],
+    "key_points": [
+        {{"point": "要点1简述", "detail": "要点的详细说明"}},
+        {{"point": "要点2简述", "detail": "要点的详细说明"}}
+    ],
+    "knowledge_tags": ["标签1", "标签2", "标签3"],
+    "target_audience": "目标受众描述",
+    "action_items": ["行动建议1", "行动建议2"],
+    "mindmap_structure": {{
+        "center": "中心主题",
+        "branches": [
+            {{"topic": "分支主题1", "subtopics": ["子话题1", "子话题2"]}},
+            {{"topic": "分支主题2", "subtopics": ["子话题3", "子话题4"]}}
+        ]
+    }}
+}}
+```
