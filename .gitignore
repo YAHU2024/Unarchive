@@ -12,6 +12,7 @@ build/
 # Virtual environments
 .venv/
 venv/
+venv311/
 env/
 
 # IDE
@@ -32,3 +33,13 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Claude
+.claude/
+
+# Plan files
+.plan.md
+PLAN.md
+
+# Misc
+1.0.0
