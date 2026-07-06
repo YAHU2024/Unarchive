@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(node *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(pip list *)",
+      "Bash(where ffmpeg *)",
+      "Bash(playwright --version)",
+      "Bash(python -c \"import playwright; print\\('playwright Python OK'\\)\")",
+      "Bash(playwright install *)",
+      "Bash(python -c ' *)",
+      "Bash(python app.py)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "mcp__chrome-devtools__take_snapshot",
+      "Bash(where python *)",
+      "Bash(py --list)",
+      "Bash(py -3.11 --version)",
+      "Bash(py -3.11 -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(py -3.11 -m venv venv311)",
+      "Bash(venv311/Scripts/activate)",
+      "Bash(python -c \"import app; print\\('OK'\\)\")",
+      "Bash(python -c \" import app app.main\\(\\) \")",
+      "Bash(wait echo *)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/utils/cdp.py'\\).read\\(\\)\\); print\\('cdp.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/scraper/douyin.py'\\).read\\(\\)\\); print\\('douyin.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/utils/cdp.py', encoding='utf-8'\\).read\\(\\)\\); print\\('cdp.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/scraper/douyin.py', encoding='utf-8'\\).read\\(\\)\\); print\\('douyin.py OK'\\)\")"
+    ]
+  }
+}

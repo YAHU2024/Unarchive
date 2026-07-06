@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
 import gradio as gr
 
 from config import AppConfig, get_config
-from src.platforms.bilibili import BilibiliScraper
+from src.scraper.bilibili import BilibiliScraper
 from src.scraper.douyin import DouyinScraper
 from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
 from src.analyzer.llm_analyzer import LLMAnalyzer
@@ -96,134 +97,158 @@ async def process_videos(
     whisper_model: str,
     max_videos: int,
     config: AppConfig,
-    progress=gr.Progress(),
 ):
-    """处理选中收藏夹中的视频
-
-    流程：
-    1. 根据平台创建 Scraper 实例并登录
-    2. 获取选中收藏夹的视频列表
-    3. 遍历每个视频：获取字幕/Whisper → LLM 分析 → 保存知识卡片
-    4. 返回处理结果和日志
-    """
+    """处理选中收藏夹中的视频"""
     logs = ""
     results = []
     total_processed = 0
     analyzer = None
     whisper_transcriber = None
+    current = "等待开始..."
+
+    # 统计
+    stats = {"skipped": 0, "transcript_fail": 0, "llm_fail": 0, "unavailable": 0}
+    t_start = time.time()
 
     try:
-        # 1. 创建 Scraper 并登录
-        progress(0, desc="正在登录...")
+        # 1. 登录
         logs += _format_log(f"正在登录 {platform}...")
-        yield results, logs, gr.update(value=0, label="进度")
+        current = f"正在登录 {platform}..."
+        yield results, logs, current, gr.update(value=0, label="进度")
 
+        t0 = time.time()
         scraper = _create_scraper(platform)
         await scraper.login()
-        logs += _format_log(f"{platform} 登录成功")
+        logs += _format_log(f"{platform} 登录成功 (耗时 {time.time() - t0:.1f}s)")
+        current = f"{platform} 登录成功"
+        yield results, logs, current, gr.update()
 
-        # 2. 获取每个收藏夹的视频
+        # 2. 获取收藏夹视频
         all_videos = []
+        seen_video_ids: set[str] = set()
         for fid in folder_ids:
+            t0 = time.time()
             logs += _format_log(f"正在获取收藏夹 {fid} 的视频列表...")
-            yield results, logs, gr.update()
+            current = f"正在获取收藏夹: {fid}"
+            yield results, logs, current, gr.update()
             videos = await scraper.get_favorite_videos(fid)
-            all_videos.extend(videos)
-            logs += _format_log(f"获取到 {len(videos)} 个视频")
+            new_count = 0
+            for v in videos:
+                if v.video_id not in seen_video_ids:
+                    seen_video_ids.add(v.video_id)
+                    all_videos.append(v)
+                    new_count += 1
+            dup_count = len(videos) - new_count
+            dup_msg = f" (去重 {dup_count} 个)" if dup_count else ""
+            logs += _format_log(f"获取到 {len(videos)} 个视频{dup_msg} (耗时 {time.time() - t0:.1f}s)")
+            yield results, logs, current, gr.update()
 
-        # 限制最大处理数量
         if max_videos > 0:
             all_videos = all_videos[:max_videos]
 
         total = len(all_videos)
         if total == 0:
             logs += _format_log("没有需要处理的视频")
-            yield results, logs, gr.update(value=0, maximum=1, label="进度 0/0")
+            current = "没有需要处理的视频"
+            yield results, logs, current, gr.update(value=0, maximum=1, label="进度 0/0")
             return
 
         logs += _format_log(f"共 {total} 个视频待处理")
+        current = f"共 {total} 个视频待处理"
+        yield results, logs, current, gr.update()
 
-        # 3. 准备 Whisper（可选）
+        # 3. Whisper
         whisper_transcriber = None
         if whisper_enabled:
+            t0 = time.time()
             logs += _format_log(f"初始化 Whisper 模型: {whisper_model}")
-            yield results, logs, gr.update()
+            current = f"正在加载 Whisper 模型: {whisper_model}"
+            yield results, logs, current, gr.update()
             whisper_transcriber = WhisperTranscriber(model_name=whisper_model)
+            logs += _format_log(f"Whisper 模型 {whisper_model} 加载完成 (耗时 {time.time() - t0:.1f}s)")
+            yield results, logs, current, gr.update()
 
-        # 4. 构建音频下载头（B站 CDN 需要登录 Cookie，否则 403）
-        download_headers = {}
-        if platform == "Bilibili" and hasattr(scraper, "get_audio_cookies"):
-            download_headers = await scraper.get_audio_cookies()
-            if download_headers:
-                logs += _format_log("已提取 B站 Cookie 用于音频下载（避免 CDN 403）")
+        # 4. 音频下载头
+        t0 = time.time()
+        download_headers = await scraper.get_audio_cookies()
+        if download_headers:
+            logs += _format_log(f"已提取 {platform} Cookie 用于音频下载 (耗时 {time.time() - t0:.1f}s)")
+            yield results, logs, current, gr.update()
 
-        # 5. 创建 LLM 分析器
+        # 5. LLM 分析器
         analyzer = LLMAnalyzer(config=config)
 
-        # 6. 遍历处理每个视频
+        # 6. 处理每个视频
         for idx, video in enumerate(all_videos):
-            progress((idx, total), desc=f"处理中: {video.title[:30]}")
+            t_video_start = time.time()
+            current = f"[{idx+1}/{total}] {video.title}"
             logs += _format_log(f"[{idx+1}/{total}] 正在处理: {video.title}")
-            yield results, logs, gr.update(value=idx, maximum=total, label=f"进度 {idx}/{total}")
+            yield results, logs, current, gr.update(value=idx, maximum=total, label=f"进度 {idx}/{total}")
 
-            # 检查是否已有知识卡片（跳过已处理）
             existing = _load_knowledge_card(video.video_id)
             if existing:
                 logs += _format_log(f"  ↳ 已存在知识卡片，跳过")
                 results.append(existing)
                 total_processed += 1
+                stats["skipped"] += 1
+                yield results, logs, current, gr.update()
                 continue
 
-            # 可用性检查（仅 Bilibili 平台）
-            if platform == "Bilibili" and hasattr(scraper, "check_video_available"):
-                available = await scraper.check_video_available(video.video_id)
-                if not available:
-                    logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），跳过")
-                    yield results, logs, gr.update()
-                    continue
+            available = await scraper.check_video_available(video.video_id)
+            if not available:
+                logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），跳过")
+                stats["unavailable"] += 1
+                yield results, logs, current, gr.update()
+                continue
 
-            # a. 获取逐字稿
+            # a. 逐字稿
             transcript_text = ""
             transcript_source = "unknown"
             try:
+                t0 = time.time()
                 segments, source = await get_transcript(
                     video.video_id, scraper, whisper_transcriber,
                     download_headers=download_headers,
                 )
                 transcript_text = SubtitleParser.segments_to_text(segments)
                 transcript_source = source
-                logs += _format_log(f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段)")
+                logs += _format_log(
+                    f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段, "
+                    f"耗时 {time.time() - t0:.1f}s)"
+                )
             except RuntimeError as e:
                 logs += _format_log(f"  ↳ 逐字稿获取失败: {e}")
-                yield results, logs, gr.update()
+                stats["transcript_fail"] += 1
+                yield results, logs, current, gr.update()
                 continue
 
-            # a2. B站收藏夹接口的 upper.name 可能不准确（如 "AI视频"），
-            #     用视频详情的 owner.name 覆盖真实作者（已缓存，无额外 API 开销）
+            # b. 作者修正
             real_author = video.author
-            if platform == "Bilibili" and hasattr(scraper, "get_video_owner"):
-                owner = await scraper.get_video_owner(video.video_id)
-                if owner:
-                    if owner != video.author:
-                        logs += _format_log(f"  ↳ 作者修正: {video.author!r} → {owner!r}")
-                    real_author = owner
+            owner = await scraper.get_video_owner(video.video_id)
+            if owner:
+                if owner != video.author:
+                    logs += _format_log(f"  ↳ 作者修正: {video.author!r} → {owner!r}")
+                real_author = owner
 
-            # b. LLM 分析
+            # c. LLM 分析
             try:
+                t0 = time.time()
                 logs += _format_log(f"  ↳ 正在调用 LLM 分析...")
-                yield results, logs, gr.update()
+                current = f"[{idx+1}/{total}] LLM 分析中: {video.title}"
+                yield results, logs, current, gr.update()
                 analysis = await analyzer.analyze_video(
                     title=video.title,
                     author=real_author,
                     transcript=transcript_text,
                 )
-                logs += _format_log(f"  ↳ LLM 分析完成")
+                logs += _format_log(f"  ↳ LLM 分析完成 (耗时 {time.time() - t0:.1f}s)")
             except Exception as e:
                 logs += _format_log(f"  ↳ LLM 分析失败: {e}")
-                yield results, logs, gr.update()
+                stats["llm_fail"] += 1
+                yield results, logs, current, gr.update()
                 continue
 
-            # c. 组装知识卡片并保存
+            # d. 保存
             card = {
                 "video_id": video.video_id,
                 "title": video.title,
@@ -237,17 +262,26 @@ async def process_videos(
             _save_knowledge_card(video.video_id, card)
             results.append(card)
             total_processed += 1
-            logs += _format_log(f"  ↳ 知识卡片已保存")
-            yield results, logs, gr.update()
+            logs += _format_log(
+                f"  ↳ 知识卡片已保存 (视频总耗时 {time.time() - t_video_start:.1f}s)"
+            )
+            yield results, logs, current, gr.update()
 
-        progress(1.0, desc="处理完成")
-        logs += _format_log(f"全部完成！共处理 {total_processed}/{total} 个视频")
-        yield results, logs, gr.update(value=total, maximum=total, label=f"进度 {total}/{total}")
+        # 汇总
+        elapsed = time.time() - t_start
+        logs += _format_log(
+            f"全部完成！处理 {total_processed}/{total} 个 (跳过 {stats['skipped']}、"
+            f"不可用 {stats['unavailable']}、转录失败 {stats['transcript_fail']}、"
+            f"LLM失败 {stats['llm_fail']})，总耗时 {elapsed:.0f}s"
+        )
+        current = f"全部完成！共处理 {total_processed}/{total} 个视频"
+        yield results, logs, current, gr.update(value=total, maximum=total, label=f"进度 {total}/{total}")
 
     except Exception as e:
         logs += _format_log(f"处理出错: {e}")
         logger.exception("处理管道异常")
-        yield results, logs, gr.update()
+        current = f"处理出错: {e}"
+        yield results, logs, current, gr.update()
     finally:
         if analyzer:
             try:
@@ -392,11 +426,11 @@ async def do_process(
     platform, selected_folders, whisper_enabled, whisper_model, max_videos,
     llm_api_key, llm_base_url, llm_model,
     feishu_app_id, feishu_app_secret,
-    state: dict, progress=gr.Progress()
+    state: dict,
 ):
     """启动视频处理管道（async generator，Gradio 原生支持流式更新）"""
     if not selected_folders:
-        yield "请先选择收藏夹", "", gr.update(), state
+        yield "请先选择收藏夹", "", "等待开始...", gr.update(), state
         return
 
     # 映射选中的收藏夹名称到 folder_id
@@ -411,7 +445,7 @@ async def do_process(
                 break
 
     if not selected_ids:
-        yield "未选择有效的收藏夹", "", gr.update(), state
+        yield "未选择有效的收藏夹", "", "等待开始...", gr.update(), state
         return
 
     # 构建临时配置
@@ -426,14 +460,13 @@ async def do_process(
     # 运行异步处理管道（async for 迭代 async generator）
     results = []
     logs = ""
-    async for r, l, p in process_videos(
+    async for r, l, cur, p in process_videos(
         platform=platform,
         folder_ids=selected_ids,
         whisper_enabled=whisper_enabled,
         whisper_model=whisper_model,
         max_videos=int(max_videos),
         config=config,
-        progress=progress,
     ):
         results = r
         logs = l
@@ -448,7 +481,7 @@ async def do_process(
                 preview += f"**关键词**: {', '.join(kw)}\n"
             preview += "---\n"
         state["process_results"] = results
-        yield preview, logs, p, state
+        yield preview, logs, cur, p, state
 
 
 async def do_test_feishu(feishu_app_id, feishu_app_secret):
@@ -565,6 +598,53 @@ def do_show_detail(selected_cards, all_cards):
     transcript = card.get("transcript", "")
     header = f"## {title}\n**作者**: {author}  |  **来源**: {platform}  |  [原文链接]({source_url})"
     return header, summary, keywords, key_points, transcript
+
+
+async def do_download_video(selected_cards, all_cards, state: dict):
+    """下载选中知识卡片对应的视频文件"""
+    if not selected_cards or not all_cards:
+        return "请先选择一个知识卡片"
+
+    # 定位选中的卡片
+    idx = 0
+    for i, card in enumerate(all_cards):
+        title = card.get("title", "未知")
+        author = card.get("author", "")
+        summary = card.get("summary", "")[:100]
+        display_label = f"📄 {title} — {author}\n   {summary}..."
+        if display_label == selected_cards[0]:
+            idx = i
+            break
+
+    card = all_cards[idx]
+    video_id = card.get("video_id", "")
+    platform = card.get("platform", "")
+    title = card.get("title", "未知")
+
+    if not video_id:
+        return f"卡片中未找到视频 ID"
+
+    scraper = state.get("scraper")
+    if scraper is None:
+        return "请先在「登录与配置」中登录平台"
+
+    from config import get_config
+    config = get_config()
+    download_dir = Path(config.video_download_dir)
+    download_dir.mkdir(parents=True, exist_ok=True)
+    output_path = str(download_dir / f"{video_id}.mp4")
+
+    if Path(output_path).exists():
+        return f"✅ 视频已存在: {output_path}"
+
+    try:
+        result = await scraper.download_video(video_id, output_path)
+        if result:
+            return f"✅ 下载完成: {output_path}"
+        else:
+            return f"❌ 下载失败: {title}"
+    except Exception as e:
+        return f"❌ 下载异常: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -704,6 +784,9 @@ def build_ui():
                         label="逐字稿", lines=10, interactive=False,
                         visible=True,
                     )
+                    with gr.Row():
+                        download_btn = gr.Button("📥 下载视频", variant="secondary", scale=1)
+                        download_status = gr.Textbox(label="下载状态", interactive=False, scale=3)
 
             # 搜索事件
             search_btn.click(
@@ -715,6 +798,11 @@ def build_ui():
                 fn=do_show_detail,
                 inputs=[card_list, all_cards_state],
                 outputs=[detail_header, detail_summary, detail_keywords, detail_keypoints, detail_transcript],
+            )
+            download_btn.click(
+                fn=do_download_video,
+                inputs=[card_list, all_cards_state, state],
+                outputs=[download_status],
             )
 
         # ===================== Tab 5: 同步管理 =====================
@@ -779,7 +867,7 @@ def build_ui():
                 feishu_app_id_input, feishu_app_secret_input,
                 state,
             ],
-            outputs=[process_preview, process_log, progress_bar, state],
+            outputs=[process_preview, process_log, current_video, progress_bar, state],
         )
 
         # Tab 5: 测试飞书连接
@@ -804,6 +892,33 @@ def build_ui():
 
 def main():
     """启动 Gradio 应用"""
+    import os
+
+    # 日志配置：控制台 INFO + 文件 DEBUG（持久化用于排查问题）
+    log_dir = Path("data/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_dir / "app.log", encoding="utf-8"),
+        ],
+    )
+    # 降低第三方库日志噪音
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("playwright").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    logger.info("=" * 50)
+    logger.info("Unarchive 启动")
+    logger.info("=" * 50)
+
+    # 清除系统代理环境变量，避免 httpx 走代理导致连接失败
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ.pop(key, None)
+
     # 确保数据目录存在
     config = get_config()
     config.ensure_dirs()

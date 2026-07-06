@@ -1,9 +1,14 @@
 """
 抖音视频抓取器
 
-通过 Playwright 模拟浏览器操作，抓取抖音收藏视频信息。
+支持两种模式：
+1. CDP 模式（推荐）：通过 Chrome DevTools Protocol 连接用户日常浏览器，
+   复用已有登录态，稳定性最高。
+2. 自管浏览器模式（回退）：Playwright 启动独立浏览器，手动登录后
+   拦截 API 请求获取数据。
+
 抖音 Web API 需要复杂的签名（X-Bogus / a_bogus），因此采用
-Playwright 拦截网络请求的方式获取 API 数据，而非直接构造请求。
+浏览器端拦截/提取的方式获取 API 数据，而非直接构造请求。
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from typing import Optional
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Response
 
 from src.scraper.base import ScraperBase, FavoriteFolder, VideoInfo, SubtitleSegment
+from src.utils.cdp import CDPClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +40,36 @@ _HEADERS = {
 }
 
 # 需要拦截的 API 路径关键字
-_FAV_FOLDER_API = "/aweme/v1/web/favorite/folder"       # 收藏夹列表
-_FAV_VIDEO_API = "/aweme/v1/web/aweme/favorite"          # 收藏夹内视频
+_FAV_FOLDER_API = "/aweme/v1/web/collects/list"          # 收藏夹列表
+_FAV_VIDEO_API = "/aweme/v1/web/collects/video/list"    # 收藏夹内视频
 _VIDEO_DETAIL_API = "/aweme/v1/web/aweme/detail"         # 视频详情
+
+# 收藏页面所有可能的 API 路径关键字（用于拦截）
+_ALL_FAV_API_KEYWORDS = [
+    _FAV_FOLDER_API,
+    _FAV_VIDEO_API,
+    "collects/list",
+    "collects/video/list",
+    "/aweme/v1/web/aweme/listcollection",
+]
 
 
 class DouyinScraper(ScraperBase):
-    """抖音抓取器，基于 Playwright 异步 API 实现"""
+    """抖音抓取器
 
-    def __init__(self, cookie_path: str = "data/cookies/douyin.json") -> None:
+    优先通过 CDP 连接用户浏览器（免重复登录），
+    失败时回退到 Playwright 自管浏览器模式。
+    """
+
+    def __init__(self, cookie_path: str = "data/cookies/douyin.json",
+                 cdp_port: int = 9222) -> None:
         self._cookie_path = Path(cookie_path)
+        self._cdp_port = cdp_port
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
+        self._cdp: Optional[CDPClient] = None
+        self._login_mode: str = ""  # "cdp" | "playwright"
 
     # ------------------------------------------------------------------
     # 内部工具方法
@@ -72,18 +95,23 @@ class DouyinScraper(ScraperBase):
             logger.warning("加载 Cookie 文件失败: %s", e)
             return None
 
-    async def _check_login_status(self) -> bool:
+    async def _check_login_status(self, navigate: bool = True) -> bool:
         """
         通过访问抖音首页检查当前 Cookie 是否仍有效。
         检测页面是否存在用户头像/登录标识元素。
+
+        Args:
+            navigate: 是否导航到首页重新检查。设为 False 时仅在当前页面
+                      检查 Cookie，不会打断用户的登录操作。
         """
         try:
             if self._page is None:
                 return False
-            # 导航到抖音首页
-            await self._page.goto(_DOUYIN_BASE, wait_until="domcontentloaded", timeout=15_000)
-            # 等待一小段时间让页面渲染
-            await asyncio.sleep(2)
+            if navigate:
+                # 导航到抖音首页
+                await self._page.goto(_DOUYIN_BASE, wait_until="domcontentloaded", timeout=15_000)
+                # 等待一小段时间让页面渲染
+                await asyncio.sleep(2)
             # 检查是否存在登录按钮（未登录状态会显示登录按钮）
             login_btn = await self._page.query_selector('[data-e2e="user-login"]')
             if login_btn:
@@ -102,335 +130,363 @@ class DouyinScraper(ScraperBase):
             logger.warning("检查登录状态异常: %s", e)
             return False
 
-    async def _wait_for_api_response(
-        self, url_keyword: str, timeout: float = 15_000
-    ) -> Optional[dict]:
-        """
-        等待并拦截包含指定关键字的 API 响应，返回解析后的 JSON。
-
-        Args:
-            url_keyword: API URL 中包含的关键字
-            timeout: 等待超时（毫秒）
-
-        Returns:
-            解析后的 JSON dict，超时则返回 None
-        """
-        if self._page is None:
-            raise RuntimeError("浏览器未初始化，请先调用 login()")
-
-        result_event = asyncio.Event()
-        captured_data: dict = {}
-
-        async def _on_response(response: Response) -> None:
-            if url_keyword in response.url and response.status == 200:
-                try:
-                    data = await response.json()
-                    captured_data.update(data)
-                    result_event.set()
-                except Exception:
-                    pass
-
-        self._page.on("response", _on_response)
-        try:
-            await asyncio.wait_for(result_event.wait(), timeout=timeout / 1000)
-            return captured_data if captured_data else None
-        except asyncio.TimeoutError:
-            logger.warning("等待 API 响应超时: %s", url_keyword)
-            return None
-        finally:
-            self._page.remove_listener("response", _on_response)
-
-    async def _collect_api_responses(
-        self, url_keyword: str, action, timeout: float = 15_000
-    ) -> list[dict]:
-        """
-        在执行某个页面操作（action）期间，收集所有匹配关键字的 API 响应。
-
-        Args:
-            url_keyword: API URL 关键字
-            action: 异步回调函数，执行后触发 API 请求
-            timeout: 等待超时（毫秒）
-
-        Returns:
-            匹配到的所有 API 响应 JSON 列表
-        """
-        if self._page is None:
-            raise RuntimeError("浏览器未初始化，请先调用 login()")
-
-        collected: list[dict] = []
-
-        async def _on_response(response: Response) -> None:
-            if url_keyword in response.url and response.status == 200:
-                try:
-                    data = await response.json()
-                    collected.append(data)
-                except Exception:
-                    pass
-
-        self._page.on("response", _on_response)
-        try:
-            await action()
-            # 等待一段时间让所有请求完成
-            await asyncio.sleep(timeout / 1000)
-        finally:
-            self._page.remove_listener("response", _on_response)
-
-        return collected
-
-    async def _scroll_to_load_more(self, max_scrolls: int = 20, scroll_pause: float = 1.5) -> None:
-        """模拟滚动页面以触发加载更多"""
-        if self._page is None:
-            return
-        for i in range(max_scrolls):
-            await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(scroll_pause)
-            logger.debug("第 %d 次滚动", i + 1)
-
     # ------------------------------------------------------------------
     # 抽象方法实现
     # ------------------------------------------------------------------
 
     async def login(self) -> None:
-        """
-        登录抖音
+        """登录抖音
 
-        流程：
-        1. 启动 Playwright Chromium 浏览器
-        2. 如果本地有 Cookie 文件，先加载并验证有效性
-        3. 若 Cookie 无效或不存在，打开抖音首页等待用户手动扫码登录
-        4. 登录成功后保存 Cookie 到本地
+        三级策略：
+        1. CDP 连接用户已有浏览器（免重复登录）
+        2. CDP 连接失败 → 自动拉起 Chrome → 重试 CDP
+        3. CDP 彻底不可用 → Playwright 自管浏览器 + 扫码登录
         """
+        # 方案1: CDP 连接（优先复用已有，失败则自动拉起 Chrome）
+        self._cdp = CDPClient(debug_port=self._cdp_port)
+        if await self._cdp.connect():
+            self._login_mode = "cdp"
+            self._page = self._cdp.page
+            self._context = self._cdp.context
+            self._browser = self._cdp._browser
+            # 验证是否已登录抖音
+            if await self._check_login_status(navigate=True):
+                logger.info("CDP 模式: 抖音已登录，复用浏览器会话")
+                return
+
+            # 自动拉起的 Chrome 尚未登录，等待用户在可见窗口中扫码
+            if self._cdp.launched_by_us:
+                logger.info("Chrome 已自动拉起，请在浏览器窗口中登录抖音（120s 超时）...")
+                try:
+                    for _ in range(40):
+                        await asyncio.sleep(3)
+                        if await self._check_login_status(navigate=False):
+                            logger.info("CDP 模式: 登录成功")
+                            return
+                except TimeoutError:
+                    pass
+
+            logger.warning("CDP 连接成功但抖音未登录，请在浏览器中手动登录后重试")
+            await self._cdp.disconnect()
+            self._page = None
+            self._context = None
+            self._browser = None
+
+        # 方案2: 回退到 Playwright 自管浏览器
+        logger.info("CDP 不可用，回退到 Playwright 自管浏览器模式")
+        self._login_mode = "playwright"
+        await self._login_playwright()
+
+    # ------------------------------------------------------------------
+    # 登录辅助
+    # ------------------------------------------------------------------
+
+    async def _login_playwright(self) -> None:
+        """Playwright 自管浏览器登录（回退方案）"""
         pw = await async_playwright().start()
         self._browser = await pw.chromium.launch(headless=False)
         self._context = await self._browser.new_context(
             user_agent=_HEADERS["User-Agent"],
-            extra_http_headers=_HEADERS,
             viewport={"width": 1280, "height": 800},
         )
         self._page = await self._context.new_page()
 
-        # 尝试加载已有 Cookie
         saved_cookies = self._load_cookies()
         if saved_cookies:
             await self._context.add_cookies(saved_cookies)
-            # 验证 Cookie 是否仍然有效
             if await self._check_login_status():
                 logger.info("Cookie 有效，无需重新登录")
                 return
             logger.info("Cookie 已过期，需要重新登录")
 
-        # 打开抖音首页，等待用户手动扫码/登录
         logger.info("正在打开抖音首页: %s", _DOUYIN_BASE)
         await self._page.goto(_DOUYIN_BASE, wait_until="domcontentloaded")
 
-        # 等待登录成功（最长 120 秒）
-        # 检测方式：等待页面出现用户相关元素，或 URL 变化
         try:
-            # 等待最多 120 秒，每隔 3 秒检查一次登录状态
             for _ in range(40):
                 await asyncio.sleep(3)
-                if await self._check_login_status():
+                if await self._check_login_status(navigate=False):
                     break
             else:
                 raise TimeoutError("登录超时（120 秒），请重试")
         except TimeoutError:
             raise
 
-        # 登录成功，保存 Cookie
         cookies = await self._context.cookies()
         self._save_cookies(cookies)
         logger.info("抖音登录成功，Cookie 已保存")
 
-    async def get_favorites(self) -> list[FavoriteFolder]:
-        """
-        获取当前用户的所有收藏夹列表
+    async def _is_url_fav_api(self, url: str) -> bool:
+        """判断 URL 是否为收藏夹相关的 API 请求"""
+        return any(kw in url for kw in _ALL_FAV_API_KEYWORDS)
 
-        通过 Playwright 导航到收藏页面，拦截网络请求获取收藏夹数据。
-        抖音收藏页面: https://www.douyin.com/user/self?showTab=favorite_collection
+    async def _scroll_until_complete(self, max_scrolls: int = 50,
+                                      scroll_pause: float = 1.5) -> None:
+        """滚动直到页面高度不再增长（更可靠的懒加载触发）"""
+        if self._page is None:
+            return
+        prev_height = 0
+        no_change_count = 0
+        for i in range(max_scrolls):
+            new_height = await self._page.evaluate("document.body.scrollHeight")
+            await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(scroll_pause)
+            if new_height == prev_height:
+                no_change_count += 1
+                if no_change_count >= 3:  # 连续3次无变化则停止
+                    logger.debug("滚动停止: 页面高度不再增长 (scroll=%d, height=%d)", i + 1, new_height)
+                    break
+            else:
+                no_change_count = 0
+                prev_height = new_height
+            logger.debug("第 %d 次滚动, 高度=%d", i + 1, new_height)
+
+    async def get_favorites(self) -> list[FavoriteFolder]:
+        """获取当前用户的所有收藏夹列表
+
+        导航到收藏夹页面，拦截 API 请求获取收藏夹数据，
+        循环滚动直到 has_more=false。
         """
         if self._page is None or self._context is None:
             raise RuntimeError("浏览器未初始化，请先调用 login()")
 
-        favorites_url = f"{_DOUYIN_BASE}/user/self?showTab=favorite_collection"
-        logger.info("正在导航到收藏页面: %s", favorites_url)
+        logger.info("正在获取收藏夹列表")
 
-        # 设置响应拦截器，收集收藏夹 API 数据
-        folder_data_list: list[dict] = []
+        all_api_responses: list[tuple[str, dict]] = []
+        folder_has_more = True
+        folder_total = 0
 
-        async def _on_response(response: Response) -> None:
-            """拦截收藏夹列表 API 响应"""
+        async def _on_response_all(response: Response) -> None:
+            nonlocal folder_has_more, folder_total
             url = response.url
-            if _FAV_FOLDER_API in url and response.status == 200:
+            if response.status == 200 and _FAV_FOLDER_API in url:
                 try:
                     data = await response.json()
-                    folder_data_list.append(data)
-                    logger.info("拦截到收藏夹列表 API 响应")
-                except Exception as e:
-                    logger.warning("解析收藏夹 API 响应失败: %s", e)
+                    path = url.split("?")[0]
+                    all_api_responses.append((path, data))
+                    inner = data.get("data", data)
+                    if isinstance(inner, dict) and "collects_list" in inner:
+                        folder_has_more = bool(inner.get("has_more", False))
+                        total = inner.get("total_number", 0)
+                        if total:
+                            folder_total = total
+                        collected_count = sum(
+                            len(d.get("data", d).get("collects_list", []))
+                            for _, d in all_api_responses
+                            if isinstance(d.get("data", d), dict) and "collects_list" in d.get("data", d)
+                        )
+                        logger.info("收藏夹列表: has_more=%s, 已捕获=%d/%d",
+                                     folder_has_more, collected_count, folder_total)
+                except Exception:
+                    pass
 
-        self._page.on("response", _on_response)
+        self._page.on("response", _on_response_all)
 
         try:
-            await self._page.goto(favorites_url, wait_until="domcontentloaded")
-            # 等待页面加载并触发 API 请求
-            await asyncio.sleep(5)
-
-            # 尝试点击"收藏"标签页以触发请求
-            try:
-                fav_tab = await self._page.query_selector(
-                    '[data-e2e="favorite-tab"], [class*="favorite"]'
-                )
-                if fav_tab:
-                    await fav_tab.click()
-                    await asyncio.sleep(3)
-            except Exception:
-                pass
-
-            # 滚动页面以加载更多收藏夹
-            await self._scroll_to_load_more(max_scrolls=5, scroll_pause=1.0)
-        finally:
-            self._page.remove_listener("response", _on_response)
-
-        # 解析收藏夹数据
-        folders: list[FavoriteFolder] = []
-        for data in folder_data_list:
-            folder_items = (
-                data.get("data", {}).get("favorite_folder_list", [])
-                or data.get("favorite_folder_list", [])
+            # 导航到收藏夹页面
+            favorites_url = (
+                f"{_DOUYIN_BASE}/user/self"
+                f"?from_tab_name=main"
+                f"&showTab=favorite_collection"
+                f"&showSubTab=favorite_folder"
             )
-            for item in folder_items:
-                folder = FavoriteFolder(
-                    folder_id=str(item.get("id", item.get("folder_id", ""))),
-                    title=item.get("title", item.get("name", "未命名收藏夹")),
-                    video_count=item.get("cover_count", item.get("video_count", 0)),
-                    url=f"{_DOUYIN_BASE}/user/self?showTab=favorite_collection&folder_id={item.get('id', '')}",
-                )
-                folders.append(folder)
+            await self._page.goto(favorites_url, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
 
-        # 如果 API 拦截没有获取到数据，尝试从页面 DOM 解析
-        if not folders:
-            logger.info("API 拦截未获取到数据，尝试从 DOM 解析收藏夹列表")
-            folders = await self._parse_folders_from_dom()
+            # 滚动加载直到数据完整
+            prev_count = 0
+            no_new_count = 0
+            for i in range(50):
+                await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(2)
 
+                cur_count = len(all_api_responses)
+                if cur_count > prev_count:
+                    prev_count = cur_count
+                    no_new_count = 0
+                else:
+                    no_new_count += 1
+
+                if not folder_has_more and cur_count > 0 and no_new_count >= 1:
+                    break
+                if no_new_count >= 5:
+                    break
+        finally:
+            self._page.remove_listener("response", _on_response_all)
+
+        logger.info("共捕获 %d 个 API 响应", len(all_api_responses))
+
+        # 从 API 数据中提取收藏夹
+        folders = self._extract_folders(all_api_responses)
         logger.info("获取到 %d 个收藏夹", len(folders))
         return folders
 
-    async def _parse_folders_from_dom(self) -> list[FavoriteFolder]:
-        """从页面 DOM 中解析收藏夹列表（兜底方案）"""
-        if self._page is None:
-            return []
-
+    def _extract_folders(self, api_responses: list[tuple[str, dict]]) -> list[FavoriteFolder]:
+        """从 API 响应中提取收藏夹列表"""
         folders: list[FavoriteFolder] = []
-        try:
-            # 尝试查找收藏夹列表元素
-            folder_elements = await self._page.query_selector_all(
-                '[class*="folder-item"], [class*="collect-item"], [data-e2e="favorite-folder"]'
-            )
-            for elem in folder_elements:
-                title_el = await elem.query_selector(
-                    '[class*="title"], [class*="name"], span'
-                )
-                count_el = await elem.query_selector(
-                    '[class*="count"], [class*="num"]'
-                )
-                title = await title_el.inner_text() if title_el else "未命名收藏夹"
-                count_text = await count_el.inner_text() if count_el else "0"
-                # 提取数字
-                count = 0
-                for ch in count_text:
-                    if ch.isdigit():
-                        count = count * 10 + int(ch)
 
-                folder_id = str(len(folders))  # DOM 方式无法获取真实 ID，用索引代替
-                folders.append(
-                    FavoriteFolder(
-                        folder_id=folder_id,
-                        title=title.strip(),
-                        video_count=count,
-                    )
+        for path, data in api_responses:
+            inner = data.get("data", data)
+            if not isinstance(inner, dict):
+                continue
+
+            collects_list = inner.get("collects_list", [])
+            if isinstance(collects_list, list) and collects_list:
+                first = collects_list[0] if collects_list else {}
+                if isinstance(first, dict) and "collects_id" in first:
+                    for item in collects_list:
+                        fid = str(item.get("collects_id_str", item.get("collects_id", "")))
+                        folders.append(FavoriteFolder(
+                            folder_id=fid,
+                            title=item.get("collects_name", "未命名收藏夹"),
+                            video_count=item.get("total_number", 0),
+                            url=f"{_DOUYIN_BASE}/user/self?from_tab_name=main"
+                                f"&showTab=favorite_collection"
+                                f"&showSubTab=favorite_folder&collects_id={fid}",
+                        ))
+                    continue
+
+            # 兼容其他可能的格式
+            for key, value in inner.items():
+                if not isinstance(value, list) or not value:
+                    continue
+                first_item = value[0] if value else {}
+                if not isinstance(first_item, dict):
+                    continue
+                has_folder = any(
+                    k in first_item for k in
+                    ["collects_id", "folder_id", "collection_id", "cover_count"]
                 )
-        except Exception as e:
-            logger.warning("DOM 解析收藏夹失败: %s", e)
+                if has_folder:
+                    for item in value:
+                        fid = str(item.get("collects_id_str", item.get("collects_id",
+                                   item.get("folder_id", item.get("id", "")))))
+                        folders.append(FavoriteFolder(
+                            folder_id=fid,
+                            title=item.get("collects_name", item.get("title",
+                                   item.get("name", "未命名收藏夹"))),
+                            video_count=item.get("total_number", item.get("cover_count",
+                                        item.get("favorite_count", item.get("count", 0)))),
+                            url=f"{_DOUYIN_BASE}/user/self?from_tab_name=main"
+                                f"&showTab=favorite_collection"
+                                f"&showSubTab=favorite_folder&collects_id={fid}",
+                        ))
 
         return folders
 
     async def get_favorite_videos(self, folder_id: str) -> list[VideoInfo]:
-        """
-        获取指定收藏夹中的所有视频（自动处理分页）
+        """获取指定收藏夹中的所有视频（自动处理分页）
 
-        通过 Playwright 导航到对应收藏夹页面，拦截 API 请求获取视频数据。
+        导航到收藏夹页面，拦截 API 请求获取视频数据，
+        滚动直到 has_more=false。
         """
         if self._page is None or self._context is None:
             raise RuntimeError("浏览器未初始化，请先调用 login()")
 
-        videos: list[VideoInfo] = []
         collected_data: list[dict] = []
+        page_has_more = True
+        page_cursor = 0
+        total_video_count = 0
 
         async def _on_response(response: Response) -> None:
-            """拦截收藏夹视频列表 API 响应"""
+            nonlocal page_has_more, page_cursor, total_video_count
             url = response.url
-            if _FAV_VIDEO_API in url and response.status == 200:
+            if response.status == 200 and _FAV_VIDEO_API in url:
                 try:
                     data = await response.json()
                     collected_data.append(data)
-                    logger.info("拦截到收藏夹视频 API 响应")
+                    inner = data.get("data", data)
+                    if isinstance(inner, dict):
+                        hm = inner.get("has_more", None)
+                        if hm is not None:
+                            page_has_more = bool(hm)
+                        cursor = inner.get("cursor", None)
+                        if cursor is not None:
+                            page_cursor = cursor
+                        tc = inner.get("total_number", 0)
+                        if tc:
+                            total_video_count = tc
+                    logger.info("收藏夹视频 API: cursor=%d, has_more=%s, 累计=%d",
+                                 page_cursor, page_has_more, len(collected_data))
                 except Exception as e:
                     logger.warning("解析收藏夹视频响应失败: %s", e)
 
         self._page.on("response", _on_response)
 
         try:
-            # 导航到收藏页面并指定收藏夹
-            fav_url = (
-                f"{_DOUYIN_BASE}/user/self"
-                f"?showTab=favorite_collection&folder_id={folder_id}"
-            )
-            logger.info("正在导航到收藏夹视频页面: %s", fav_url)
-            await self._page.goto(fav_url, wait_until="domcontentloaded")
-            await asyncio.sleep(5)
-
-            # 滚动加载更多视频
-            prev_count = 0
-            no_new_data_count = 0
-            for scroll_idx in range(30):
-                await self._page.evaluate(
-                    "window.scrollTo(0, document.body.scrollHeight)"
+            # 导航到指定收藏夹
+            if folder_id == "default":
+                fav_url = (
+                    f"{_DOUYIN_BASE}/user/self"
+                    f"?from_tab_name=main&showTab=favorite_collection"
+                    f"&showSubTab=favorite_folder"
                 )
-                await asyncio.sleep(1.5)
+            else:
+                fav_url = (
+                    f"{_DOUYIN_BASE}/user/self"
+                    f"?from_tab_name=main&showTab=favorite_collection"
+                    f"&showSubTab=favorite_folder"
+                    f"&collects_id={folder_id}"
+                )
+            logger.info("导航到收藏夹: %s", fav_url)
+            await self._page.goto(fav_url, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
 
-                # 检查是否有新数据
-                if len(collected_data) > prev_count:
-                    prev_count = len(collected_data)
-                    no_new_data_count = 0
+            # 滚动加载
+            prev_count = 0
+            no_new_count = 0
+            for i in range(50):
+                await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(2)
+
+                cur_count = len(collected_data)
+                if cur_count > prev_count:
+                    prev_count = cur_count
+                    no_new_count = 0
                 else:
-                    no_new_data_count += 1
-                    if no_new_data_count >= 3:
-                        logger.info("连续 %d 次滚动无新数据，停止加载", no_new_data_count)
-                        break
+                    no_new_count += 1
 
-                logger.debug("第 %d 次滚动，已拦截 %d 个响应", scroll_idx + 1, len(collected_data))
+                if not page_has_more and cur_count > 0 and no_new_count >= 1:
+                    logger.info("视频列表分页完毕 (has_more=false)")
+                    break
+                if no_new_count >= 5:
+                    logger.info("连续 %d 次无新数据，停止", no_new_count)
+                    break
         finally:
             self._page.remove_listener("response", _on_response)
 
         # 解析视频数据
+        videos = self._extract_videos(collected_data)
+
+        if total_video_count:
+            logger.info("收藏夹 %s: 获取到 %d/%d 个视频", folder_id, len(videos), total_video_count)
+        else:
+            logger.info("收藏夹 %s: 获取到 %d 个视频", folder_id, len(videos))
+        return videos
+
+    def _extract_videos(self, collected_data: list[dict]) -> list[VideoInfo]:
+        """从 API 响应中提取视频列表"""
+        videos: list[VideoInfo] = []
         seen_ids: set[str] = set()
+
         for data in collected_data:
-            aweme_list = (
-                data.get("data", {}).get("aweme_list", [])
-                or data.get("aweme_list", [])
-            )
+            inner = data.get("data", data)
+            if not isinstance(inner, dict):
+                continue
+            aweme_list = inner.get("aweme_list")
+            if not aweme_list:
+                aweme_list = (
+                    inner.get("video_list", [])
+                    or inner.get("collection_list", [])
+                )
+            if not isinstance(aweme_list, list):
+                continue
             for item in aweme_list:
-                video = self._parse_video_info(item)
+                video_item = item.get("aweme_info", item)
+                video = self._parse_video_info(video_item)
                 if video and video.video_id not in seen_ids:
                     seen_ids.add(video.video_id)
                     videos.append(video)
-
-        # 如果 API 拦截未获取到数据，尝试 DOM 解析
-        if not videos:
-            logger.info("API 拦截未获取到视频数据，尝试从 DOM 解析")
-            videos = await self._parse_videos_from_dom()
-
-        logger.info("收藏夹 %s 共获取到 %d 个视频", folder_id, len(videos))
         return videos
 
     def _parse_video_info(self, item: dict) -> Optional[VideoInfo]:
@@ -487,49 +543,6 @@ class DouyinScraper(ScraperBase):
         except Exception as e:
             logger.warning("解析视频信息失败: %s", e)
             return None
-
-    async def _parse_videos_from_dom(self) -> list[VideoInfo]:
-        """从页面 DOM 中解析视频列表（兜底方案）"""
-        if self._page is None:
-            return []
-
-        videos: list[VideoInfo] = []
-        try:
-            video_elements = await self._page.query_selector_all(
-                '[class*="video-card"], [data-e2e="favorite-video"], [class*="aweme-item"]'
-            )
-            for elem in video_elements:
-                # 尝试提取标题
-                title_el = await elem.query_selector(
-                    '[class*="title"], [class*="desc"], a[title]'
-                )
-                title = ""
-                if title_el:
-                    title = await title_el.inner_text()
-                    title = title.strip()
-
-                # 尝试提取链接中的视频 ID
-                link_el = await elem.query_selector("a[href*='/video/']")
-                href = ""
-                if link_el:
-                    href = await link_el.get_attribute("href") or ""
-
-                aweme_id = ""
-                if "/video/" in href:
-                    aweme_id = href.split("/video/")[-1].split("?")[0]
-
-                if aweme_id:
-                    videos.append(
-                        VideoInfo(
-                            video_id=aweme_id,
-                            title=title or f"视频_{aweme_id}",
-                            url=f"{_DOUYIN_BASE}/video/{aweme_id}",
-                        )
-                    )
-        except Exception as e:
-            logger.warning("DOM 解析视频列表失败: %s", e)
-
-        return videos
 
     async def get_video_subtitle(self, video_id: str) -> list[SubtitleSegment] | None:
         """
@@ -712,3 +725,166 @@ class DouyinScraper(ScraperBase):
 
         logger.warning("视频 %s 未能获取到音频 URL", video_id)
         return None
+
+    async def download_audio_to_file(self, audio_url: str, output_path: str) -> bool:
+        """
+        通过 Playwright 浏览器上下文下载音频文件
+
+        利用已登录的 BrowserContext（含完整 Cookie/Headers）下载音频，
+        绕过 CDN 403 问题。
+
+        Args:
+            audio_url: 音频 URL
+            output_path: 本地保存路径
+
+        Returns:
+            是否下载成功
+        """
+        if self._context is None:
+            logger.warning("浏览器上下文不可用，无法通过 Playwright 下载音频")
+            return False
+        try:
+            resp = await self._context.request.get(
+                audio_url, headers={"Referer": _DOUYIN_BASE}
+            )
+            if resp.status != 200:
+                logger.warning(
+                    "Playwright 音频下载 HTTP %d: %s",
+                    resp.status,
+                    audio_url[:120],
+                )
+                return False
+            body = await resp.body()
+            with open(output_path, "wb") as f:
+                f.write(body)
+            logger.info("Playwright 音频下载成功: %s", output_path)
+            return True
+        except Exception as e:
+            logger.warning("Playwright 音频下载异常: %s", e)
+            return False
+
+    async def get_audio_cookies(self) -> dict:
+        """
+        获取浏览器上下文中的 Cookie，用于 httpx 音频下载回退路径
+
+        Returns:
+            包含 Cookie 头的字典
+        """
+        if self._context is None:
+            return {}
+        cookies = await self._context.cookies()
+        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+        return {"Cookie": cookie_str} if cookie_str else {}
+
+    async def download_video(self, video_id: str, output_path: str) -> bool:
+        """下载无水印视频文件
+
+        通过视频详情 API 获取播放地址，将 playwm 替换为 play 去除水印，
+        使用浏览器上下文下载（携带完整 Cookie）。
+
+        Args:
+            video_id: 抖音视频 aweme_id
+            output_path: 本地保存路径（.mp4）
+
+        Returns:
+            下载成功返回 True
+        """
+        if self._page is None or self._context is None:
+            raise RuntimeError("浏览器未初始化，请先调用 login()")
+
+        logger.info("正在获取视频 %s 的下载地址", video_id)
+
+        detail_data: dict = {}
+
+        async def _on_response(response: Response) -> None:
+            if _VIDEO_DETAIL_API in response.url and response.status == 200:
+                try:
+                    data = await response.json()
+                    detail_data.update(data)
+                except Exception:
+                    pass
+
+        self._page.on("response", _on_response)
+        try:
+            video_url = f"{_DOUYIN_BASE}/video/{video_id}"
+            await self._page.goto(video_url, wait_until="domcontentloaded")
+            await asyncio.sleep(4)
+        finally:
+            self._page.remove_listener("response", _on_response)
+
+        aweme_detail = detail_data.get("aweme_detail", {})
+        video_info = aweme_detail.get("video", {})
+
+        # 获取无 watermark 播放地址
+        play_addr = None
+        for key in ("play_addr_h264", "play_addr", "download_addr"):
+            addr = video_info.get(key, {})
+            if isinstance(addr, dict):
+                url_list = addr.get("url_list", [])
+                if url_list:
+                    play_addr = url_list[0]
+                    break
+            elif isinstance(addr, str) and addr:
+                play_addr = addr
+                break
+
+        if not play_addr:
+            logger.warning("视频 %s 无法获取播放地址", video_id)
+            return False
+
+        # 去水印：将 playwm 替换为 play
+        download_url = play_addr.replace("/playwm/", "/play/").replace("playwm", "play")
+        if download_url.startswith("//"):
+            download_url = "https:" + download_url
+
+        logger.info("视频 %s 开始下载 (无 watermark)", video_id)
+
+        try:
+            resp = await self._context.request.get(
+                download_url,
+                headers={"Referer": _DOUYIN_BASE},
+            )
+            if resp.status != 200:
+                logger.warning("视频下载 HTTP %d: %s", resp.status, video_id)
+                return False
+            body = await resp.body()
+            with open(output_path, "wb") as f:
+                f.write(body)
+            logger.info("视频下载成功: %s (%d bytes)", output_path, len(body))
+            return True
+        except Exception as e:
+            logger.warning("视频下载失败: %s", e)
+            return False
+
+    async def close(self) -> None:
+        """清理资源
+
+        CDP 模式：断开连接但不关闭用户浏览器
+        Playwright 模式：关闭自管浏览器
+        """
+        if self._login_mode == "cdp" and self._cdp is not None:
+            await self._cdp.disconnect()
+            self._page = None
+            self._context = None
+            self._browser = None
+            return
+
+        # Playwright 自管浏览器模式：完全关闭
+        if self._page is not None:
+            try:
+                await self._page.close()
+            except Exception:
+                pass
+            self._page = None
+        if self._context is not None:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
+        if self._browser is not None:
+            try:
+                await self._browser.close()
+            except Exception:
+                pass
+            self._browser = None

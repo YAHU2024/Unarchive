@@ -111,3 +111,37 @@ class ScraperBase(ABC):
             音频文件 URL，若无法获取则返回 None
         """
         ...
+
+    async def download_audio_to_file(self, audio_url: str, output_path: str) -> bool:
+        """通过浏览器上下文下载音频文件，绕过 CDN 鉴权（默认返回 False）
+
+        子类可重写以使用已登录的 BrowserContext 下载。
+        """
+        return False
+
+    async def download_video(self, video_id: str, output_path: str) -> bool:
+        """下载无水印视频文件（默认返回 False）
+
+        子类可重写以实现平台特定的视频下载。
+        """
+        return False
+
+    async def get_audio_cookies(self) -> dict:
+        """获取浏览器上下文中的 Cookie，用于 httpx 音频下载回退路径（默认返回空字典）"""
+        return {}
+
+    async def close(self) -> None:
+        """清理浏览器资源（默认空操作）"""
+        return
+
+    async def check_video_available(self, video_id: str) -> bool:
+        """检查视频是否可访问（默认返回 True）"""
+        return True
+
+    async def get_video_owner(self, video_id: str) -> str:
+        """获取视频的真实作者名（默认返回空字符串）"""
+        return ""
+
+    async def get_video_ai_summary(self, video_id: str) -> str | None:
+        """获取平台 AI 视频摘要/总结（默认返回 None）"""
+        return None

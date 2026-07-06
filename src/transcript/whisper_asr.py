@@ -8,6 +8,7 @@ Whisper 语音转文字模块
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import os
@@ -25,33 +26,23 @@ logger = logging.getLogger(__name__)
 class WhisperTranscriber:
     """Whisper 语音转写器
 
+    使用 faster-whisper（CTranslate2 后端），相比原版 openai-whisper 速度提升约 4x。
     支持延迟加载模型，首次调用时才加载，避免启动时占用内存。
     """
 
-    def __init__(self, model_name: str = "medium", device: str = "auto"):
-        """初始化 Whisper 模型配置（延迟加载）
-
-        Args:
-            model_name: 模型名称 (tiny/base/small/medium/large)
-            device: "auto" 自动检测 CUDA, "cpu" 强制 CPU, "cuda" 强制 GPU
-        """
+    def __init__(self, model_name: str = "medium", device: str = "auto",
+                 compute_type: str = "auto"):
         self.model_name = model_name
         self.device = self._resolve_device(device)
-        self._model = None  # 延迟加载，首次调用时才初始化
+        self.compute_type = self._resolve_compute_type(compute_type)
+        self._model = None
+        self._engine = None  # "faster_whisper" 或 "openai_whisper"
         logger.info(
-            f"WhisperTranscriber 初始化: model={model_name}, device={self.device}（模型将在首次调用时加载）"
+            f"WhisperTranscriber 初始化: model={model_name}, device={self.device}"
         )
 
     @staticmethod
     def _resolve_device(device: str) -> str:
-        """解析设备配置
-
-        Args:
-            device: "auto" / "cpu" / "cuda"
-
-        Returns:
-            实际设备字符串 "cpu" 或 "cuda"
-        """
         if device == "auto":
             try:
                 import torch
@@ -61,18 +52,37 @@ class WhisperTranscriber:
                 return "cpu"
         return device
 
+    def _resolve_compute_type(self, compute_type: str) -> str:
+        if compute_type != "auto":
+            return compute_type
+        return "float16" if self.device == "cuda" else "int8"
+
     def _load_model(self):
-        """加载 Whisper 模型（内部方法，线程安全由调用方保证）"""
+        """加载 Whisper 模型（faster-whisper 优先，openai-whisper 回退）"""
         if self._model is not None:
             return
 
-        logger.info(f"正在加载 Whisper 模型: {self.model_name} (设备: {self.device})...")
+        # 尝试 faster-whisper（4x 速度提升）
+        try:
+            from faster_whisper import WhisperModel
+            self._model = WhisperModel(
+                self.model_name, device=self.device, compute_type=self.compute_type,
+            )
+            self._engine = "faster_whisper"
+            logger.info("faster-whisper 模型 %s 加载成功", self.model_name)
+            return
+        except ImportError:
+            logger.info("faster-whisper 未安装，回退到 openai-whisper")
+        except Exception as e:
+            logger.warning("faster-whisper 加载失败 (%s)，回退到 openai-whisper", e)
+
+        # 回退到 openai-whisper
         try:
             import whisper
             self._model = whisper.load_model(self.model_name, device=self.device)
-            logger.info(f"Whisper 模型 {self.model_name} 加载成功")
+            self._engine = "openai_whisper"
+            logger.info("openai-whisper 模型 %s 加载成功", self.model_name)
         except Exception as e:
-            logger.error(f"Whisper 模型加载失败: {e}")
             raise RuntimeError(f"Whisper 模型加载失败: {e}") from e
 
     async def transcribe_audio_url(
@@ -103,13 +113,17 @@ class WhisperTranscriber:
             output_path = str(cache_dir / f"audio_{url_hash}.mp4")
 
         # 下载音频
-        local_path = await asyncio.to_thread(
-            self._download_audio, audio_url, output_path, download_headers
+        loop = asyncio.get_event_loop()
+        local_path = await loop.run_in_executor(
+            None, self._download_audio, audio_url, output_path, download_headers
         )
 
         try:
             # 使用 Whisper 转写
-            segments = await asyncio.to_thread(self._run_whisper, local_path)
+            loop = asyncio.get_event_loop()
+            segments = await loop.run_in_executor(
+                None, self._run_whisper, local_path
+            )
             return segments
         finally:
             # 如果使用的是临时路径，清理文件
@@ -136,7 +150,8 @@ class WhisperTranscriber:
             raise FileNotFoundError(f"音频文件不存在: {file_path}")
 
         logger.info(f"开始 Whisper 转写本地文件: {file_path}")
-        segments = await asyncio.to_thread(self._run_whisper, file_path)
+        loop = asyncio.get_event_loop()
+        segments = await loop.run_in_executor(None, self._run_whisper, file_path)
         logger.info(f"Whisper 转写完成，共 {len(segments)} 条片段")
         return segments
 
@@ -156,9 +171,17 @@ class WhisperTranscriber:
         Returns:
             本地文件路径
         """
+        # 从 URL 推断平台 Referer（避免硬编码导致跨平台 CDN 403）
+        from urllib.parse import urlparse
+        url_domain = urlparse(url).netloc.lower()
+        if "douyin" in url_domain:
+            default_referer = "https://www.douyin.com"
+        else:
+            default_referer = "https://www.bilibili.com"
+
         # 构建基础请求头
         headers = {
-            "Referer": "https://www.bilibili.com",
+            "Referer": default_referer,
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -187,15 +210,23 @@ class WhisperTranscriber:
             logger.info(f"使用 yt-dlp 下载音频: {url}")
             import subprocess
 
+            yt_dlp_cmd = [
+                "yt-dlp",
+                "-x",  # 仅提取音频
+                "--audio-format", "mp4",
+                "-o", output_path,
+                "--no-playlist",
+                "--referer", default_referer,
+                "--user-agent", headers["User-Agent"],
+            ]
+            # 注入额外头部（如 Cookie）
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    yt_dlp_cmd.extend(["--add-header", f"{k}:{v}"])
+            yt_dlp_cmd.append(url)
+
             result = subprocess.run(
-                [
-                    "yt-dlp",
-                    "-x",  # 仅提取音频
-                    "--audio-format", "mp4",
-                    "-o", output_path,
-                    "--no-playlist",
-                    url,
-                ],
+                yt_dlp_cmd,
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -212,51 +243,61 @@ class WhisperTranscriber:
             raise RuntimeError(f"音频下载失败: {e}") from e
 
     def _run_whisper(self, file_path: str) -> list[SubtitleSegment]:
-        """运行 Whisper 推理
-
-        使用 whisper.transcribe() 方法，解析结果转换为 SubtitleSegment。
-
-        Args:
-            file_path: 本地音频文件路径
-
-        Returns:
-            SubtitleSegment 列表
-        """
-        # 确保模型已加载
+        """运行 Whisper 推理（自动选择引擎）"""
         self._load_model()
 
-        logger.info(f"Whisper 开始转写: {file_path}")
+        if self._engine == "faster_whisper":
+            return self._run_faster_whisper(file_path)
+        else:
+            return self._run_openai_whisper(file_path)
+
+    def _run_faster_whisper(self, file_path: str) -> list[SubtitleSegment]:
+        """faster-whisper 推理（生成器模式，vad_filter 加速）"""
+        logger.info("faster-whisper 开始转写: %s", file_path)
         try:
-            result = self._model.transcribe(
-                file_path,
-                language="zh",  # 默认中文
-                task="transcribe",
+            segments_gen, info = self._model.transcribe(
+                file_path, language="zh", task="transcribe",
+                beam_size=5, vad_filter=True,
             )
+        except FileNotFoundError:
+            raise RuntimeError("Whisper 转写失败: 系统未找到 ffmpeg，请先安装 ffmpeg 并加入 PATH")
         except Exception as e:
-            logger.error(f"Whisper 转写失败: {e}")
             raise RuntimeError(f"Whisper 转写失败: {e}") from e
 
-        # 解析 Whisper 输出 segments
+        segments = []
+        for seg in segments_gen:
+            text = seg.text.strip()
+            if text:
+                segments.append(SubtitleSegment(start=seg.start, end=seg.end, text=text))
+
+        logger.info("faster-whisper 转写完成: %d 条片段, 时长=%.1fs", len(segments), info.duration)
+        return segments
+
+    def _run_openai_whisper(self, file_path: str) -> list[SubtitleSegment]:
+        """openai-whisper 推理（字典模式）"""
+        logger.info("openai-whisper 开始转写: %s", file_path)
+        try:
+            result = self._model.transcribe(file_path, language="zh", task="transcribe")
+        except FileNotFoundError:
+            raise RuntimeError("Whisper 转写失败: 系统未找到 ffmpeg，请先安装 ffmpeg 并加入 PATH")
+        except Exception as e:
+            raise RuntimeError(f"Whisper 转写失败: {e}") from e
+
         segments = []
         for seg in result.get("segments", []):
             text = seg.get("text", "").strip()
             if text:
-                segments.append(
-                    SubtitleSegment(
-                        start=float(seg.get("start", 0.0)),
-                        end=float(seg.get("end", 0.0)),
-                        text=text,
-                    )
-                )
+                segments.append(SubtitleSegment(
+                    start=float(seg.get("start", 0)), end=float(seg.get("end", 0)), text=text,
+                ))
 
-        logger.info(f"Whisper 转写完成: {len(segments)} 条片段")
+        logger.info("openai-whisper 转写完成: %d 条片段", len(segments))
         return segments
 
     def cleanup(self):
-        """清理临时文件和释放模型内存"""
-        # 释放模型
+        """释放模型内存并清理临时文件"""
         if self._model is not None:
-            logger.info("释放 Whisper 模型内存...")
+            logger.info("释放 faster-whisper 模型内存...")
             self._model = None
             try:
                 import torch

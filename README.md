@@ -85,7 +85,7 @@ graph LR
 
 ### 🚀 快速开始
 
-**环境要求：** Python 3.10+ · FFmpeg · 可选 CUDA GPU（加速 Whisper）
+**环境要求：** Python 3.10+ · FFmpeg · Google Chrome · 可选 CUDA GPU（加速 Whisper）
 
 ```bash
 # 克隆 & 安装
@@ -99,6 +99,8 @@ cp .env.example .env   # 编辑 .env 填入 API Keys
 python app.py          # 访问 http://127.0.0.1:7860
 ```
 
+> **💡 CDP 自动连接：** 程序启动后会自动查找并拉起 Chrome，复用浏览器已有的登录态（免去扫码登录的麻烦）。Chrome 未安装或路径特殊时，可设置 `CHROME_PATH` 环境变量手动指定路径。服务器部署设 `CHROME_HEADLESS=1` 启用无头模式。
+
 **配置项（`.env`）：**
 
 | 变量 | 说明 | 默认值 |
@@ -109,6 +111,8 @@ python app.py          # 访问 http://127.0.0.1:7860
 | `FEISHU_APP_ID` | 飞书 App ID | *可选，同步飞书时填写* |
 | `FEISHU_APP_SECRET` | 飞书 App Secret | *可选，同步飞书时填写* |
 | `WHISPER_MODEL` | Whisper 模型 | `small` |
+| `CHROME_PATH` | Chrome 可执行文件路径 | *自动查找* |
+| `CHROME_HEADLESS` | 无头模式（`=1` 启用） | *禁用（显示窗口）* |
 
 <br>
 
@@ -161,7 +165,7 @@ Each video produces a structured knowledge card like this:
 
 ### 🚀 Quick Start
 
-**Prerequisites:** Python 3.10+ · FFmpeg · Optional CUDA GPU (for Whisper)
+**Prerequisites:** Python 3.10+ · FFmpeg · Google Chrome · Optional CUDA GPU (for Whisper)
 
 ```bash
 # Clone & install
@@ -175,6 +179,8 @@ cp .env.example .env   # Edit .env with your API Keys
 python app.py          # Visit http://127.0.0.1:7860
 ```
 
+> **💡 CDP Auto-Connect:** The app automatically finds and launches Chrome, reusing existing login sessions (no manual QR code scanning). Set `CHROME_PATH` to specify a custom Chrome location, or `CHROME_HEADLESS=1` for headless mode on servers.
+
 **Configuration (`.env`):**
 
 | Variable | Description | Default |
@@ -185,6 +191,8 @@ python app.py          # Visit http://127.0.0.1:7860
 | `FEISHU_APP_ID` | Feishu App ID | *Optional, for Feishu sync* |
 | `FEISHU_APP_SECRET` | Feishu App Secret | *Optional, for Feishu sync* |
 | `WHISPER_MODEL` | Whisper model size | `small` |
+| `CHROME_PATH` | Chrome executable path | *Auto-detect* |
+| `CHROME_HEADLESS` | Headless mode (`=1` to enable) | *Disabled (visible)* |
 
 <br>
 
@@ -194,27 +202,37 @@ python app.py          # Visit http://127.0.0.1:7860
 
 ```
 Unarchive/
-├── app.py                  # Gradio 主入口 / Main entry
-├── config.py               # 配置 / Config (Pydantic + dotenv)
-├── .env.example            # 环境变量模板 / Env template
-├── requirements.txt        # 依赖 / Dependencies
+├── app.py                     # Gradio 主入口 / Main entry
+├── config.py                  # 配置 / Config (Pydantic + dotenv)
+├── cli.py                     # CLI 命令行入口 / CLI tool
+├── .env.example               # 环境变量模板 / Env template
+├── requirements.txt           # 依赖 / Dependencies
 ├── data/
-│   ├── transcripts/        # 逐字稿 / Transcripts
-│   ├── audio_cache/        # 音频缓存 / Audio cache
-│   └── knowledge_base/     # 知识卡片 / Knowledge cards
+│   ├── transcripts/           # 逐字稿 / Transcripts
+│   ├── audio_cache/           # 音频缓存 / Audio cache
+│   ├── knowledge_base/        # 知识卡片 / Knowledge cards
+│   ├── cookies/               # 浏览器 Cookie / Browser cookies
+│   └── chrome_profile/        # CDP 持久化浏览器 profile
 ├── src/
-│   ├── platforms/          # 平台适配 / Adapters
-│   │   ├── bilibili.py
-│   │   └── douyin.py
-│   ├── transcript/         # 逐字稿 / Transcripts
-│   │   ├── subtitle.py     # 字幕 / Subtitle parser
-│   │   └── whisper_asr.py  # 语音识别 / Whisper ASR
-│   ├── analyzer/           # AI 分析 / Analysis
+│   ├── scraper/               # 平台抓取器 / Scrapers
+│   │   ├── base.py            #   ScraperBase 抽象基类
+│   │   ├── douyin.py          #   抖音 / Douyin (CDP + API拦截)
+│   │   └── bilibili.py        #   B站 / Bilibili
+│   ├── platforms/             # 旧版平台适配 / Legacy adapters
+│   │   └── bilibili.py
+│   ├── transcript/            # 逐字稿 / Transcripts
+│   │   ├── subtitle.py        #   字幕解析 / Subtitle parser
+│   │   └── whisper_asr.py     #   语音识别 / Whisper ASR
+│   ├── analyzer/              # AI 分析 / Analysis
 │   │   └── llm_analyzer.py
-│   ├── sync/               # 同步 / Sync
+│   ├── sync/                  # 同步 / Sync
 │   │   └── feishu.py
-│   └── utils/
-└── prompts/                # Prompt 模板 / Templates
+│   └── utils/                 # 工具 / Utilities
+│       ├── cdp.py             #   CDP Chrome 连接 & 自动拉起
+│       ├── video_download.py  #   视频下载 / Video download
+│       ├── douyin_signer.py   #   抖音签名 / Douyin signing
+│       └── common.py          #   公共工具 / Common utils
+└── prompts/                   # Prompt 模板 / Templates
     ├── analyze.txt
     └── summarize.txt
 ```
@@ -224,7 +242,7 @@ Unarchive/
 | 组件 / Component | 技术 / Technology |
 |:---:|------|
 | 🖥️ 界面 / UI | **Gradio 4.x** |
-| 🌐 浏览器 / Browser | **Playwright** |
+| 🌐 浏览器 / Browser | **Playwright** + **Chrome CDP**（自动拉起/复用登录态） |
 | 🎵 音频 / Audio | **yt-dlp** + **OpenAI Whisper** |
 | 🌍 网络 / HTTP | **httpx** |
 | ⚙️ 配置 / Config | **Pydantic** + **python-dotenv** |

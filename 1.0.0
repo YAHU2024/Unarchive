@@ -1,0 +1,10 @@
+Collecting faster-whisper
+  Downloading faster_whisper-1.1.0-py3-none-any.whl.metadata (16 kB)
+Collecting ctranslate2<5,>=4.0 (from faster-whisper)
+  Downloading ctranslate2-4.5.0-cp38-cp38-win_amd64.whl.metadata (10 kB)
+Requirement already satisfied: huggingface-hub>=0.13 in d:\python38\lib\site-packages (from faster-whisper) (0.36.2)
+Collecting tokenizers<1,>=0.13 (from faster-whisper)
+  Downloading tokenizers-0.21.0.tar.gz (343 kB)
+  Installing build dependencies: started
+  Installing build dependencies: still running...
+  Installing build dependencies: finished with status 'error'

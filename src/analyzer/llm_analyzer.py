@@ -44,6 +44,7 @@ class LLMAnalyzer:
         # httpx 异步客户端，设置合理超时
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+            trust_env=False,  # 禁用环境变量代理，避免 ALL_PROXY 等残留导致请求失败
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
@@ -134,27 +135,64 @@ class LLMAnalyzer:
         }
 
         last_error = None
+        last_response_body = None  # 用于记录 API 响应体，辅助诊断
         for attempt in range(1, self._max_retries + 1):
             try:
                 logger.debug("LLM API 调用 (第 %d/%d 次), provider=%s, model=%s",
                              attempt, self._max_retries, self.provider, self.model)
 
                 response = await self._client.post(url, json=payload)
-                response.raise_for_status()
+
+                # 非 200 时主动读取响应体，再抛出异常
+                if response.status_code != 200:
+                    last_response_body = response.text[:500]
+                    logger.warning(
+                        "LLM API 返回异常状态 %d (第 %d 次): %s",
+                        response.status_code, attempt, last_response_body,
+                    )
+                    response.raise_for_status()
 
                 data = response.json()
                 content = data["choices"][0]["message"]["content"]
                 logger.debug("LLM 响应长度: %d 字符", len(content))
                 return content
 
-            except (httpx.HTTPStatusError, httpx.RequestError, KeyError) as e:
+            except httpx.HTTPStatusError as e:
                 last_error = e
-                logger.warning("LLM API 调用失败 (第 %d 次): %s", attempt, e)
+                body = last_response_body or ""
+                logger.warning(
+                    "LLM API HTTP 错误 (第 %d 次): status=%d, body=%s",
+                    attempt, e.response.status_code, body,
+                )
                 if attempt < self._max_retries:
                     import asyncio
-                    await asyncio.sleep(2 ** attempt)  # 指数退避
+                    await asyncio.sleep(2 ** attempt)
 
-        raise RuntimeError(f"LLM API 调用在 {self._max_retries} 次重试后仍失败: {last_error}")
+            except KeyError as e:
+                last_error = e
+                # 记录实际收到的响应，便于排查格式问题
+                try:
+                    raw = json.dumps(data, ensure_ascii=False)[:500]
+                except Exception:
+                    raw = repr(data)[:500] if 'data' in dir() else "N/A"
+                logger.warning(
+                    "LLM 响应格式异常 (第 %d 次): 缺少字段 %r, 响应内容: %s",
+                    attempt, e.args[0] if e.args else "?", raw,
+                )
+                if attempt < self._max_retries:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+
+            except httpx.RequestError as e:
+                last_error = e
+                logger.warning("LLM API 请求失败 (第 %d 次): %s", attempt, e)
+                if attempt < self._max_retries:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+
+        # 用 repr 兜底，确保错误信息不为空
+        error_detail = str(last_error) or repr(last_error)
+        raise RuntimeError(f"LLM API 调用在 {self._max_retries} 次重试后仍失败: {error_detail}")
 
     async def _analyze_structure(self, title: str, author: str, transcript: str) -> dict:
         """结构分析 - 使用 prompts/analyze.txt 模板

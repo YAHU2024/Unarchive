@@ -10,7 +10,7 @@ from src.scraper.base import ScraperBase, FavoriteFolder, VideoInfo, SubtitleSeg
 def __getattr__(name):
     """延迟导入平台抓取器，避免循环引用"""
     if name == "BilibiliScraper":
-        from src.platforms.bilibili import BilibiliScraper
+        from src.scraper.bilibili import BilibiliScraper
         return BilibiliScraper
     if name == "DouyinScraper":
         from src.scraper.douyin import DouyinScraper
