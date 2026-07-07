@@ -9,8 +9,8 @@ Unarchive (解压收藏夹) — Automates turning video favorites (Bilibili, Dou
 ## Commands
 
 ```bash
-# Install
-python -m venv venv && venv\Scripts\activate
+# Install（虚拟环境可选；若依赖已装在系统 Python 中，可跳过建 venv 直接用系统 Python 运行）
+python -m venv venv && venv\Scripts\activate   # 可选
 pip install -r requirements.txt
 playwright install chromium
 

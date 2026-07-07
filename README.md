@@ -90,7 +90,7 @@ graph LR
 ```bash
 # 克隆 & 安装
 git clone <repo-url> && cd Unarchive
-python -m venv venv && venv\Scripts\activate   # Windows
+python -m venv venv && venv\Scripts\activate   # 可选：虚拟环境；依赖已装在系统 Python 时可跳过
 pip install -r requirements.txt
 playwright install chromium
 
@@ -170,7 +170,7 @@ Each video produces a structured knowledge card like this:
 ```bash
 # Clone & install
 git clone <repo-url> && cd Unarchive
-python -m venv venv && venv\Scripts\activate   # Windows
+python -m venv venv && venv\Scripts\activate   # Optional: venv; skip if deps are in system Python
 pip install -r requirements.txt
 playwright install chromium
 
