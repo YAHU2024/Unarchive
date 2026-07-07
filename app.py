@@ -34,7 +34,13 @@ KNOWLEDGE_BASE_DIR = Path("data/knowledge_base")
 KNOWLEDGE_BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 PLATFORM_CHOICES = ["Bilibili", "抖音"]
-WHISPER_MODEL_CHOICES = ["tiny", "base", "small", "medium", "large"]
+WHISPER_MODEL_CHOICES = [
+    "tiny", "base", "small", "medium",
+    "large-v1", "large-v2", "large-v3",
+    "tiny.en", "base.en", "small.en", "medium.en", "large-v3.en",
+    "distil-small.en", "distil-medium.en",
+    "distil-large-v2", "distil-large-v3",
+]
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -734,7 +740,8 @@ def build_ui():
                     whisper_model_select = gr.Dropdown(
                         choices=WHISPER_MODEL_CHOICES,
                         value=config.whisper_model,
-                        label="Whisper 模型",
+                        label="Whisper 模型 (faster-whisper)",
+                        info="仅支持 faster-whisper 引擎；中文语音建议选 multilingual 模型（如 small/medium），en 系列仅适用于英文",
                     )
                     whisper_enabled_check = gr.Checkbox(
                         value=True,

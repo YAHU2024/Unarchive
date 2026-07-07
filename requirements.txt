@@ -6,8 +6,9 @@ playwright>=1.40.0
 
 # Audio/Video processing
 yt-dlp>=2024.0.0
-faster-whisper>=1.0.0
-openai-whisper>=20231117
+faster-whisper>=1.0.0  # 唯一语音转写引擎（CTranslate2 后端，不依赖 torch）
+
+
 
 # HTTP client
 httpx>=0.25.0
