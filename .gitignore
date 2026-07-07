@@ -37,6 +37,9 @@ Thumbs.db
 # Claude
 .claude/
 
+# CodeBuddy (project data, not source)
+.codebuddy/
+
 # Plan files
 .plan.md
 PLAN.md
