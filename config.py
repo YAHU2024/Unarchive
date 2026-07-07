@@ -29,6 +29,11 @@ class AppConfig(BaseModel):
     feishu_app_id: str = Field(default="", description="飞书 App ID")
     feishu_app_secret: str = Field(default="", description="飞书 App Secret")
 
+    # ima 相关（腾讯 ima OpenAPI）
+    ima_client_id: str = Field(default="", description="ima OpenAPI Client ID")
+    ima_api_key: str = Field(default="", description="ima OpenAPI API Key")
+    ima_knowledge_base_id: str = Field(default="", description="ima 知识库 ID（可选，留空仅建笔记）")
+
     # Whisper 相关
     whisper_model: str = Field(default="small", description="Whisper 模型: tiny/base/small/medium/large")
     whisper_device: str = Field(default="auto", description="Whisper 运行设备: auto / cpu / cuda")
@@ -54,6 +59,9 @@ class AppConfig(BaseModel):
             llm_model=os.getenv("LLM_MODEL", "deepseek-chat"),
             feishu_app_id=os.getenv("FEISHU_APP_ID", ""),
             feishu_app_secret=os.getenv("FEISHU_APP_SECRET", ""),
+            ima_client_id=os.getenv("IMA_CLIENT_ID", ""),
+            ima_api_key=os.getenv("IMA_API_KEY", ""),
+            ima_knowledge_base_id=os.getenv("IMA_KNOWLEDGE_BASE_ID", ""),
             whisper_model=os.getenv("WHISPER_MODEL", "small"),
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "auto"),

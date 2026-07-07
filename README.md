@@ -34,7 +34,7 @@
 | **逐字稿** | 手动听写，费时费力 | 自动提取字幕 / Whisper 转写 |
 | **内容理解** | 看完就忘，只记得标题 | AI 生成摘要、关键词、核心要点 |
 | **知识管理** | 收藏列表吃灰，再也找不到 | 结构化知识卡片，可搜索可回顾 |
-| **跨平台** | B站、抖音各自为政 | 统一入口，一键同步到飞书文档 |
+| **跨平台** | B站、抖音各自为政 | 统一入口，一键同步到飞书 / ima 笔记 |
 
 ---
 
@@ -52,7 +52,7 @@ graph LR
     B --> C["📝 逐字稿"]
     C --> D["🤖 AI 分析"]
     D --> E["📖 知识卡片"]
-    E --> F["🔄 飞书同步"]
+    E --> F["🔄 同步飞书 / ima"]
     C -.-> C1["字幕 / Whisper"]
 ```
 
@@ -61,7 +61,7 @@ graph LR
 | | | |
 |:---:|:---:|:---:|
 | 🎬 **多平台**<br>Bilibili · 抖音 | 📝 **智能转写**<br>字幕优先 + Whisper 兜底 | 🤖 **AI 分析**<br>DeepSeek · 通义千问 |
-| 📖 **知识卡片**<br>摘要 · 关键词 · 要点 | 🔄 **飞书同步**<br>一键同步 · 增量去重 | 🖥️ **Web 界面**<br>Gradio 实时进度 |
+| 📖 **知识卡片**<br>摘要 · 关键词 · 要点 | 🔄 **多端同步**<br>飞书 · ima 一键同步 | 🖥️ **Web 界面**<br>Gradio 实时进度 |
 
 ### 📋 知识卡片示例
 
@@ -110,6 +110,9 @@ python app.py          # 访问 http://127.0.0.1:7860
 | `LLM_MODEL` | 模型名称 | `deepseek-chat` |
 | `FEISHU_APP_ID` | 飞书 App ID | *可选，同步飞书时填写* |
 | `FEISHU_APP_SECRET` | 飞书 App Secret | *可选，同步飞书时填写* |
+| `IMA_CLIENT_ID` | ima OpenAPI Client ID | *可选，同步 ima 时填写* |
+| `IMA_API_KEY` | ima OpenAPI API Key | *可选，同步 ima 时填写* |
+| `IMA_KNOWLEDGE_BASE_ID` | ima 知识库 ID | *可选，配置后同步会加入该知识库* |
 | `WHISPER_MODEL` | Whisper 模型 | `small` |
 | `CHROME_PATH` | Chrome 可执行文件路径 | *自动查找* |
 | `CHROME_HEADLESS` | 无头模式（`=1` 启用） | *禁用（显示窗口）* |
@@ -132,7 +135,7 @@ graph LR
     B --> C["📝 Transcript"]
     C --> D["🤖 AI Analysis"]
     D --> E["📖 Knowledge Card"]
-    E --> F["🔄 Feishu Sync"]
+    E --> F["🔄 Feishu / ima Sync"]
     C -.-> C1["Subtitles / Whisper"]
 ```
 
@@ -141,7 +144,7 @@ graph LR
 | | | |
 |:---:|:---:|:---:|
 | 🎬 **Multi-Platform**<br>Bilibili · Douyin | 📝 **Smart Transcription**<br>Subtitles + Whisper fallback | 🤖 **AI Analysis**<br>DeepSeek · Qwen |
-| 📖 **Knowledge Cards**<br>Summary · Keywords · Points | 🔄 **Feishu Sync**<br>One-click · Incremental | 🖥️ **Web UI**<br>Gradio real-time progress |
+| 📖 **Knowledge Cards**<br>Summary · Keywords · Points | 🔄 **Multi-target Sync**<br>Feishu · ima one-click | 🖥️ **Web UI**<br>Gradio real-time progress |
 
 ### 📋 Knowledge Card Example
 
@@ -190,6 +193,9 @@ python app.py          # Visit http://127.0.0.1:7860
 | `LLM_MODEL` | Model name | `deepseek-chat` |
 | `FEISHU_APP_ID` | Feishu App ID | *Optional, for Feishu sync* |
 | `FEISHU_APP_SECRET` | Feishu App Secret | *Optional, for Feishu sync* |
+| `IMA_CLIENT_ID` | ima OpenAPI Client ID | *Optional, for ima sync* |
+| `IMA_API_KEY` | ima OpenAPI API Key | *Optional, for ima sync* |
+| `IMA_KNOWLEDGE_BASE_ID` | ima Knowledge Base ID | *Optional, adds note to KB on sync* |
 | `WHISPER_MODEL` | Whisper model size | `small` |
 | `CHROME_PATH` | Chrome executable path | *Auto-detect* |
 | `CHROME_HEADLESS` | Headless mode (`=1` to enable) | *Disabled (visible)* |
@@ -226,7 +232,8 @@ Unarchive/
 │   ├── analyzer/              # AI 分析 / Analysis
 │   │   └── llm_analyzer.py
 │   ├── sync/                  # 同步 / Sync
-│   │   └── feishu.py
+│   │   ├── feishu.py
+│   │   └── ima.py
 │   └── utils/                 # 工具 / Utilities
 │       ├── cdp.py             #   CDP Chrome 连接 & 自动拉起
 │       ├── video_download.py  #   视频下载 / Video download

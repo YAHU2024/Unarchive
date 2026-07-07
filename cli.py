@@ -145,10 +145,15 @@ async def cmd_download(args):
 
 
 async def cmd_sync(args):
-    from src.sync.feishu import FeishuSync
     import json
 
     config = get_config()
+
+    if args.to_ima:
+        await _cmd_sync_ima(config, args)
+        return
+
+    from src.sync.feishu import FeishuSync
     if not config.feishu_app_id or not config.feishu_app_secret:
         print("❌ 请先配置飞书 App ID 和 App Secret")
         return
@@ -187,6 +192,57 @@ async def cmd_sync(args):
         await feishu.close()
 
 
+async def _cmd_sync_ima(config, args):
+    """同步知识卡片到腾讯 ima（建笔记 + 可选加入知识库）"""
+    from src.sync.ima import ImaSync
+    import json
+
+    if not config.ima_client_id or not config.ima_api_key:
+        print("❌ 请先配置 ima Client ID 和 API Key")
+        print("   环境变量: IMA_CLIENT_ID / IMA_API_KEY，或写入 config.py / .env")
+        return
+
+    knowledge_base_id = args.ima_knowledge_base_id or config.ima_knowledge_base_id
+    ima = ImaSync(
+        client_id=config.ima_client_id,
+        api_key=config.ima_api_key,
+        knowledge_base_id=knowledge_base_id,
+    )
+    try:
+        ok = await ima.connect()
+        if not ok:
+            print("❌ ima 连接失败，请检查 Client ID / API Key")
+            return
+        print("✅ ima 连接成功")
+
+        kb_dir = Path(config.knowledge_base_dir)
+        cards = []
+        for fp in kb_dir.glob("*.json"):
+            with open(fp, "r", encoding="utf-8") as f:
+                cards.append(json.load(f))
+
+        folder_id = args.ima_folder_id or await ima.create_folder("视频知识库")
+        if folder_id:
+            print(f"目标笔记本: {folder_id}")
+
+        kb_suffix = f" +知识库[{knowledge_base_id}]" if knowledge_base_id else ""
+        for i, card in enumerate(cards):
+            vid = card.get("video_id", "")
+            title = card.get("title", "未知")
+            existing = await ima.check_document_exists(vid)
+            if existing:
+                print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
+                continue
+            note_id = await ima.create_document(
+                title=f"[{vid}] {title}", content=card, folder_id=folder_id,
+            )
+            print(f"[{i+1}/{len(cards)}] {title} → {note_id}{kb_suffix}")
+
+        print("\n同步完成！")
+    finally:
+        await ima.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Unarchive CLI")
     sub = parser.add_subparsers(dest="command")
@@ -217,6 +273,9 @@ def main():
     p = sub.add_parser("sync")
     p.add_argument("--to-feishu", action="store_true")
     p.add_argument("--folder-token")
+    p.add_argument("--to-ima", action="store_true", help="同步到腾讯 ima")
+    p.add_argument("--ima-folder-id", help="ima 目标笔记本 ID（留空则按名称解析/根目录）")
+    p.add_argument("--ima-knowledge-base-id", help="ima 知识库 ID（覆盖配置，加入知识库）")
 
     args = parser.parse_args()
     if not args.command:

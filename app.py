@@ -24,6 +24,7 @@ from src.scraper.douyin import DouyinScraper
 from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
 from src.analyzer.llm_analyzer import LLMAnalyzer
 from src.sync.feishu import FeishuSync
+from src.sync.ima import ImaSync
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +396,98 @@ async def sync_to_feishu(
                 pass
 
 
+async def sync_to_ima(
+    video_ids: list[str],
+    knowledge_base_id: str,
+    config: AppConfig,
+    progress=gr.Progress(),
+):
+    """同步知识卡片到腾讯 ima（建笔记 + 可选加入知识库）
+
+    流程：
+    1. 初始化 ImaSync 并验证凭证
+    2. 解析/创建目标笔记本
+    3. 遍历视频，建笔记（去重跳过），可选加入知识库
+    4. 返回同步日志
+    """
+    logs = ""
+    synced = 0
+    ima_sync = None
+
+    try:
+        progress(0, desc="正在连接 ima...")
+        logs += _format_log("正在连接 ima...")
+        yield logs, gr.update()
+
+        ima_sync = ImaSync(
+            client_id=config.ima_client_id,
+            api_key=config.ima_api_key,
+            knowledge_base_id=knowledge_base_id or "",
+        )
+        connected = await ima_sync.connect()
+        if not connected:
+            logs += _format_log("ima 连接失败，请检查 Client ID 和 API Key")
+            yield logs, gr.update()
+            return
+
+        logs += _format_log("ima 连接成功")
+
+        # 解析/创建目标笔记本
+        folder_id = await ima_sync.create_folder("视频知识库")
+        if folder_id:
+            logs += _format_log(f"目标笔记本: {folder_id}")
+        if knowledge_base_id:
+            logs += _format_log(f"同步后加入知识库: {knowledge_base_id}")
+
+        total = len(video_ids)
+        for idx, vid in enumerate(video_ids):
+            progress((idx, total), desc=f"同步中: {vid}")
+            logs += _format_log(f"[{idx+1}/{total}] 同步视频: {vid}")
+            yield logs, gr.update()
+
+            card = _load_knowledge_card(vid)
+            if not card:
+                logs += _format_log(f"  ↳ 未找到知识卡片，跳过")
+                continue
+
+            # 检查是否已存在
+            existing_note = await ima_sync.check_document_exists(vid)
+            if existing_note:
+                logs += _format_log(f"  ↳ 笔记已存在 ({existing_note})，跳过")
+                synced += 1
+                continue
+
+            # 创建 ima 笔记
+            try:
+                note_id = await ima_sync.create_document(
+                    title=f"[{vid}] {card.get('title', '未知')}",
+                    content=card,
+                    folder_id=folder_id,
+                )
+                logs += _format_log(f"  ↳ 笔记创建成功: {note_id}")
+                synced += 1
+            except Exception as e:
+                logs += _format_log(f"  ↳ 笔记创建失败: {e}")
+
+            yield logs, gr.update()
+
+        progress(1.0, desc="同步完成")
+        kb_suffix = f" +知识库" if knowledge_base_id else ""
+        logs += _format_log(f"同步完成！成功 {synced}/{total} 个笔记{kb_suffix}")
+        yield logs, gr.update()
+
+    except Exception as e:
+        logs += _format_log(f"同步出错: {e}")
+        logger.exception("ima 同步异常")
+        yield logs, gr.update()
+    finally:
+        if ima_sync:
+            try:
+                await ima_sync.close()
+            except Exception:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Gradio 事件处理函数（Gradio 原生支持 async，所有 handler 运行在同一事件循环上）
 # ---------------------------------------------------------------------------
@@ -502,6 +595,56 @@ async def do_test_feishu(feishu_app_id, feishu_app_secret):
         return f"❌ 连接失败: {e}"
 
 
+async def do_test_ima(ima_client_id, ima_api_key):
+    """测试 ima 连接"""
+    if not ima_client_id or not ima_api_key:
+        return "❌ 请先配置 ima Client ID 和 API Key"
+    try:
+        ima = ImaSync(client_id=ima_client_id, api_key=ima_api_key)
+        ok = await ima.connect()
+        if ok:
+            return "✅ ima 连接成功"
+        return "❌ ima 连接失败"
+    except Exception as e:
+        return f"❌ 连接失败: {e}"
+
+
+async def do_sync_ima(
+    video_ids_text, knowledge_base_id,
+    ima_client_id, ima_api_key,
+    progress=gr.Progress()
+):
+    """启动 ima 同步（async generator）"""
+    if not ima_client_id or not ima_api_key:
+        yield "请先配置 ima Client ID 和 API Key", gr.update()
+        return
+
+    # 解析视频 ID 列表
+    if video_ids_text:
+        vid_list = [v.strip() for v in video_ids_text.split(",") if v.strip()]
+    else:
+        cards = _list_knowledge_cards()
+        vid_list = [c.get("video_id", "") for c in cards if c.get("video_id")]
+
+    if not vid_list:
+        yield "没有可同步的视频", gr.update()
+        return
+
+    config = AppConfig(
+        ima_client_id=ima_client_id,
+        ima_api_key=ima_api_key,
+        ima_knowledge_base_id=knowledge_base_id,
+    )
+
+    async for logs, upd in sync_to_ima(
+        video_ids=vid_list,
+        knowledge_base_id=knowledge_base_id or "",
+        config=config,
+        progress=progress,
+    ):
+        yield logs, upd
+
+
 async def do_sync(
     video_ids_text, folder_token,
     feishu_app_id, feishu_app_secret,
@@ -535,7 +678,8 @@ async def do_sync(
         yield logs, upd
 
 
-def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_app_secret):
+def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_app_secret,
+                   ima_client_id, ima_api_key, ima_knowledge_base_id):
     """保存配置到 .env 文件"""
     try:
         lines = [
@@ -544,6 +688,9 @@ def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_a
             f"LLM_MODEL={llm_model}",
             f"FEISHU_APP_ID={feishu_app_id}",
             f"FEISHU_APP_SECRET={feishu_app_secret}",
+            f"IMA_CLIENT_ID={ima_client_id}",
+            f"IMA_API_KEY={ima_api_key}",
+            f"IMA_KNOWLEDGE_BASE_ID={ima_knowledge_base_id}",
         ]
         with open(".env", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
@@ -717,6 +864,21 @@ def build_ui():
                             value=config.feishu_app_secret,
                             type="password",
                         )
+                    with gr.Row():
+                        ima_client_id_input = gr.Textbox(
+                            label="ima Client ID",
+                            value=config.ima_client_id,
+                        )
+                        ima_api_key_input = gr.Textbox(
+                            label="ima API Key",
+                            value=config.ima_api_key,
+                            type="password",
+                        )
+                    ima_knowledge_base_id_input = gr.Textbox(
+                        label="ima 知识库 ID（可选，留空仅建笔记）",
+                        value=config.ima_knowledge_base_id,
+                        placeholder="配置后同步会将笔记加入该知识库",
+                    )
                     save_config_btn = gr.Button("💾 保存配置", variant="secondary")
                     save_config_status = gr.Textbox(
                         label="保存状态", value="", interactive=False
@@ -816,6 +978,7 @@ def build_ui():
         with gr.Tab("🔄 同步管理"):
             with gr.Row():
                 with gr.Column(scale=1):
+                    gr.Markdown("### 同步到飞书")
                     feishu_status = gr.Textbox(
                         label="飞书连接状态", value="未连接", interactive=False
                     )
@@ -829,6 +992,22 @@ def build_ui():
                         value="",
                     )
                     sync_btn = gr.Button("📤 一键同步到飞书", variant="primary")
+
+                with gr.Column(scale=1):
+                    gr.Markdown("### 同步到 ima")
+                    ima_status = gr.Textbox(
+                        label="ima 连接状态", value="未连接", interactive=False
+                    )
+                    test_ima_btn = gr.Button("🔗 测试 ima 连接", variant="secondary")
+                    ima_kb_input = gr.Textbox(
+                        label="ima 知识库 ID（留空仅建笔记）",
+                        value=config.ima_knowledge_base_id,
+                    )
+                    ima_video_ids = gr.Textbox(
+                        label="同步视频 ID（逗号分隔，留空=全部）",
+                        value="",
+                    )
+                    sync_ima_btn = gr.Button("📤 一键同步到 ima", variant="primary")
 
                 with gr.Column(scale=2):
                     sync_log = gr.Textbox(
@@ -853,6 +1032,7 @@ def build_ui():
             inputs=[
                 llm_api_key_input, llm_base_url_input, llm_model_input,
                 feishu_app_id_input, feishu_app_secret_input,
+                ima_client_id_input, ima_api_key_input, ima_knowledge_base_id_input,
             ],
             outputs=[save_config_status],
         )
@@ -890,6 +1070,23 @@ def build_ui():
             inputs=[
                 sync_video_ids, feishu_folder_input,
                 feishu_app_id_input, feishu_app_secret_input,
+            ],
+            outputs=[sync_log, progress_bar],
+        )
+
+        # Tab 5: 测试 ima 连接
+        test_ima_btn.click(
+            fn=do_test_ima,
+            inputs=[ima_client_id_input, ima_api_key_input],
+            outputs=[ima_status],
+        )
+
+        # Tab 5: 同步到 ima
+        sync_ima_btn.click(
+            fn=do_sync_ima,
+            inputs=[
+                ima_video_ids, ima_kb_input,
+                ima_client_id_input, ima_api_key_input,
             ],
             outputs=[sync_log, progress_bar],
         )

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Unarchive (解压收藏夹) — Automates turning video favorites (Bilibili, Douyin) into a personal knowledge base. Pipeline: login → get favorites → transcript extraction → AI analysis → knowledge cards → Feishu sync.
+Unarchive (解压收藏夹) — Automates turning video favorites (Bilibili, Douyin) into a personal knowledge base. Pipeline: login → get favorites → transcript extraction → AI analysis → knowledge cards → Feishu/ima sync.
 
 ## Commands
 
@@ -14,7 +14,7 @@ python -m venv venv && venv\Scripts\activate   # 可选
 pip install -r requirements.txt
 playwright install chromium
 
-# Copy and edit .env with API keys (LLM provider, Feishu credentials)
+# Copy and edit .env with API keys (LLM provider, Feishu/ima credentials)
 cp .env.example .env
 
 # Run the Gradio web UI
@@ -30,7 +30,7 @@ No test framework, linter, or type checker is configured.
 ### Pipeline flow
 
 ```
-Login → Get Favorites → Transcript Extraction → AI Analysis → Knowledge Cards → Feishu Sync
+Login → Get Favorites → Transcript Extraction → AI Analysis → Knowledge Cards → Feishu/ima Sync
 ```
 
 Transcript extraction uses a 3-tier fallback: platform CC subtitles → Bilibili AI video summary → Whisper ASR.
@@ -44,7 +44,7 @@ Transcript extraction uses a 3-tier fallback: platform CC subtitles → Bilibili
 - **`src/scraper/__init__.py`** — Lazy-import facade via `__getattr__` to bridge both `scraper/` and `platforms/` locations.
 - **`src/transcript/`** — `SubtitleParser` (static utils) + `get_transcript()` orchestrator (3-tier fallback) + `WhisperTranscriber` (lazy-loaded model, audio download with httpx → yt-dlp fallback).
 - **`src/analyzer/`** — `LLMAnalyzer` uses OpenAI-compatible API (DeepSeek, Qwen, etc.). Runs `_analyze_structure()` and `_summarize()` in parallel via `asyncio.gather()`. 3 retries with exponential backoff. JSON extraction with 4-level fallback (direct → markdown code block → brace-delimited → bracket-delimited).
-- **`src/sync/`** — `SyncBase` ABC. `FeishuSync` uses OAuth2 tenant access token with 5-minute early refresh, builds Feishu docx blocks from knowledge cards (batch size 50).
+- **`src/sync/`** — `SyncBase` ABC. `FeishuSync` uses OAuth2 tenant access token with 5-minute early refresh, builds Feishu docx blocks from knowledge cards (batch size 50). `ImaSync` calls ima OpenAPI (`https://ima.qq.com`): `import_doc` creates a Markdown note, optionally `add_knowledge` (media_type=11) links it to a knowledge base; dedup via `search_note` by `[video_id]` title prefix, local images filtered.
 - **`prompts/`** — `analyze.txt` and `summarize.txt` use Python `str.format()` with `{{` escaping for JSON literals.
 
 ### Data formats
