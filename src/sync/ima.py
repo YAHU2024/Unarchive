@@ -12,8 +12,10 @@
 响应统一结构：{"code": 0, "msg": "...", "data": {...}}，code=0 为成功。
 """
 
+import asyncio
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
@@ -22,6 +24,14 @@ import httpx
 from .base import SyncBase
 
 logger = logging.getLogger(__name__)
+
+
+class ImaQuotaExceededError(RuntimeError):
+    """ima 每日配额耗尽（code 200005），不可重试，应停止同步"""
+
+
+class ImaRateLimitError(RuntimeError):
+    """ima 请求频率超限（code 200001），可重试"""
 
 
 # 本地图片引用正则（ima 笔记不支持本地图片，需过滤）
@@ -62,6 +72,14 @@ class ImaSync(SyncBase):
         self.knowledge_base_id = knowledge_base_id or ""
         self._client: Optional[httpx.AsyncClient] = None
 
+        # 请求节流：相邻 API 调用最小间隔（秒），降低频率限制（200001）概率
+        self._last_call = 0.0
+        self._min_interval = 0.5
+        # 频率限制重试：指数退避参数
+        self._max_retry = 5
+        self._retry_base = 2.0
+        self._retry_cap = 30.0
+
     # ------------------------------------------------------------------
     # 连接与请求
     # ------------------------------------------------------------------
@@ -91,10 +109,15 @@ class ImaSync(SyncBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    async def _call(self, path: str, body: dict) -> dict:
+    async def _call(self, path: str, body: dict, _retry: int = 0) -> dict:
         """统一的 ima API 请求方法
 
         自动携带 ima-openapi-* 头，处理响应结构 {code, msg, data}。
+
+        错误处理：
+        - code 200005（请求超量/每日配额耗尽）：抛出 ImaQuotaExceededError，调用方应停止同步
+        - code 200001（请求频率超限）：指数退避重试，耗尽后抛 ImaRateLimitError
+        - 其它错误：抛出 RuntimeError，附上 API 返回的 msg
         """
         url = f"{self.BASE_URL}/{path}"
         headers = {
@@ -104,19 +127,56 @@ class ImaSync(SyncBase):
             "Content-Type": "application/json",
         }
 
+        # 请求间节流，降低频率限制概率
+        now = time.monotonic()
+        gap = self._min_interval - (now - self._last_call)
+        if gap > 0:
+            await asyncio.sleep(gap)
+        self._last_call = time.monotonic()
+
         client = await self._get_client()
         resp = await client.post(url, headers=headers, json=body)
 
         if resp.status_code >= 400:
-            logger.error("ima HTTP 错误 [%s]: status=%s, body=%s", path, resp.status_code, resp.text)
-            resp.raise_for_status()
+            code, msg = self._parse_error(resp)
+            logger.error(
+                "ima HTTP 错误 [%s]: status=%s code=%s msg=%s", path, resp.status_code, code, msg
+            )
+            if code == 200005:
+                raise ImaQuotaExceededError(msg or "请求超量，请明日再试")
+            if code == 200001:
+                if _retry < self._max_retry:
+                    wait = min(2 ** _retry * self._retry_base, self._retry_cap)
+                    logger.warning(
+                        "ima 频率超限，%0.1fs 后重试 [%s] (%d/%d)",
+                        wait, path, _retry + 1, self._max_retry,
+                    )
+                    await asyncio.sleep(wait)
+                    return await self._call(path, body, _retry=_retry + 1)
+                raise ImaRateLimitError(msg or "请求频率超限，请稍后重试")
+            raise RuntimeError(
+                f"ima API 错误: {msg} (code={code}, status={resp.status_code})"
+            )
 
         data = resp.json()
+        logger.debug(
+            "ima 响应 [%s] code=%s msg=%s data_keys=%s",
+            path, data.get("code"), data.get("msg"), list(data.get("data", {}).keys()) if isinstance(data.get("data"), dict) else type(data.get("data")).__name__,
+        )
         if data.get("code") != 0:
             logger.error("ima API 错误 [%s]: code=%s, msg=%s", path, data.get("code"), data.get("msg"))
             raise RuntimeError(f"ima API 错误: {data.get('msg')} (code={data.get('code')})")
 
         return data.get("data", {})
+
+    @staticmethod
+    def _parse_error(resp) -> Tuple[Optional[int], str]:
+        """从错误响应体解析 (code, msg)，非 JSON 时返回 (None, '')"""
+        try:
+            err = resp.json()
+        except Exception:
+            return None, ""
+        return err.get("code"), err.get("msg", "")
 
     # ------------------------------------------------------------------
     # 文件夹（笔记本）操作
@@ -196,6 +256,9 @@ class ImaSync(SyncBase):
         if self.knowledge_base_id and note_id:
             try:
                 await self._add_to_knowledge_base(note_id, title, kb_folder_id)
+            except ImaQuotaExceededError:
+                # 配额耗尽需向上传递，让同步循环及时停止
+                raise
             except Exception as e:
                 # 笔记已建成功，知识库失败仅告警，不中断整体同步
                 logger.warning("笔记已创建，但加入知识库失败: %s", e)
@@ -300,6 +363,11 @@ class ImaSync(SyncBase):
             data = await self._call(
                 self.PATH_GET_ADDABLE_KB, {"cursor": cursor, "limit": 50}
             )
+            logger.debug(
+                "get_addable_knowledge_base_list 原始响应 keys=%s 条目数=%d",
+                list(data.keys()),
+                len(data.get("addable_knowledge_base_list") or []),
+            )
             for it in data.get("addable_knowledge_base_list") or []:
                 kid = it.get("id", "")
                 if kid and kid not in seen:
@@ -313,7 +381,9 @@ class ImaSync(SyncBase):
 
         # 2. 可选：按名搜索做并集
         if search:
-            for it in await self._search_knowledge_bases(search):
+            searched = await self._search_knowledge_bases(search)
+            logger.debug("search_knowledge_base 命中 %d 个: %s", len(searched), [s.get("id") for s in searched])
+            for it in searched:
                 kid = it.get("id", "")
                 if kid and kid not in seen:
                     seen.add(kid)
@@ -321,12 +391,18 @@ class ImaSync(SyncBase):
 
         # 3. 批量补 description（get_knowledge_base，ids 1-20）
         if result:
-            infos = await self.get_knowledge_base_info([r["id"] for r in result])
+            ids = [r["id"] for r in result]
+            infos = await self.get_knowledge_base_info(ids)
+            logger.debug("get_knowledge_base 返回 infos 数=%d ids=%s", len(infos), ids)
             for r in result:
                 info = infos.get(r["id"]) or {}
                 r["name"] = info.get("name") or r["name"]
                 r["description"] = info.get("description", "") or ""
 
+        logger.info(
+            "list_addable_knowledge_bases 共得到 %d 个知识库: %s",
+            len(result), [(r["id"], r["name"]) for r in result],
+        )
         return result
 
     async def _search_knowledge_bases(self, query: str) -> List[dict]:
@@ -366,6 +442,8 @@ class ImaSync(SyncBase):
           - 文件：media_id 为 note_/word_/wechatarticle_ 等、media_type 为具体类型
         返回 [{"folder_id", "name", "depth"}]，folder_id 即文件夹的 media_id。
         """
+        if depth == 0:
+            logger.info("list_folders 开始: kb_id=%s", kb_id)
         result: List[dict] = []
         cursor = ""
         while True:
@@ -373,6 +451,10 @@ class ImaSync(SyncBase):
             if parent:
                 body["folder_id"] = parent
             data = await self._call(self.PATH_GET_KB_LIST, body)
+            logger.debug(
+                "get_knowledge_list kb_id=%s parent=%r 返回 keys=%s 条目数=%d",
+                kb_id, parent, list(data.keys()), len(data.get("knowledge_list") or []),
+            )
             for it in data.get("knowledge_list") or []:
                 mid = it.get("media_id", "") or ""
                 # 文件夹特征：media_id 以 folder_ 开头，或 media_type 为 99
@@ -389,6 +471,8 @@ class ImaSync(SyncBase):
             cursor = data.get("next_cursor", "")
             if not cursor:
                 break
+        if depth == 0:
+            logger.info("list_folders 完成: 共发现 %d 个文件夹", len(result))
         return result
 
     async def resolve_kb_folder(self, kb_id: str, folder_id: str, folder_name: str) -> str:
@@ -396,15 +480,24 @@ class ImaSync(SyncBase):
 
         优先使用显式 folder_id；否则按 folder_name 精确匹配；都没有则根目录。
         """
+        logger.info(
+            "resolve_kb_folder: kb_id=%s folder_id=%r folder_name=%r",
+            kb_id, folder_id, folder_name,
+        )
         if folder_id:
+            logger.info("resolve_kb_folder: 使用显式 folder_id=%s", folder_id)
             return folder_id
         if folder_name:
-            return await self._find_folder_by_name(kb_id, folder_name)
+            resolved = await self._find_folder_by_name(kb_id, folder_name)
+            logger.info("resolve_kb_folder: 按名称 %r 解析结果=%r", folder_name, resolved)
+            return resolved
+        logger.info("resolve_kb_folder: 无 folder_id/name，返回根目录(空)")
         return ""
 
     async def _find_folder_by_name(self, kb_id: str, name: str) -> str:
         """按名称精确查找知识库文件夹 folder_id（基于 list_folders 递归结果）"""
         folders = await self.list_folders(kb_id)
+        logger.debug("_find_folder_by_name 候选: %s", [(f.get("name"), f.get("folder_id")) for f in folders])
         for f in folders:
             if f.get("name") == name:
                 return f.get("folder_id", "")
