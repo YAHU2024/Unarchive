@@ -225,6 +225,15 @@ async def _cmd_sync_ima(config, args):
         if folder_id:
             print(f"目标笔记本: {folder_id}")
 
+        # 解析知识库目标文件夹（优先 id，否则按名）
+        kb_folder_id = ""
+        if knowledge_base_id:
+            fid = args.ima_knowledge_base_folder_id or config.ima_knowledge_base_folder_id
+            fnam = args.ima_knowledge_base_folder_name or config.ima_knowledge_base_folder_name
+            kb_folder_id = await ima.resolve_kb_folder(knowledge_base_id, fid, fnam)
+            if kb_folder_id:
+                print(f"目标知识库文件夹: {kb_folder_id}")
+
         kb_suffix = f" +知识库[{knowledge_base_id}]" if knowledge_base_id else ""
         for i, card in enumerate(cards):
             vid = card.get("video_id", "")
@@ -235,10 +244,67 @@ async def _cmd_sync_ima(config, args):
                 continue
             note_id = await ima.create_document(
                 title=f"[{vid}] {title}", content=card, folder_id=folder_id,
+                kb_folder_id=kb_folder_id,
             )
             print(f"[{i+1}/{len(cards)}] {title} → {note_id}{kb_suffix}")
 
         print("\n同步完成！")
+    finally:
+        await ima.close()
+
+
+async def cmd_ima_kbs(args):
+    """列出知识库（或某知识库下的文件夹），辅助发现 ID"""
+    from src.sync.ima import ImaSync
+
+    config = get_config()
+    if not config.ima_client_id or not config.ima_api_key:
+        print("❌ 请先配置 ima Client ID 和 API Key")
+        print("   环境变量: IMA_CLIENT_ID / IMA_API_KEY，或写入 config.py / .env")
+        return
+
+    ima = ImaSync(client_id=config.ima_client_id, api_key=config.ima_api_key)
+    try:
+        ok = await ima.connect()
+        if not ok:
+            print("❌ ima 连接失败，请检查 Client ID / API Key")
+            return
+        print("✅ ima 连接成功\n")
+
+        if args.folders:
+            print(f"知识库 {args.folders} 下的文件夹：")
+            folders = await ima.list_folders(args.folders)
+            if not folders:
+                print("  （根目录下没有子文件夹；留空 IMA_KNOWLEDGE_BASE_FOLDER_ID 即同步到知识库根目录）")
+            for f in folders:
+                indent = "  " * f.get("depth", 0)
+                print(f"  {indent}[{f['folder_id']}] {f['name']}")
+            print("\n将目标 folder_id 写入 .env 的 IMA_KNOWLEDGE_BASE_FOLDER_ID")
+        else:
+            print("你的知识库列表（可添加内容）：")
+            kbs = await ima.list_addable_knowledge_bases(search=args.search or "")
+            if not kbs:
+                print("  （未发现任何知识库）")
+                print("\n说明：ima OpenAPI 暂不支持通过接口创建知识库。")
+                print("  请先在 ima 客户端（桌面端 / 网页端）新建一个知识库，")
+                print("  然后再运行此命令即可发现其 ID。")
+            else:
+                print(f"  共 {len(kbs)} 个知识库：")
+                for i, kb in enumerate(kbs, 1):
+                    desc = kb.get("description") or ""
+                    line = f"  {i}. [{kb['id']}] {kb['name']}"
+                    if desc:
+                        line += f" — {desc}"
+                    print(line)
+                print()
+                if len(kbs) == 1:
+                    print(f"  你当前只有 1 个知识库，将上面 id 写入即可：")
+                    print(f"  IMA_KNOWLEDGE_BASE_ID={kbs[0]['id']}")
+                else:
+                    print("  将目标 id 写入 .env 的 IMA_KNOWLEDGE_BASE_ID")
+                print("  用 python cli.py ima-kbs --folders <知识库ID> 查看其文件夹")
+                if not args.search:
+                    print("  （加 --search <关键词> 可按名称搜索更多知识库）")
     finally:
         await ima.close()
 
@@ -276,6 +342,13 @@ def main():
     p.add_argument("--to-ima", action="store_true", help="同步到腾讯 ima")
     p.add_argument("--ima-folder-id", help="ima 目标笔记本 ID（留空则按名称解析/根目录）")
     p.add_argument("--ima-knowledge-base-id", help="ima 知识库 ID（覆盖配置，加入知识库）")
+    p.add_argument("--ima-knowledge-base-folder-id", help="ima 知识库目标文件夹 ID（覆盖配置）")
+    p.add_argument("--ima-knowledge-base-folder-name", help="ima 知识库目标文件夹名称（按名解析，覆盖配置）")
+
+    # ima-kbs
+    p = sub.add_parser("ima-kbs", help="列出 ima 知识库 / 文件夹，辅助发现 ID")
+    p.add_argument("--folders", help="知识库 ID，列出其下的文件夹")
+    p.add_argument("--search", help="按名称搜索知识库（并集到可添加列表结果）")
 
     args = parser.parse_args()
     if not args.command:
@@ -293,6 +366,7 @@ def main():
         "process": cmd_process,
         "download": cmd_download,
         "sync": cmd_sync,
+        "ima-kbs": cmd_ima_kbs,
     }
     asyncio.run(cmd_map[args.command](args))
 

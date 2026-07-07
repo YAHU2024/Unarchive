@@ -33,6 +33,8 @@ class AppConfig(BaseModel):
     ima_client_id: str = Field(default="", description="ima OpenAPI Client ID")
     ima_api_key: str = Field(default="", description="ima OpenAPI API Key")
     ima_knowledge_base_id: str = Field(default="", description="ima 知识库 ID（可选，留空仅建笔记）")
+    ima_knowledge_base_folder_id: str = Field(default="", description="ima 知识库目标文件夹 ID（可选，留空则根目录）")
+    ima_knowledge_base_folder_name: str = Field(default="", description="ima 知识库目标文件夹名称（按名解析，可选）")
 
     # Whisper 相关
     whisper_model: str = Field(default="small", description="Whisper 模型: tiny/base/small/medium/large")
@@ -62,6 +64,8 @@ class AppConfig(BaseModel):
             ima_client_id=os.getenv("IMA_CLIENT_ID", ""),
             ima_api_key=os.getenv("IMA_API_KEY", ""),
             ima_knowledge_base_id=os.getenv("IMA_KNOWLEDGE_BASE_ID", ""),
+            ima_knowledge_base_folder_id=os.getenv("IMA_KNOWLEDGE_BASE_FOLDER_ID", ""),
+            ima_knowledge_base_folder_name=os.getenv("IMA_KNOWLEDGE_BASE_FOLDER_NAME", ""),
             whisper_model=os.getenv("WHISPER_MODEL", "small"),
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "auto"),

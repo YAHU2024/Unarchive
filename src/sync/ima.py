@@ -43,6 +43,11 @@ class ImaSync(SyncBase):
     PATH_IMPORT_DOC = f"{NOTE_BASE}/import_doc"
     PATH_LIST_NOTEBOOK = f"{NOTE_BASE}/list_notebook"
     PATH_ADD_KNOWLEDGE = f"{WIKI_BASE}/add_knowledge"
+    PATH_SEARCH_KB = f"{WIKI_BASE}/search_knowledge_base"
+    PATH_GET_KB_LIST = f"{WIKI_BASE}/get_knowledge_list"
+    PATH_SEARCH_KB_ITEM = f"{WIKI_BASE}/search_knowledge"
+    PATH_GET_ADDABLE_KB = f"{WIKI_BASE}/get_addable_knowledge_base_list"
+    PATH_GET_KB_INFO = f"{WIKI_BASE}/get_knowledge_base"
 
     def __init__(self, client_id: str, api_key: str, knowledge_base_id: str = ""):
         """初始化 ima 同步模块
@@ -163,7 +168,7 @@ class ImaSync(SyncBase):
     # 文档操作
     # ------------------------------------------------------------------
 
-    async def create_document(self, title: str, content: dict, folder_id: str = None) -> str:
+    async def create_document(self, title: str, content: dict, folder_id: str = None, kb_folder_id: str = "") -> str:
         """创建 ima 笔记（Markdown），成功后可选加入知识库
 
         返回 note_id
@@ -190,7 +195,7 @@ class ImaSync(SyncBase):
         # 3. 可选：加入知识库
         if self.knowledge_base_id and note_id:
             try:
-                await self._add_to_knowledge_base(note_id, title)
+                await self._add_to_knowledge_base(note_id, title, kb_folder_id)
             except Exception as e:
                 # 笔记已建成功，知识库失败仅告警，不中断整体同步
                 logger.warning("笔记已创建，但加入知识库失败: %s", e)
@@ -259,16 +264,151 @@ class ImaSync(SyncBase):
     # 知识库关联
     # ------------------------------------------------------------------
 
-    async def _add_to_knowledge_base(self, note_id: str, title: str) -> None:
-        """将已有笔记关联到知识库（media_type=11 表示笔记）"""
+    async def _add_to_knowledge_base(self, note_id: str, title: str, kb_folder_id: str = "") -> None:
+        """将已有笔记关联到知识库（media_type=11 表示笔记）
+
+        kb_folder_id 为空时加入知识库根目录，否则加入指定文件夹。
+        """
         body = {
             "media_type": 11,
             "note_info": {"content_id": note_id},
             "title": title,
             "knowledge_base_id": self.knowledge_base_id,
         }
+        if kb_folder_id:
+            body["folder_id"] = kb_folder_id
         await self._call(self.PATH_ADD_KNOWLEDGE, body)
         logger.info("ima 笔记已加入知识库 %s: %s", self.knowledge_base_id, note_id)
+
+    # ------------------------------------------------------------------
+    # 知识库发现与文件夹解析
+    # ------------------------------------------------------------------
+
+    async def list_addable_knowledge_bases(self, search: str = "") -> List[dict]:
+        """列出可添加内容的知识库（含默认库），返回 [{"id", "name", "description"}]
+
+        主发现路径用 get_addable_knowledge_base_list（默认库会出现在此），
+        search 非空时再并集 search_knowledge_base 的按名搜索结果。
+        id 即 knowledge_base_id。最后批量调 get_knowledge_base 补 description。
+        """
+        seen: set = set()
+        result: List[dict] = []
+
+        # 1. 可添加列表（主发现路径）
+        cursor = ""
+        while True:
+            data = await self._call(
+                self.PATH_GET_ADDABLE_KB, {"cursor": cursor, "limit": 50}
+            )
+            for it in data.get("addable_knowledge_base_list") or []:
+                kid = it.get("id", "")
+                if kid and kid not in seen:
+                    seen.add(kid)
+                    result.append({"id": kid, "name": it.get("name", ""), "description": ""})
+            if data.get("is_end", True):
+                break
+            cursor = data.get("next_cursor", "")
+            if not cursor:
+                break
+
+        # 2. 可选：按名搜索做并集
+        if search:
+            for it in await self._search_knowledge_bases(search):
+                kid = it.get("id", "")
+                if kid and kid not in seen:
+                    seen.add(kid)
+                    result.append({"id": kid, "name": it.get("name", ""), "description": ""})
+
+        # 3. 批量补 description（get_knowledge_base，ids 1-20）
+        if result:
+            infos = await self.get_knowledge_base_info([r["id"] for r in result])
+            for r in result:
+                info = infos.get(r["id"]) or {}
+                r["name"] = info.get("name") or r["name"]
+                r["description"] = info.get("description", "") or ""
+
+        return result
+
+    async def _search_knowledge_bases(self, query: str) -> List[dict]:
+        """按关键词搜索知识库列表（search_knowledge_base），返回 [{"id", "name"}]"""
+        result: List[dict] = []
+        cursor = ""
+        while True:
+            data = await self._call(
+                self.PATH_SEARCH_KB, {"query": query, "cursor": cursor, "limit": 20}
+            )
+            for it in data.get("info_list") or []:
+                result.append({"id": it.get("id", ""), "name": it.get("name", "")})
+            if data.get("is_end", True):
+                break
+            cursor = data.get("next_cursor", "")
+            if not cursor:
+                break
+        return result
+
+    async def get_knowledge_base_info(self, ids: List[str]) -> Dict[str, dict]:
+        """批量获取知识库详情（name/description/cover_url），返回 {id: {...}}
+
+        get_knowledge_base 的 ids 限制 1-20 个且不重复，这里直接取前 20。
+        """
+        if not ids:
+            return {}
+        data = await self._call(self.PATH_GET_KB_INFO, {"ids": ids[:20]})
+        return data.get("infos", {}) or {}
+
+    async def list_folders(self, kb_id: str, parent: str = "", depth: int = 0) -> List[dict]:
+        """递归列出知识库下的文件夹
+
+        通过 get_knowledge_list 浏览。实测返回的 knowledge_list 中，文件夹与文件
+        混在一起，且条目均无 folder_id 字段，区分方式为：
+          - 文件夹：media_id 以 "folder_" 开头、media_type == 99（该 media_id
+            即文件夹的规范 ID，可作为 folder_id 参数进入子目录）
+          - 文件：media_id 为 note_/word_/wechatarticle_ 等、media_type 为具体类型
+        返回 [{"folder_id", "name", "depth"}]，folder_id 即文件夹的 media_id。
+        """
+        result: List[dict] = []
+        cursor = ""
+        while True:
+            body = {"knowledge_base_id": kb_id, "cursor": cursor, "limit": 50}
+            if parent:
+                body["folder_id"] = parent
+            data = await self._call(self.PATH_GET_KB_LIST, body)
+            for it in data.get("knowledge_list") or []:
+                mid = it.get("media_id", "") or ""
+                # 文件夹特征：media_id 以 folder_ 开头，或 media_type 为 99
+                is_folder = mid.startswith("folder_") or it.get("media_type") == 99
+                if is_folder and mid:
+                    result.append(
+                        {"folder_id": mid, "name": it.get("title", ""), "depth": depth}
+                    )
+                    result.extend(
+                        await self.list_folders(kb_id, parent=mid, depth=depth + 1)
+                    )
+            if data.get("is_end", True):
+                break
+            cursor = data.get("next_cursor", "")
+            if not cursor:
+                break
+        return result
+
+    async def resolve_kb_folder(self, kb_id: str, folder_id: str, folder_name: str) -> str:
+        """解析知识库目标文件夹 ID
+
+        优先使用显式 folder_id；否则按 folder_name 精确匹配；都没有则根目录。
+        """
+        if folder_id:
+            return folder_id
+        if folder_name:
+            return await self._find_folder_by_name(kb_id, folder_name)
+        return ""
+
+    async def _find_folder_by_name(self, kb_id: str, name: str) -> str:
+        """按名称精确查找知识库文件夹 folder_id（基于 list_folders 递归结果）"""
+        folders = await self.list_folders(kb_id)
+        for f in folders:
+            if f.get("name") == name:
+                return f.get("folder_id", "")
+        return ""
 
     # ------------------------------------------------------------------
     # Markdown 构建与清洗
