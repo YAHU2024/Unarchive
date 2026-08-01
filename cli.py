@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -35,6 +36,54 @@ def _create_scraper(platform: str):
         return DouyinScraper()
     else:
         raise ValueError(f"不支持的平台: {platform}")
+
+
+def _load_ima_state_for_cli(state_file: Path) -> dict:
+    """Load per-(video, kb) ima sync state for the CLI.
+
+    Same on-disk format as app.py so the two entry points share state. If the
+    file has legacy `vid`-only keys, promote each to f"{vid}::{kb_id}"
+    using the embedded knowledge_base_id field, then persist the migrated
+    shape in place. Returns {} on missing/corrupt file.
+    """
+    sep = "::"
+    raw: dict = {}
+    try:
+        if state_file.exists():
+            raw = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"(警告) 读取同步状态失败: {e}")
+        return {}
+
+    migrated: dict = {}
+    needs_resave = False
+    for key, value in raw.items():
+        if not isinstance(value, dict):
+            needs_resave = True
+            continue
+        if sep in key:
+            migrated[key] = value
+            continue
+        legacy_kb = value.get("knowledge_base_id", "") or ""
+        new_key = f"{key}{sep}{legacy_kb}"
+        migrated[new_key] = value
+        needs_resave = True
+        print(f"(迁移) 旧状态键 {key!r} -> {new_key!r}")
+
+    if needs_resave:
+        try:
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = state_file.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(migrated, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            tmp.replace(state_file)
+        except Exception as e:
+            print(f"(警告) 持久化迁移后状态失败: {e}")
+    return migrated
+
+
+
 
 
 async def cmd_login(args):
@@ -210,14 +259,34 @@ async def _cmd_sync_ima(config, args):
         knowledge_base_id=knowledge_base_id,
     )
 
-    # Load per-video local sync state for kb-association recovery
+    # Load per-(video, kb) local sync state for kb-association recovery.
+    # The CLI shares the same on-disk format as the Gradio UI so a sync
+    # initiated from either entry point won't pollute the other's cache.
     _ima_state_file = Path("data/ima_sync_state.json")
-    ima_sync_state = {}
-    try:
-        if _ima_state_file.exists():
-            ima_sync_state = json.loads(_ima_state_file.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"(警告) 读取同步状态失败: {e}")
+    ima_sync_state = _load_ima_state_for_cli(_ima_state_file)
+    _STATE_KEY_SEP = "::"
+
+    def _state_key(vid: str, kb: str) -> str:
+        return f"{vid}{_STATE_KEY_SEP}{kb or ''}"
+
+    def _decide(vid: str, kb: str, folder: str) -> str:
+        """Decide what to do when an existing note is found.
+        Mirrors app._kb_state_decision so the CLI/UI agree.
+        Returns one of "skip" / "attempt_kb" / "retry_kb" / "retry_folder".
+        """
+        if not kb:
+            return "skip"
+        key = _state_key(vid, kb)
+        st = ima_sync_state.get(key)
+        if not st:
+            return "attempt_kb"
+        prev_kb_added = bool(st.get("kb_added"))
+        prev_folder = st.get("kb_folder_id", "") or ""
+        if prev_kb_added and prev_folder == (folder or ""):
+            return "skip"
+        if prev_kb_added:
+            return "retry_folder"
+        return "retry_kb"
 
     def _save_state():
         _ima_state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -260,83 +329,73 @@ async def _cmd_sync_ima(config, args):
             title = card.get("title", "未知")
             existing = await ima.check_document_exists(vid)
             if existing:
-                st = ima_sync_state.get(vid, {})
-                prev_kb_added = st.get("kb_added", False)
+                kb_active = bool(knowledge_base_id) and bool(ima.knowledge_base_id)
+                state_key = _state_key(vid, knowledge_base_id or "")
+                decision = _decide(vid, knowledge_base_id or "", kb_folder_id)
 
-                if not knowledge_base_id or not ima.knowledge_base_id:
-                    # No KB configured — truly done
+                if decision == "skip":
                     print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
                     synced += 1
-                elif vid in ima_sync_state and prev_kb_added:
-                    # Already associated — truly done
+                    continue
+
+                if not kb_active:
                     print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
                     synced += 1
-                elif vid in ima_sync_state:
-                    # Known failure: kb_added=False — retry only add_knowledge
-                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，重试知识库关联...")
-                    try:
-                        await ima.add_to_knowledge_base(
-                            existing, f"[{vid}] {title}", kb_folder_id)
-                        kb_added += 1
-                        kb_retried += 1
-                        synced += 1
-                        print(f"  ↳ 知识库关联恢复成功: {existing}")
-                        ima_sync_state[vid] = {
-                            "note_id": existing,
-                            "knowledge_base_id": knowledge_base_id,
-                            "kb_added": True, "kb_error": "",
-                            "synced_at": _dt.now().isoformat(),
-                        }
-                        _save_state()
-                    except Exception as e:
-                        kb_failed += 1
-                        print(f"  ↳ 知识库关联重试失败: {e}")
-                        ima_sync_state[vid] = {
-                            "note_id": existing,
-                            "knowledge_base_id": knowledge_base_id,
-                            "kb_added": False, "kb_error": str(e),
-                            "synced_at": _dt.now().isoformat(),
-                        }
-                        _save_state()
+                    continue
+
+                # One of: attempt_kb / retry_kb / retry_folder
+                if decision == "attempt_kb":
+                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，未关联过该知识库，尝试关联...")
+                elif decision == "retry_folder":
+                    prev_folder = (
+                        ima_sync_state.get(state_key, {}).get("kb_folder_id", "") or ""
+                    )
+                    print(
+                        f"[{i+1}/{len(cards)}] {title} — 已存在，目标文件夹不同"
+                        f"（{prev_folder or '根'} → {kb_folder_id or '根'}），重新关联..."
+                    )
                 else:
-                    # Legacy: no sync state entry, note exists, kb configured
-                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，尝试关联知识库...")
-                    try:
-                        await ima.add_to_knowledge_base(
-                            existing, f"[{vid}] {title}", kb_folder_id)
-                        kb_added += 1
-                        kb_retried += 1
-                        synced += 1
-                        print(f"  ↳ 知识库关联成功: {existing}")
-                        ima_sync_state[vid] = {
-                            "note_id": existing,
-                            "knowledge_base_id": knowledge_base_id,
-                            "kb_added": True, "kb_error": "",
-                            "synced_at": _dt.now().isoformat(),
-                        }
-                        _save_state()
-                    except Exception as e:
-                        kb_failed += 1
-                        print(f"  ↳ 知识库关联失败: {e}")
-                        ima_sync_state[vid] = {
-                            "note_id": existing,
-                            "knowledge_base_id": knowledge_base_id,
-                            "kb_added": False, "kb_error": str(e),
-                            "synced_at": _dt.now().isoformat(),
-                        }
-                        _save_state()
+                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，重试知识库关联...")
+                try:
+                    await ima.add_to_knowledge_base(
+                        existing, f"[{vid}] {title}", kb_folder_id)
+                    kb_added += 1
+                    kb_retried += 1
+                    synced += 1
+                    print(f"  ↳ 知识库关联成功: {existing}")
+                    ima_sync_state[state_key] = {
+                        "note_id": existing,
+                        "knowledge_base_id": knowledge_base_id,
+                        "kb_added": True, "kb_error": "",
+                        "kb_folder_id": kb_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_state()
+                except Exception as e:
+                    kb_failed += 1
+                    print(f"  ↳ 知识库关联失败: {e}")
+                    ima_sync_state[state_key] = {
+                        "note_id": existing,
+                        "knowledge_base_id": knowledge_base_id,
+                        "kb_added": False, "kb_error": str(e),
+                        "kb_folder_id": kb_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_state()
                 continue
             result = await ima.create_document(
                 title=f"[{vid}] {title}", content=card, folder_id=folder_id,
                 kb_folder_id=kb_folder_id,
             )
             synced += 1
-            # Persist local sync state
-            ima_sync_state[vid] = {
+            # Persist local sync state under (vid, kb) composite key so a
+            # different KB sync later doesn't see this entry as a hit.
+            ima_sync_state[_state_key(vid, knowledge_base_id or "")] = {
                 "note_id": result.note_id,
-                "knowledge_base_id": knowledge_base_id,
+                "knowledge_base_id": knowledge_base_id or "",
                 "kb_added": result.kb_added,
                 "kb_error": result.kb_error,
+                "kb_folder_id": kb_folder_id,
                 "synced_at": _dt.now().isoformat(),
             }
             _save_state()
