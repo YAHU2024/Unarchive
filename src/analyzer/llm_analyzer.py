@@ -22,6 +22,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PROMPTS_DIR = _PROJECT_ROOT / "prompts"
 
 
+class LLMQuotaExceededError(RuntimeError):
+    """LLM API 配额/余额耗尽，不可重试，调用方应停止管道并持久化部分结果。"""
+
+
 class LLMAnalyzer:
     """LLM 视频内容分析器
 
@@ -104,10 +108,42 @@ class LLMAnalyzer:
         logger.info("视频分析完成: %s", title)
         return merged
 
+    @staticmethod
+    def _is_quota_error(status_code: int, body: str) -> bool:
+        """Detect LLM quota/balance exhaustion from HTTP status + response body.
+
+        Criteria (any match = quota exhausted, no retry):
+        - HTTP 402 (Payment Required) — always quota
+        - Error code in JSON body: insufficient_quota, insufficient_balance, quota_exceeded
+        - Error message contains: quota, insufficient, balance, exceeded (case-insensitive)
+        """
+        if status_code == 402:
+            return True
+        body_lower = body.lower()
+        quota_keywords = ["insufficient_quota", "quota_exceeded",
+                          "insufficient_balance", "balance insufficient",
+                          "quota exceeded", "exceeded your quota",
+                          "exceeded your current quota"]
+        if any(kw in body_lower for kw in quota_keywords):
+            return True
+        # Try parsing OpenAI-compatible error JSON
+        try:
+            error_data = json.loads(body)
+            error_code = (error_data.get("error", {}).get("code", "") or "").lower()
+            if error_code in ("insufficient_quota", "insufficient_balance", "quota_exceeded"):
+                return True
+            error_type = (error_data.get("error", {}).get("type", "") or "").lower()
+            if error_type == "insufficient_quota":
+                return True
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return False
+
     async def _call_llm(self, prompt: str, system_prompt: str = None) -> str:
         """调用 LLM API（OpenAI 兼容接口格式）
 
         自动重试最多 _max_retries 次，支持 DeepSeek 和通义千问。
+        检测到配额/余额耗尽时立即抛出 LLMQuotaExceededError，不重试。
 
         Args:
             prompt: 用户提示词
@@ -117,7 +153,8 @@ class LLMAnalyzer:
             LLM 响应的文本内容
 
         Raises:
-            httpx.HTTPStatusError: API 返回非 200 状态码
+            LLMQuotaExceededError: 配额/余额耗尽，不可重试
+            httpx.HTTPStatusError: API 返回非 200 状态码（非配额）
             RuntimeError: 所有重试均失败
         """
         url = f"{self.base_url}/v1/chat/completions"
@@ -136,6 +173,7 @@ class LLMAnalyzer:
 
         last_error = None
         last_response_body = None  # 用于记录 API 响应体，辅助诊断
+        quota_exhausted = False   # 标记是否已检测到配额耗尽
         for attempt in range(1, self._max_retries + 1):
             try:
                 logger.debug("LLM API 调用 (第 %d/%d 次), provider=%s, model=%s",
@@ -143,19 +181,28 @@ class LLMAnalyzer:
 
                 response = await self._client.post(url, json=payload)
 
-                # 非 200 时主动读取响应体，再抛出异常
+                # 非 200 时主动读取响应体，检查是否配额耗尽
                 if response.status_code != 200:
                     last_response_body = response.text[:500]
                     logger.warning(
                         "LLM API 返回异常状态 %d (第 %d 次): %s",
                         response.status_code, attempt, last_response_body,
                     )
+                    if self._is_quota_error(response.status_code, last_response_body):
+                        quota_exhausted = True
+                        raise LLMQuotaExceededError(
+                            f"LLM 配额/余额耗尽 (HTTP {response.status_code}): {last_response_body[:200]}"
+                        )
                     response.raise_for_status()
 
                 data = response.json()
                 content = data["choices"][0]["message"]["content"]
                 logger.debug("LLM 响应长度: %d 字符", len(content))
                 return content
+
+            except LLMQuotaExceededError:
+                # Propagate immediately — quota errors are never retried
+                raise
 
             except httpx.HTTPStatusError as e:
                 last_error = e
@@ -190,6 +237,12 @@ class LLMAnalyzer:
                     import asyncio
                     await asyncio.sleep(2 ** attempt)
 
+        # All retries exhausted — if it was a quota pattern, raise accordingly
+        if quota_exhausted:
+            body_snippet = (last_response_body or "")[:200]
+            raise LLMQuotaExceededError(
+                f"LLM API 调用在 {self._max_retries} 次重试后仍报告配额耗尽: {body_snippet}"
+            )
         # 用 repr 兜底，确保错误信息不为空
         error_detail = str(last_error) or repr(last_error)
         raise RuntimeError(f"LLM API 调用在 {self._max_retries} 次重试后仍失败: {error_detail}")

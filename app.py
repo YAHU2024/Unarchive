@@ -25,7 +25,7 @@ from src.scraper.base import VideoAvailability
 from src.scraper.bilibili import BilibiliScraper
 from src.scraper.douyin import DouyinScraper
 from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
-from src.analyzer.llm_analyzer import LLMAnalyzer
+from src.analyzer.llm_analyzer import LLMAnalyzer, LLMQuotaExceededError
 from src.sync.feishu import FeishuSync
 from src.sync.ima import ImaSync, ImaQuotaExceededError
 from src.sync.ima_state import (
@@ -256,56 +256,71 @@ async def process_videos(
             yield results, logs, current, gr.update(value=idx, maximum=total, label=f"进度 {idx}/{total}")
 
             existing = _load_knowledge_card(video.video_id)
+            resume_llm = False  # 是否从部分卡片恢复（跳过转录，仅重跑 LLM）
+
             if existing:
-                logs += _format_log(f"  ↳ 已存在知识卡片，跳过")
-                results.append(existing)
-                total_processed += 1
-                stats["skipped"] += 1
-                yield results, logs, current, gr.update()
-                continue
+                if existing.get("_partial"):
+                    # Partial card: transcript is saved, LLM analysis was missing.
+                    # Resume from LLM step without re-fetching the transcript.
+                    resume_llm = True
+                    transcript_text = existing.get("transcript", "")
+                    transcript_source = existing.get("transcript_source", "unknown")
+                    real_author = existing.get("author", video.author)
+                    logs += _format_log(
+                        f"  ↳ 检测到部分知识卡片（缺少 LLM 分析），"
+                        f"跳过转录，直接重新分析..."
+                    )
+                else:
+                    logs += _format_log(f"  ↳ 已存在知识卡片，跳过")
+                    results.append(existing)
+                    total_processed += 1
+                    stats["skipped"] += 1
+                    yield results, logs, current, gr.update()
+                    continue
 
-            availability = await scraper.check_video_available(video.video_id)
-            if availability == VideoAvailability.UNAVAILABLE:
-                logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），永久跳过")
-                stats["unavailable"] += 1
-                yield results, logs, current, gr.update()
-                continue
-            elif availability == VideoAvailability.TEMPORARY_ERROR:
-                logs += _format_log(f"  ↳ 视频可用性检查临时失败（网络/风控等），跳过本次，下次重试")
-                stats["temp_error"] = stats.get("temp_error", 0) + 1
-                yield results, logs, current, gr.update()
-                continue
+            if not resume_llm:
+                availability = await scraper.check_video_available(video.video_id)
+                if availability == VideoAvailability.UNAVAILABLE:
+                    logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），永久跳过")
+                    stats["unavailable"] += 1
+                    yield results, logs, current, gr.update()
+                    continue
+                elif availability == VideoAvailability.TEMPORARY_ERROR:
+                    logs += _format_log(f"  ↳ 视频可用性检查临时失败（网络/风控等），跳过本次，下次重试")
+                    stats["temp_error"] = stats.get("temp_error", 0) + 1
+                    yield results, logs, current, gr.update()
+                    continue
 
-            # a. 逐字稿
-            transcript_text = ""
-            transcript_source = "unknown"
-            try:
-                t0 = time.time()
-                segments, source = await get_transcript(
-                    video.video_id, scraper, whisper_transcriber,
-                    download_headers=download_headers,
-                )
-                transcript_text = SubtitleParser.segments_to_text(segments)
-                transcript_source = source
-                logs += _format_log(
-                    f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段, "
-                    f"耗时 {time.time() - t0:.1f}s)"
-                )
-            except RuntimeError as e:
-                logs += _format_log(f"  ↳ 逐字稿获取失败: {e}")
-                stats["transcript_fail"] += 1
-                yield results, logs, current, gr.update()
-                continue
+                # a. 逐字稿
+                transcript_text = ""
+                transcript_source = "unknown"
+                try:
+                    t0 = time.time()
+                    segments, source = await get_transcript(
+                        video.video_id, scraper, whisper_transcriber,
+                        download_headers=download_headers,
+                    )
+                    transcript_text = SubtitleParser.segments_to_text(segments)
+                    transcript_source = source
+                    logs += _format_log(
+                        f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段, "
+                        f"耗时 {time.time() - t0:.1f}s)"
+                    )
+                except RuntimeError as e:
+                    logs += _format_log(f"  ↳ 逐字稿获取失败: {e}")
+                    stats["transcript_fail"] += 1
+                    yield results, logs, current, gr.update()
+                    continue
 
-            # b. 作者修正
-            real_author = video.author
-            owner = await scraper.get_video_owner(video.video_id)
-            if owner:
-                if owner != video.author:
-                    logs += _format_log(f"  ↳ 作者修正: {video.author!r} → {owner!r}")
-                real_author = owner
+                # b. 作者修正
+                real_author = video.author
+                owner = await scraper.get_video_owner(video.video_id)
+                if owner:
+                    if owner != video.author:
+                        logs += _format_log(f"  ↳ 作者修正: {video.author!r} → {owner!r}")
+                    real_author = owner
 
-            # c. LLM 分析
+            # c. LLM 分析（新卡片和恢复卡片共用）
             try:
                 t0 = time.time()
                 logs += _format_log(f"  ↳ 正在调用 LLM 分析...")
@@ -317,9 +332,42 @@ async def process_videos(
                     transcript=transcript_text,
                 )
                 logs += _format_log(f"  ↳ LLM 分析完成 (耗时 {time.time() - t0:.1f}s)")
+            except LLMQuotaExceededError as e:
+                logs += _format_log(f"  ↳ LLM 配额耗尽: {e}")
+                stats["llm_fail"] += 1
+                # Save partial card with transcript so next run can resume
+                partial = {
+                    "video_id": video.video_id,
+                    "title": video.title,
+                    "author": real_author,
+                    "source_url": video.url,
+                    "platform": platform,
+                    "transcript_source": transcript_source,
+                    "transcript": transcript_text,
+                    "_partial": True,
+                }
+                _save_knowledge_card(video.video_id, partial)
+                logs += _format_log(
+                    f"  ↳ 部分卡片已保存（含转录稿，下次运行将自动恢复），停止处理后续视频"
+                )
+                yield results, logs, current, gr.update()
+                break
             except Exception as e:
                 logs += _format_log(f"  ↳ LLM 分析失败: {e}")
                 stats["llm_fail"] += 1
+                # Save partial card so transcript work is not wasted on re-run
+                partial = {
+                    "video_id": video.video_id,
+                    "title": video.title,
+                    "author": real_author,
+                    "source_url": video.url,
+                    "platform": platform,
+                    "transcript_source": transcript_source,
+                    "transcript": transcript_text,
+                    "_partial": True,
+                }
+                _save_knowledge_card(video.video_id, partial)
+                logs += _format_log(f"  ↳ 部分卡片已保存（含转录稿，下次运行将自动恢复）")
                 yield results, logs, current, gr.update()
                 continue
 
@@ -345,12 +393,17 @@ async def process_videos(
         # 汇总
         elapsed = time.time() - t_start
         temp_error_count = stats.get("temp_error", 0)
+        partial_count = stats.get("llm_fail", 0)
         logs += _format_log(
             f"全部完成！处理 {total_processed}/{total} 个 (跳过 {stats['skipped']}、"
             f"不可用 {stats['unavailable']}、临时错误 {temp_error_count}、"
-            f"转录失败 {stats['transcript_fail']}、LLM失败 {stats['llm_fail']})，"
+            f"转录失败 {stats['transcript_fail']}、LLM失败 {partial_count})，"
             f"总耗时 {elapsed:.0f}s"
         )
+        if partial_count:
+            logs += _format_log(
+                f"注意: {partial_count} 个视频仅保存了部分卡片（含转录稿），下次运行将自动恢复 LLM 分析"
+            )
         current = f"全部完成！共处理 {total_processed}/{total} 个视频"
         yield results, logs, current, gr.update(value=total, maximum=total, label=f"进度 {total}/{total}")
 
