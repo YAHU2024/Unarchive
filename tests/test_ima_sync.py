@@ -10,7 +10,6 @@ import pytest
 
 from src.sync.ima import (
     ImaSync,
-    CreateDocumentResult,
     ImaQuotaExceededError,
     ImaRateLimitError,
 )
@@ -138,7 +137,7 @@ class TestTitleAndDedup:
             result2 = await ima.create_document(
                 title="[BV123] Test", content={"title": "Test"}
             )
-            assert result2.note_id == "note_new_123"
+            assert result2 == "note_new_123"
 
 
 # ---------------------------------------------------------------------------
@@ -195,45 +194,18 @@ class TestQuotaAndRateLimit:
             assert call_count == ima._max_retry + 1
 
     @pytest.mark.asyncio
-    async def test_quota_stops_create_document(self):
-        """Quota error during add_knowledge is propagated from create_document,
-        and the already-created note_id is attached so the caller can recover
-        the partial-success state on the next run."""
-        ima = _make_ima_sync(knowledge_base_id="kb_1")
+    async def test_quota_during_add_knowledge_lets_caller_recover(self):
+        """create_document is now a single-step (import_doc) returning the note_id.
 
-        # First call: import_doc succeeds
-        # Second call: add_knowledge raises quota error
-        responses = [
-            {"note_id": "note_quota_test"},  # import_doc success
-        ]
+        When knowledge_base_id is configured and add_to_knowledge_base hits quota
+        after import_doc succeeded, the caller already has the note_id from
+        create_document's return value, so it can persist a recoverable state
+        before breaking out of the sync loop."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+        calls: list[tuple[str, dict]] = []
 
         async def mock_call(path, body, _retry=0):
-            if path == ima.PATH_IMPORT_DOC:
-                return responses.pop(0)
-            elif path == ima.PATH_ADD_KNOWLEDGE:
-                raise ImaQuotaExceededError("daily quota exceeded")
-            return {}
-
-        with patch.object(ima, "_call", side_effect=mock_call):
-            with pytest.raises(ImaQuotaExceededError) as exc_info:
-                await ima.create_document(
-                    title="[BV123] Test", content={"title": "Test"},
-                    kb_folder_id="folder_abc",
-                )
-            # Partial success: import_doc 已成功，note_id 必须挂在异常上，
-            # 调用方据此写入 ima_sync_state.json，下次运行通过
-            # check_document_exists + add_to_knowledge_base 恢复 KB 关联。
-            assert exc_info.value.note_id == "note_quota_test"
-
-    @pytest.mark.asyncio
-    async def test_quota_during_kb_preserves_note_id(self):
-        """When knowledge_base_id is set and add_knowledge hits quota after
-        import_doc succeeded, the ImaQuotaExceededError must carry the just-
-        created note_id so the caller can persist a recoverable state."""
-        ima = _make_ima_sync(knowledge_base_id="kb_1")
-        captured_note_id = []
-
-        async def mock_call(path, body, _retry=0):
+            calls.append((path, body))
             if path == ima.PATH_IMPORT_DOC:
                 return {"note_id": "note_partial_kb"}
             if path == ima.PATH_ADD_KNOWLEDGE:
@@ -241,24 +213,27 @@ class TestQuotaAndRateLimit:
             return {}
 
         with patch.object(ima, "_call", side_effect=mock_call):
-            with pytest.raises(ImaQuotaExceededError) as exc_info:
-                await ima.create_document(
-                    title="[BV456] Partial",
-                    content={"title": "Partial KB"},
-                    kb_folder_id="folder_xyz",
-                )
-            captured_note_id.append(exc_info.value.note_id)
+            # Step 1: create_document returns note_id (str), matches base contract.
+            note_id = await ima.create_document(
+                title="[BV123] Test", content={"title": "Test"},
+            )
+            assert note_id == "note_partial_kb"
 
-        assert captured_note_id == ["note_partial_kb"], (
-            "Quota after import_doc must preserve note_id on the exception; "
-            "otherwise the caller's `break` leaves the just-created note "
-            "with no KB association and no recoverable state."
-        )
+            # Step 2: caller drives add_to_knowledge_base separately; quota
+            # surfaces here without a note_id attached.
+            with pytest.raises(ImaQuotaExceededError):
+                await ima.add_to_knowledge_base(
+                    note_id, "[BV123] Test", "folder_abc",
+                )
+
+        # Verify both calls happened in the documented order.
+        assert [p for p, _ in calls] == [ima.PATH_IMPORT_DOC, ima.PATH_ADD_KNOWLEDGE]
 
     @pytest.mark.asyncio
-    async def test_quota_during_import_doc_has_no_note_id(self):
-        """If quota is hit during import_doc itself, note_id stays empty —
-        no note was created, so there's nothing to recover."""
+    async def test_quota_during_import_doc_raises_without_note_id(self):
+        """If quota is hit during import_doc itself, create_document raises
+        ImaQuotaExceededError with no note_id (no note was created, so
+        there's nothing to recover)."""
         ima = _make_ima_sync(knowledge_base_id="kb_1")
 
         async def mock_call(path, body, _retry=0):
@@ -267,12 +242,11 @@ class TestQuotaAndRateLimit:
             return {}
 
         with patch.object(ima, "_call", side_effect=mock_call):
-            with pytest.raises(ImaQuotaExceededError) as exc_info:
+            with pytest.raises(ImaQuotaExceededError):
                 await ima.create_document(
                     title="[BV789] NoNote",
                     content={"title": "NoNote"},
                 )
-            assert exc_info.value.note_id == ""
 
 
 # ---------------------------------------------------------------------------
@@ -417,64 +391,68 @@ class TestBusinessErrorHandling:
 # ---------------------------------------------------------------------------
 
 class TestPartialSuccess:
-    """create_document returns CreateDocumentResult distinguishing kb status."""
+    """KB association is a separate step driven by the caller, not part of
+    create_document's contract. create_document only does import_doc and
+    returns the note_id (str); KB status lives in ima_sync_state.json."""
 
     @pytest.mark.asyncio
     async def test_create_document_no_kb(self):
-        """Without knowledge_base_id, result has no kb info (both flags false)."""
+        """Without knowledge_base_id, create_document only calls import_doc
+        and returns the note_id (str) — matches SyncBase contract."""
         ima = _make_ima_sync()  # no knowledge_base_id
         with patch.object(ima, "_call", AsyncMock(return_value={"note_id": "note_1"})):
-            result = await ima.create_document(
+            note_id = await ima.create_document(
                 title="[BV123] Test", content={"title": "Test"}
             )
-            assert result.note_id == "note_1"
-            assert result.kb_added is False
-            assert result.kb_error == ""
+            assert note_id == "note_1"
 
     @pytest.mark.asyncio
-    async def test_create_document_kb_success(self):
-        """With knowledge_base_id, kb_added=True on successful add_knowledge."""
+    async def test_create_document_returns_str_when_kb_configured(self):
+        """create_document still returns a plain str note_id even when KB is
+        configured; KB association is the caller's job."""
         ima = _make_ima_sync(knowledge_base_id="kb_1")
         call_index = 0
 
         async def mock_call(path, body, _retry=0):
             nonlocal call_index
             call_index += 1
-            if call_index == 1:
-                return {"note_id": "note_kb_ok"}
-            # add_knowledge response
+            # Only import_doc should fire from create_document.
+            assert path == ima.PATH_IMPORT_DOC
+            return {"note_id": "note_kb_ok"}
+
+        with patch.object(ima, "_call", side_effect=mock_call):
+            note_id = await ima.create_document(
+                title="[BV123] Test", content={"title": "Test"},
+            )
+            assert note_id == "note_kb_ok"
+            assert isinstance(note_id, str)
+            assert call_index == 1, "create_document must NOT call add_knowledge"
+
+    @pytest.mark.asyncio
+    async def test_kb_failure_propagates_from_add_to_knowledge_base(self):
+        """When add_to_knowledge_base fails (non-quota), the exception surfaces
+        so the caller can persist kb_added=False to ima_sync_state.json."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        async def mock_call(path, body, _retry=0):
+            if path == ima.PATH_IMPORT_DOC:
+                return {"note_id": "note_kb_fail"}
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                raise RuntimeError("kb association network error")
             return {}
 
         with patch.object(ima, "_call", side_effect=mock_call):
-            result = await ima.create_document(
+            # Step 1: create_document succeeds, caller gets the note_id.
+            note_id = await ima.create_document(
                 title="[BV123] Test", content={"title": "Test"},
-                kb_folder_id="folder_abc",
             )
-            assert result.note_id == "note_kb_ok"
-            assert result.kb_added is True
-            assert result.kb_error == ""
+            assert note_id == "note_kb_fail"
 
-    @pytest.mark.asyncio
-    async def test_create_document_kb_failure(self):
-        """kb_added=False, kb_error set when add_knowledge fails (non-quota)."""
-        ima = _make_ima_sync(knowledge_base_id="kb_1")
-        call_index = 0
-
-        async def mock_call(path, body, _retry=0):
-            nonlocal call_index
-            call_index += 1
-            if call_index == 1:
-                return {"note_id": "note_kb_fail"}
-            raise RuntimeError("kb association network error")
-
-        with patch.object(ima, "_call", side_effect=mock_call):
-            result = await ima.create_document(
-                title="[BV123] Test", content={"title": "Test"},
-                kb_folder_id="folder_abc",
-            )
-            assert result.note_id == "note_kb_fail"
-            assert result.kb_added is False
-            assert "kb association network error" in result.kb_error
+            # Step 2: add_to_knowledge_base fails; caller can persist state.
+            with pytest.raises(RuntimeError, match="kb association network error"):
+                await ima.add_to_knowledge_base(
+                    note_id, "[BV123] Test", "folder_abc",
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -511,12 +489,21 @@ class TestTwoRoundSync:
 
     @pytest.mark.asyncio
     async def test_two_round_recovery_full(self):
-        """Round 1: create_document + KB fails → Round 2: check_document_exists
-        finds note, add_to_knowledge_base succeeds, import_doc NOT called."""
+        """Round 1: create_document returns note_id, add_to_knowledge_base
+        fails. Caller persists {note_id, kb_added=False}. Round 2:
+        check_document_exists finds the note, add_to_knowledge_base succeeds,
+        import_doc NOT called.
+
+        This exercises the app-level recovery logic in sync_to_ima(): when
+        ima_sync_state records kb_added=False, the next sync finds the existing
+        note via check_document_exists and calls add_to_knowledge_base directly
+        — without ever hitting import_doc.
+        """
         ima = _make_ima_sync(knowledge_base_id="kb_1")
 
         # ===================== Round 1 =====================
         round1_paths = []
+        round1_persisted: dict = {}
 
         async def round1_call(path, body, _retry=0):
             round1_paths.append(path)
@@ -527,15 +514,28 @@ class TestTwoRoundSync:
             return {}
 
         with patch.object(ima, "_call", side_effect=round1_call):
-            result = await ima.create_document(
+            # Step 1: create_document returns note_id (single-step now).
+            note_id = await ima.create_document(
                 title="[BV123] Recovery Test",
                 content={"title": "Test"},
-                kb_folder_id="folder_abc",
             )
-            assert result.note_id == "note_two_round"
-            assert result.kb_added is False
-            assert "kb network error in round 1" in result.kb_error
+            assert note_id == "note_two_round"
 
+            # Step 2: caller persists recoverable state right away.
+            round1_persisted["note_id"] = note_id
+            round1_persisted["kb_added"] = False
+
+            # Step 3: add_to_knowledge_base fails (non-quota). The exception
+            # does NOT carry note_id — caller already has it.
+            with pytest.raises(RuntimeError, match="kb network error in round 1"):
+                await ima.add_to_knowledge_base(
+                    note_id, "[BV123] Recovery Test", "folder_abc",
+                )
+
+        assert round1_persisted == {
+            "note_id": "note_two_round",
+            "kb_added": False,
+        }
         assert ima.PATH_IMPORT_DOC in round1_paths
         assert ima.PATH_ADD_KNOWLEDGE in round1_paths
 

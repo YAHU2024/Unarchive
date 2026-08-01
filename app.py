@@ -668,51 +668,65 @@ async def sync_to_ima(
                     _save_ima_sync_state(ima_sync_state)
                 continue
 
-            # 创建 ima 笔记
+            # 创建 ima 笔记（两步语义：先 import_doc，再按需 add_to_knowledge_base）
             try:
-                result = await ima_sync.create_document(
+                note_id = await ima_sync.create_document(
                     title=f"[{vid}] {card.get('title', '未知')}",
                     content=card,
                     folder_id=folder_id,
-                    kb_folder_id=resolved_folder_id,
                 )
-                synced += 1
-                # Persist local sync state for future kb-association recovery.
-                # Key by (vid, kb_id) so subsequent runs to a different KB
-                # don't see this entry as an idempotent hit.
-                ima_sync_state[_state_key(vid, knowledge_base_id or "")] = {
-                    "note_id": result.note_id,
-                    "knowledge_base_id": knowledge_base_id or "",
-                    "kb_added": result.kb_added,
-                    "kb_error": result.kb_error,
-                    "kb_folder_id": resolved_folder_id,
-                    "synced_at": _dt.now().isoformat(),
-                }
-                _save_ima_sync_state(ima_sync_state)
-                if knowledge_base_id:
-                    if result.kb_added:
-                        kb_added += 1
-                        logs += _format_log(f"  ↳ 笔记 + 知识库 创建成功: {result.note_id}")
-                    elif result.kb_error:
-                        kb_failed += 1
-                        logs += _format_log(
-                            f"  ↳ 笔记创建成功 ({result.note_id})，但知识库关联失败: {result.kb_error}"
-                        )
-                    else:
-                        logs += _format_log(f"  ↳ 笔记创建成功: {result.note_id}")
-                else:
-                    logs += _format_log(f"  ↳ 笔记创建成功: {result.note_id}")
             except ImaQuotaExceededError as e:
+                # import_doc 阶段就已耗尽：没有笔记被创建，无需持久化部分成功状态。
                 logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
                 logger.warning("sync_to_ima: ima 配额耗尽，提前结束")
-                # Partial success: import_doc 阶段已成功，note_id 由 create_document
-                # 挂在异常上。把"未完成知识库关联"状态写入 ima_sync_state.json，
-                # 下次运行通过 check_document_exists + add_to_knowledge_base 恢复，
-                # 避免这条笔记的 KB 关联永久丢失。
-                if getattr(e, "note_id", ""):
-                    partial_note_id = e.note_id
-                    ima_sync_state[_state_key(vid, knowledge_base_id or "")] = {
-                        "note_id": partial_note_id,
+                break
+            except Exception as e:
+                logs += _format_log(f"  ↳ 笔记创建失败: {e}")
+                logger.warning("sync_to_ima: 笔记创建失败 vid=%s: %s", vid, e)
+                continue
+
+            synced += 1
+            # 笔记创建成功。立刻把 note_id + kb_added=False 写入状态，确保后续
+            # KB 关联失败（任何原因：网络、配额耗尽、进程被中断）都不会让这条
+            # 笔记"孤立无主"——下次同步会通过 check_document_exists 找到它，
+            # 并通过 add_to_knowledge_base 单独恢复 KB 关联。
+            state_key = _state_key(vid, knowledge_base_id or "")
+            ima_sync_state[state_key] = {
+                "note_id": note_id,
+                "knowledge_base_id": knowledge_base_id or "",
+                "kb_added": False,
+                "kb_error": "",
+                "kb_folder_id": resolved_folder_id,
+                "synced_at": _dt.now().isoformat(),
+            }
+            _save_ima_sync_state(ima_sync_state)
+
+            # 第二步：可选加入知识库
+            if knowledge_base_id and ima_sync.knowledge_base_id:
+                try:
+                    await ima_sync.add_to_knowledge_base(
+                        note_id,
+                        f"[{vid}] {card.get('title', '未知')}",
+                        resolved_folder_id,
+                    )
+                    kb_added += 1
+                    ima_sync_state[state_key] = {
+                        "note_id": note_id,
+                        "knowledge_base_id": knowledge_base_id or "",
+                        "kb_added": True,
+                        "kb_error": "",
+                        "kb_folder_id": resolved_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_ima_sync_state(ima_sync_state)
+                    logs += _format_log(f"  ↳ 笔记 + 知识库 创建成功: {note_id}")
+                except ImaQuotaExceededError as e:
+                    # 配额耗尽：note_id 已在 ima_sync_state 里持久化（kb_added=False），
+                    # 下次运行通过 check_document_exists + add_to_knowledge_base 恢复。
+                    logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
+                    logger.warning("sync_to_ima: 配额耗尽于 kb 关联，提前结束")
+                    ima_sync_state[state_key] = {
+                        "note_id": note_id,
                         "knowledge_base_id": knowledge_base_id or "",
                         "kb_added": False,
                         "kb_error": f"ImaQuotaExceededError: {e}",
@@ -721,16 +735,32 @@ async def sync_to_ima(
                     }
                     _save_ima_sync_state(ima_sync_state)
                     logs += _format_log(
-                        f"  ↳ 笔记 {partial_note_id} 已创建但未关联知识库，"
+                        f"  ↳ 笔记 {note_id} 已创建但未关联知识库，"
                         f"状态已保存，下次运行恢复"
                     )
                     logger.info(
                         "sync_to_ima: 配额耗尽时已保存部分成功状态 vid=%s note_id=%s",
-                        vid, partial_note_id,
+                        vid, note_id,
                     )
-                break
-            except Exception as e:
-                logs += _format_log(f"  ↳ 笔记创建失败: {e}")
+                    break
+                except Exception as e:
+                    # 笔记已建成功，KB 关联失败仅记录，不中断整体同步。
+                    kb_failed += 1
+                    logs += _format_log(
+                        f"  ↳ 笔记创建成功 ({note_id})，但知识库关联失败: {e}"
+                    )
+                    logger.warning("sync_to_ima: kb 关联失败 vid=%s: %s", vid, e)
+                    ima_sync_state[state_key] = {
+                        "note_id": note_id,
+                        "knowledge_base_id": knowledge_base_id or "",
+                        "kb_added": False,
+                        "kb_error": str(e),
+                        "kb_folder_id": resolved_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_ima_sync_state(ima_sync_state)
+            else:
+                logs += _format_log(f"  ↳ 笔记创建成功: {note_id}")
 
             yield logs, gr.update()
 

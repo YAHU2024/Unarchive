@@ -17,7 +17,6 @@ import logging
 import re
 import time
 from datetime import datetime
-from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple
 
 import httpx
@@ -27,26 +26,14 @@ from .base import SyncBase
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class CreateDocumentResult:
-    """ima 笔记创建结果，区分部分成功状态"""
-    note_id: str           # 笔记 ID（创建成功时有值）
-    kb_added: bool = False  # 知识库关联是否成功
-    kb_error: str = ""      # 知识库关联失败原因（成功时为空）
-
-
 class ImaQuotaExceededError(RuntimeError):
     """ima 每日配额耗尽（code 200005），不可重试，应停止同步。
 
-    Attributes:
-        note_id: 如果在 import_doc 成功后、add_knowledge 失败时抛出，会携带
-                 已创建笔记的 note_id，让调用方能持久化"未完成知识库关联"状态，
-                 下次运行通过 check_document_exists + add_to_knowledge_base 恢复。
+    Note:
+        "create_document()" 仅做 import_doc 一步，失败时本异常没有 note_id；
+        KB 关联由调用方显式调 ``add_to_knowledge_base(note_id, ...)``，部分成功
+        状态（笔记已建、KB 未关联）由调用方通过 ``ima_sync_state.json`` 持久化。
     """
-
-    def __init__(self, msg: str = "", note_id: str = ""):
-        super().__init__(msg or "请求超量，请明日再试")
-        self.note_id = note_id or ""
 
 
 class ImaRateLimitError(RuntimeError):
@@ -281,18 +268,23 @@ class ImaSync(SyncBase):
     # 文档操作
     # ------------------------------------------------------------------
 
-    async def create_document(self, title: str, content: dict, folder_id: str = None, kb_folder_id: str = "") -> CreateDocumentResult:
-        """创建 ima 笔记（Markdown），成功后可选加入知识库
+    async def create_document(self, title: str, content: dict, folder_id: str = None) -> str:
+        """创建 ima 笔记（Markdown），返回笔记 ID（note_id）
 
-        返回 CreateDocumentResult，其中：
-        - note_id: 笔记 ID（创建成功时有值）
-        - kb_added: 知识库关联是否成功
-        - kb_error: 关联失败原因（成功时为空）
+        此方法只做 ``import_doc`` 一步，与基类 ``SyncBase.create_document() -> str``
+        契约一致；知识库关联是 ima 特有的扩展点，由调用方显式调
+        ``add_to_knowledge_base(note_id, title, kb_folder_id)`` 触发。
 
-        配额耗尽（ImaQuotaExceededError）时，import_doc 阶段成功但 add_knowledge
-        阶段失败，会把已创建的 note_id 挂到异常 .note_id 上重新抛出，调用方应在
-        break 之前把"未完成知识库关联"写进 ima_sync_state.json，下次运行通过
-        check_document_exists + add_to_knowledge_base 恢复关联。
+        调用方应按以下顺序组合两步：
+
+        1. ``note_id = await sync.create_document(...)`` —— 创建笔记并持久化
+           ``{note_id, kb_added=False}`` 状态到 ``ima_sync_state.json``，避免 KB
+           关联失败时这条笔记被丢失；
+        2. 若配置了 ``knowledge_base_id``，再调
+           ``await sync.add_to_knowledge_base(note_id, title, kb_folder_id)``；
+           成功则更新 ``kb_added=True``，失败（非配额异常）保留 ``kb_added=False``
+           让下次同步重试；配额耗尽则让同步循环 break，下次运行通过
+           ``check_document_exists + add_to_knowledge_base`` 恢复关联。
         """
         # 1. 构建并校验 Markdown
         markdown = self._build_markdown(title, content)
@@ -312,32 +304,7 @@ class ImaSync(SyncBase):
         data = await self._call(self.PATH_IMPORT_DOC, body)
         note_id = data.get("note_id", "")
         logger.info("ima 笔记创建成功: %s", note_id)
-
-        result = CreateDocumentResult(note_id=note_id)
-
-        # 3. 可选：加入知识库
-        if self.knowledge_base_id and note_id:
-            try:
-                await self._add_to_knowledge_base(note_id, title, kb_folder_id)
-                result.kb_added = True
-            except ImaQuotaExceededError as e:
-                # 配额耗尽需向上传递，让同步循环及时停止。
-                # 但笔记已经创建成功，把 note_id 挂到异常上，调用方可在 break
-                # 之前把"未完成知识库关联"状态写进 ima_sync_state.json，下次运行
-                # 通过 check_document_exists + add_to_knowledge_base 恢复关联，
-                # 避免这条笔记的 KB 关联永久丢失。
-                e.note_id = note_id
-                logger.warning(
-                    "ima 配额耗尽，已创建笔记 %s 未能加入知识库，下次运行将恢复",
-                    note_id,
-                )
-                raise
-            except Exception as e:
-                # 笔记已建成功，知识库失败仅告警，不中断整体同步
-                result.kb_error = str(e)
-                logger.warning("笔记已创建，但加入知识库失败: %s", e)
-
-        return result
+        return note_id
 
     async def update_document(self, document_id: str, content: dict) -> bool:
         """更新已有 ima 笔记
@@ -418,11 +385,21 @@ class ImaSync(SyncBase):
     # ------------------------------------------------------------------
 
     async def add_to_knowledge_base(self, note_id: str, title: str, kb_folder_id: str = "") -> None:
-        """Public: add an existing note to the knowledge base (media_type=11).
+        """Public: 将已有笔记关联到知识库（media_type=11）。
 
-        This is the public wrapper around _add_to_knowledge_base, used by the
-        kb-association recovery flow when a note already exists but kb_added
-        was previously False.
+        这是 ima 同步的扩展入口（KB 关联是 ima 特有的能力，不属于基类
+        ``SyncBase.create_document()`` 契约）。``create_document()`` 只做
+        ``import_doc``，关联需由调用方显式调用本方法。
+
+        典型用法：
+
+        1. ``create_document()`` 成功后，调用方立即把 ``{note_id, kb_added=False}``
+           写入 ``ima_sync_state.json``，确保即使 KB 关联失败也能被下次同步恢复；
+        2. 调用本方法，关联成功后更新 ``kb_added=True``；
+        3. 关联失败（非配额异常）保留 ``kb_added=False`` 让下次同步重试；
+           配额耗尽由 ``ImaQuotaExceededError`` 抛出，同步循环 break。
+
+        kb_folder_id 为空时加入知识库根目录，否则加入指定文件夹。
         """
         await self._add_to_knowledge_base(note_id, title, kb_folder_id)
 

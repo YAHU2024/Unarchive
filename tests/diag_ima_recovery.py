@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import get_config
-from src.sync.ima import ImaSync, CreateDocumentResult
+from src.sync.ima import ImaSync
 
 _TS = int(time.time())
 TEST_VIDEO_ID = f"IMA_RECOVERY_{_TS}"
@@ -102,10 +102,9 @@ async def main():
 
     note_id = None
     try:
-        result = await ima_no_kb.create_document(
+        note_id = await ima_no_kb.create_document(
             title=TEST_TITLE, content=TEST_CONTENT
         )
-        note_id = result.note_id
         if note_id:
             log("PASS", f"Note created: {note_id} (no KB)")
         else:

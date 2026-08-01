@@ -336,21 +336,49 @@ async def _cmd_sync_ima(config, args):
                     _save_state()
                 continue
             try:
-                result = await ima.create_document(
+                note_id = await ima.create_document(
                     title=f"[{vid}] {title}", content=card, folder_id=folder_id,
-                    kb_folder_id=kb_folder_id,
                 )
             except ImaQuotaExceededError as e:
-                # 配额耗尽：import_doc 已成功时 create_document 会把 note_id 挂到
-                # 异常上。持久化"未完成知识库关联"状态后停止同步，下次运行通过
-                # check_document_exists + add_to_knowledge_base 恢复 KB 关联，
-                # 避免这条笔记的 KB 关联永久丢失。
+                # import_doc 阶段就已耗尽：没有笔记被创建，无需持久化部分成功状态。
                 print(f"[{i+1}/{len(cards)}] {title} — ima 配额已耗尽，停止同步: {e}")
-                if getattr(e, "note_id", ""):
-                    partial_note_id = e.note_id
-                    ima_sync_state[state_key(vid, knowledge_base_id or "")] = {
-                        "note_id": partial_note_id,
-                        "knowledge_base_id": knowledge_base_id or "",
+                break
+            synced += 1
+            # 笔记创建成功。立即把 note_id + kb_added=False 写入状态，
+            # 确保后续 KB 关联失败（任何原因）都不会让这条笔记孤立。
+            composite_key = state_key(vid, knowledge_base_id or "")
+            ima_sync_state[composite_key] = {
+                "note_id": note_id,
+                "knowledge_base_id": knowledge_base_id or "",
+                "kb_added": False,
+                "kb_error": "",
+                "kb_folder_id": kb_folder_id,
+                "synced_at": _dt.now().isoformat(),
+            }
+            _save_state()
+
+            # 第二步：可选加入知识库
+            if knowledge_base_id and ima.knowledge_base_id:
+                try:
+                    await ima.add_to_knowledge_base(
+                        note_id, f"[{vid}] {title}", kb_folder_id)
+                    kb_added += 1
+                    ima_sync_state[composite_key] = {
+                        "note_id": note_id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "kb_added": True, "kb_error": "",
+                        "kb_folder_id": kb_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_state()
+                    print(f"[{i+1}/{len(cards)}] {title} → {note_id} + 知识库")
+                except ImaQuotaExceededError as e:
+                    # 配额耗尽：note_id 已在 ima_sync_state 里持久化（kb_added=False），
+                    # 下次运行通过 check_document_exists + add_to_knowledge_base 恢复。
+                    print(f"[{i+1}/{len(cards)}] {title} → {note_id} (知识库关联失败：ima 配额耗尽，停止同步)")
+                    ima_sync_state[composite_key] = {
+                        "note_id": note_id,
+                        "knowledge_base_id": knowledge_base_id,
                         "kb_added": False,
                         "kb_error": f"ImaQuotaExceededError: {e}",
                         "kb_folder_id": kb_folder_id,
@@ -358,33 +386,24 @@ async def _cmd_sync_ima(config, args):
                     }
                     _save_state()
                     print(
-                        f"  ↳ 笔记 {partial_note_id} 已创建但未关联知识库，"
+                        f"  ↳ 笔记 {note_id} 已创建但未关联知识库，"
                         f"状态已保存，下次运行恢复"
                     )
-                break
-            synced += 1
-            # Persist local sync state under (vid, kb) composite key so a
-            # different KB sync later doesn't see this entry as a hit.
-            ima_sync_state[state_key(vid, knowledge_base_id or "")] = {
-                "note_id": result.note_id,
-                "knowledge_base_id": knowledge_base_id or "",
-                "kb_added": result.kb_added,
-                "kb_error": result.kb_error,
-                "kb_folder_id": kb_folder_id,
-                "synced_at": _dt.now().isoformat(),
-            }
-            _save_state()
-            if knowledge_base_id:
-                if result.kb_added:
-                    kb_added += 1
-                    print(f"[{i+1}/{len(cards)}] {title} → {result.note_id} + 知识库")
-                elif result.kb_error:
+                    break
+                except Exception as e:
+                    # 笔记已建成功，KB 关联失败仅记录，不中断整体同步。
                     kb_failed += 1
-                    print(f"[{i+1}/{len(cards)}] {title} → {result.note_id} (知识库关联失败: {result.kb_error})")
-                else:
-                    print(f"[{i+1}/{len(cards)}] {title} → {result.note_id}")
+                    print(f"[{i+1}/{len(cards)}] {title} → {note_id} (知识库关联失败: {e})")
+                    ima_sync_state[composite_key] = {
+                        "note_id": note_id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "kb_added": False, "kb_error": str(e),
+                        "kb_folder_id": kb_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_state()
             else:
-                print(f"[{i+1}/{len(cards)}] {title} → {result.note_id}")
+                print(f"[{i+1}/{len(cards)}] {title} → {note_id}")
 
         if knowledge_base_id:
             retry_op = f"，恢复 {kb_retried}" if kb_retried else ""
