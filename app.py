@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime as _dt
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,15 @@ from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
 from src.analyzer.llm_analyzer import LLMAnalyzer
 from src.sync.feishu import FeishuSync
 from src.sync.ima import ImaSync, ImaQuotaExceededError
+from src.sync.ima_state import (
+    STATE_KEY_SEP as _IMA_STATE_KEY_SEP,
+    get_ima_state_path,
+    kb_state_decision as _kb_state_decision,
+    load_ima_sync_state as _load_ima_sync_state_impl,
+    parse_state_key as _parse_state_key,
+    save_ima_sync_state as _save_ima_sync_state_impl,
+    state_key as _state_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,134 +52,38 @@ WHISPER_MODEL_CHOICES = [
     "distil-large-v2", "distil-large-v3",
 ]
 
-# ima local sync state: tracks per-(video, knowledge_base) note association
-# status so that notes with kb_added=False can be retried on the next sync
-# without re-creating the note.
-#
-# Schema: keyed by f"{video_id}::{knowledge_base_id or ''}", so each entry
-# is the KB-association status for ONE (video, knowledge_base) pair. This
-# isolates cross-KB retries — same video synced to KB-A then to KB-B does
-# NOT see stale kb_added=True from KB-A and is correctly re-attempted for
-# KB-B. State value carries the resolved kb_folder_id so a folder change
-# between runs is also detected and triggers a re-attempt.
-from datetime import datetime as _dt
-_IMA_SYNC_STATE_FILE = Path("data/ima_sync_state.json")
-_IMA_STATE_KEY_SEP = "::"
+# Backward-compat alias: tests monkeypatch ``app._IMA_SYNC_STATE_FILE`` to
+# redirect the GUI loader to a tmp file. When unset, the loader derives the
+# path from ``AppConfig.data_dir`` (see ``_get_ima_state_file``) so a custom
+# ``DATA_DIR`` keeps the state colocated with the knowledge cards.
+_IMA_SYNC_STATE_FILE: Optional[Path] = None
 
 
-def _state_key(video_id: str, knowledge_base_id: str) -> str:
-    """Build the (vid, kb_id) composite state key.
+def _get_ima_state_file() -> Path:
+    """Resolve the on-disk ima sync state file for the GUI.
 
-    An empty KB targets the "no KB" bucket for note-only syncs.
+    Honors a module-level ``_IMA_SYNC_STATE_FILE`` override (set by tests
+    via ``monkeypatch.setattr``); otherwise derives the path from
+    ``AppConfig.data_dir`` so the GUI/CLI/state file all follow the same
+    data root. See ``src/sync/ima_state.py`` for the helper.
     """
-    return f"{video_id}{_IMA_STATE_KEY_SEP}{knowledge_base_id or ''}"
-
-
-def _parse_state_key(key: str) -> tuple[str, str]:
-    """Inverse of _state_key for legacy migration. Tolerates old 'vid'-only
-    keys by returning ('vid', '')."""
-    if _IMA_STATE_KEY_SEP in key:
-        vid, _, kb = key.partition(_IMA_STATE_KEY_SEP)
-        return vid, kb
-    return key, ""
-
-
-def _kb_state_decision(
-    state: dict,
-    vid: str,
-    knowledge_base_id: str,
-    resolved_folder_id: str,
-) -> str:
-    """Decide what to do when an ima note already exists for `vid`.
-
-    Returns one of:
-      "skip"          — note present and KB-association for (vid, kb_id)
-                        matches the current target config; idempotent hit.
-      "retry_kb"      — prior KB-association for (vid, kb_id) failed
-                        (kb_added=False); retry add_to_knowledge_base.
-      "retry_folder"  — KB link exists for (vid, kb_id) but the requested
-                        folder differs from the one recorded in state;
-                        re-attempt so the new folder wins.
-      "attempt_kb"    — no state entry for (vid, kb_id). Either legacy
-                        (no prior state at all) or cross-KB (a different
-                        kb_id has an entry but this one does not); in both
-                        cases we should attempt add_to_knowledge_base for
-                        this KB instead of silently skipping.
-    """
-    if not knowledge_base_id:
-        # No KB configured → nothing to associate; always skip (record-only
-        # callers handle state persistence themselves).
-        return "skip"
-
-    key = _state_key(vid, knowledge_base_id)
-    st = state.get(key)
-
-    if not st:
-        return "attempt_kb"
-
-    prev_kb_added = bool(st.get("kb_added"))
-    prev_folder = st.get("kb_folder_id", "") or ""
-
-    if prev_kb_added and prev_folder == (resolved_folder_id or ""):
-        return "skip"
-    if prev_kb_added:
-        return "retry_folder"
-    return "retry_kb"
+    if _IMA_SYNC_STATE_FILE is not None:
+        return _IMA_SYNC_STATE_FILE
+    return get_ima_state_path(get_config())
 
 
 def _load_ima_sync_state() -> dict:
-    """Load per-(video, kb) ima sync state from disk.
+    """Load per-(video, kb) ima sync state for the GUI.
 
-    Returns {} if the file is missing/corrupt. Performs a one-time migration
-    of legacy `vid`-only keys (which lacked KB isolation) by promoting each
-    old entry to f"{vid}::{knowledge_base_id_or_empty}" using the kb_id
-    embedded in the legacy entry value.
+    Thin wrapper over the shared ``load_ima_sync_state`` so the GUI/CLI
+    agree on the on-disk format and the legacy migration.
     """
-    raw: dict = {}
-    try:
-        if _IMA_SYNC_STATE_FILE.exists():
-            raw = json.loads(_IMA_SYNC_STATE_FILE.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.warning("Failed to load ima sync state: %s", e)
-        return {}
-
-    migrated: dict = {}
-    needs_resave = False
-    for key, value in raw.items():
-        if not isinstance(value, dict):
-            # drop malformed entries silently
-            needs_resave = True
-            continue
-        if _IMA_STATE_KEY_SEP in key:
-            migrated[key] = value
-            continue
-        # Legacy key — promote using embedded knowledge_base_id
-        legacy_kb = value.get("knowledge_base_id", "") or ""
-        new_key = _state_key(key, legacy_kb)
-        # Preserve folder id if already recorded under old schema
-        if "kb_folder_id" in value and "kb_folder_id" not in migrated.get(new_key, {}):
-            migrated.setdefault(new_key, value)
-        else:
-            migrated[new_key] = value
-        needs_resave = True
-        logger.info(
-            "ima sync state: migrated legacy key %r -> %r", key, new_key
-        )
-
-    if needs_resave:
-        try:
-            _save_ima_sync_state(migrated)
-        except Exception as e:
-            logger.warning("Failed to persist migrated ima sync state: %s", e)
-    return migrated
+    return _load_ima_sync_state_impl(_get_ima_state_file())
 
 
 def _save_ima_sync_state(state: dict) -> None:
-    """Persist per-video ima sync state to disk (atomic write)."""
-    _IMA_SYNC_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _IMA_SYNC_STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(_IMA_SYNC_STATE_FILE)
+    """Persist per-video ima sync state for the GUI (atomic write)."""
+    _save_ima_sync_state_impl(_get_ima_state_file(), state)
 
 # ---------------------------------------------------------------------------
 # 工具函数
