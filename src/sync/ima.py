@@ -50,6 +50,24 @@ _LOCAL_IMAGE_RE = re.compile(
 )
 
 
+def _match_legacy_title(title: str, video_id: str) -> bool:
+    """Match legacy title format: raw video_id at start followed by a boundary.
+
+    Before strict [video_id] prefix enforcement, some notes were created with
+    titles like "BV123 - Some Title" (no brackets). This provides backward
+    compatibility with explicit boundary matching to avoid false positives.
+
+    Boundaries: whitespace, dash, colon, pipe, underscore, or title ends,
+    or title continues with '[' or '('.
+    """
+    if not title.startswith(video_id):
+        return False
+    after = title[len(video_id):]
+    if not after:
+        return True
+    return after[0] in (" ", "\t", "-", "_", ":", "|") or after[:1] in ("[", "(")
+
+
 class ImaSync(SyncBase):
     """腾讯 ima 同步实现（建笔记 + 可选加入知识库）"""
 
@@ -350,9 +368,16 @@ class ImaSync(SyncBase):
                     note_id = nb.get("note_id", "")
                     if note_id and note_id not in seen:
                         seen.add(note_id)
-                        # 匹配：标题以 [video_id] 开头 或 标题中包含 video_id
-                        if title.startswith(prefix) or video_id in title:
-                            logger.info("ima 发现已有笔记: %s -> %s", title, note_id)
+                        # Standard: title starts with [video_id] prefix
+                        if title.startswith(prefix):
+                            logger.info("ima found existing note: %s -> %s", title, note_id)
+                            return note_id
+                        # Legacy: raw video_id at title start followed by a boundary
+                        if _match_legacy_title(title, video_id):
+                            logger.info(
+                                "ima found existing note (legacy format): %s -> %s",
+                                title, note_id,
+                            )
                             return note_id
 
                 if data.get("is_end", True):

@@ -88,18 +88,33 @@ class TestTitleAndDedup:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_check_document_exists_video_id_in_title(self):
-        """check_document_exists matches when video_id appears anywhere in title."""
+    async def test_check_document_exists_legacy_prefix_match(self):
+        """Legacy match: raw video_id at title start followed by a boundary char."""
         ima = _make_ima_sync()
         mock_data = {
             "search_note_infos": [
-                {"note_book_info": {"title": "My Note [BV456] copy", "note_id": "note_def"}},
+                {"note_book_info": {"title": "BV456 - My Old Note", "note_id": "note_def"}},
             ],
             "is_end": True,
         }
         with patch.object(ima, "_call", AsyncMock(return_value=mock_data)):
             result = await ima.check_document_exists("BV456")
             assert result == "note_def"
+
+    @pytest.mark.asyncio
+    async def test_check_document_exists_no_boundary_no_match(self):
+        """Titles with video_id embedded without boundary do NOT match."""
+        ima = _make_ima_sync()
+        mock_data = {
+            "search_note_infos": [
+                {"note_book_info": {"title": "My Note [BV456] copy", "note_id": "note_nope"}},
+                {"note_book_info": {"title": "SomeBV456Title", "note_id": "note_nope2"}},
+            ],
+            "is_end": True,
+        }
+        with patch.object(ima, "_call", AsyncMock(return_value=mock_data)):
+            result = await ima.check_document_exists("BV456")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_duplicate_sync_idempotent(self):
