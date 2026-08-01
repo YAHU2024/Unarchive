@@ -420,3 +420,168 @@ class TestPartialSuccess:
             assert result.note_id == "note_kb_fail"
             assert result.kb_added is False
             assert "kb association network error" in result.kb_error
+
+
+# ---------------------------------------------------------------------------
+# 5. Two-round sync: kb-association recovery flow
+# ---------------------------------------------------------------------------
+
+class TestTwoRoundSync:
+    """Round 1: create note + KB fails → Round 2: retry add_knowledge, no re-create.
+
+    This exercises the app-level recovery logic in sync_to_ima(): when
+    ima_sync_state records kb_added=False, the next sync finds the existing
+    note via check_document_exists and calls add_to_knowledge_base directly
+    — without ever hitting import_doc.
+    """
+
+    @pytest.mark.asyncio
+    async def test_add_to_knowledge_base_standalone(self):
+        """Public add_to_knowledge_base works without create_document."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        async def mock_call(path, body, _retry=0):
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                assert body["media_type"] == 11
+                assert body["note_info"]["content_id"] == "note_standalone"
+                assert body["knowledge_base_id"] == "kb_1"
+                return {}
+            raise RuntimeError(f"Unexpected path: {path}")
+
+        with patch.object(ima, "_call", side_effect=mock_call):
+            # Must not raise
+            await ima.add_to_knowledge_base(
+                "note_standalone", "[BV123] Standalone Note", "folder_abc"
+            )
+
+    @pytest.mark.asyncio
+    async def test_two_round_recovery_full(self):
+        """Round 1: create_document + KB fails → Round 2: check_document_exists
+        finds note, add_to_knowledge_base succeeds, import_doc NOT called."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        # ===================== Round 1 =====================
+        round1_paths = []
+
+        async def round1_call(path, body, _retry=0):
+            round1_paths.append(path)
+            if path == ima.PATH_IMPORT_DOC:
+                return {"note_id": "note_two_round"}
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                raise RuntimeError("kb network error in round 1")
+            return {}
+
+        with patch.object(ima, "_call", side_effect=round1_call):
+            result = await ima.create_document(
+                title="[BV123] Recovery Test",
+                content={"title": "Test"},
+                kb_folder_id="folder_abc",
+            )
+            assert result.note_id == "note_two_round"
+            assert result.kb_added is False
+            assert "kb network error in round 1" in result.kb_error
+
+        assert ima.PATH_IMPORT_DOC in round1_paths
+        assert ima.PATH_ADD_KNOWLEDGE in round1_paths
+
+        # ===================== Round 2 =====================
+        # Simulates a fresh ImaSync instance (same kb_id, new _client)
+        ima2 = _make_ima_sync(knowledge_base_id="kb_1")
+        round2_paths = []
+
+        async def round2_call(path, body, _retry=0):
+            round2_paths.append(path)
+            if path == ima.PATH_SEARCH_NOTE:
+                return {
+                    "search_note_infos": [
+                        {
+                            "note_book_info": {
+                                "title": "[BV123] Recovery Test",
+                                "note_id": "note_two_round",
+                            }
+                        }
+                    ],
+                    "is_end": True,
+                }
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                assert body["note_info"]["content_id"] == "note_two_round"
+                return {}  # success
+            # import_doc must not be called in round 2
+            raise RuntimeError(f"Unexpected API call in round 2: {path}")
+
+        with patch.object(ima2, "_call", side_effect=round2_call):
+            # Step 1: check_document_exists finds existing note
+            existing = await ima2.check_document_exists("BV123")
+            assert existing == "note_two_round"
+
+            # Step 2: retry add_to_knowledge_base (no import_doc)
+            await ima2.add_to_knowledge_base(
+                "note_two_round", "[BV123] Recovery Test", "folder_abc"
+            )
+
+        # Verify: import_doc was NOT called in round 2
+        assert ima.PATH_IMPORT_DOC not in round2_paths
+        assert ima.PATH_SEARCH_NOTE in round2_paths
+        assert ima.PATH_ADD_KNOWLEDGE in round2_paths
+
+    @pytest.mark.asyncio
+    async def test_two_round_recovery_retry_fails_again(self):
+        """Round 2 add_to_knowledge_base also fails (non-quota) — error surfaces."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        async def mock_call(path, body, _retry=0):
+            if path == ima.PATH_SEARCH_NOTE:
+                return {
+                    "search_note_infos": [
+                        {
+                            "note_book_info": {
+                                "title": "[BV123] Still Failing",
+                                "note_id": "note_retry_fail",
+                            }
+                        }
+                    ],
+                    "is_end": True,
+                }
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                raise RuntimeError("kb still unavailable in round 2")
+            return {}
+
+        with patch.object(ima, "_call", side_effect=mock_call):
+            existing = await ima.check_document_exists("BV123")
+            assert existing == "note_retry_fail"
+
+            with pytest.raises(RuntimeError, match="kb still unavailable"):
+                await ima.add_to_knowledge_base(
+                    "note_retry_fail", "[BV123] Still Failing", ""
+                )
+
+    @pytest.mark.asyncio
+    async def test_two_round_recovery_quota_stops_round2(self):
+        """Round 2 add_to_knowledge_base hits quota → ImaQuotaExceededError."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        async def mock_call(path, body, _retry=0):
+            if path == ima.PATH_SEARCH_NOTE:
+                return {
+                    "search_note_infos": [
+                        {
+                            "note_book_info": {
+                                "title": "[BV123] Quota Hit",
+                                "note_id": "note_quota_round2",
+                            }
+                        }
+                    ],
+                    "is_end": True,
+                }
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                raise ImaQuotaExceededError("quota exhausted in round 2")
+            return {}
+
+        with patch.object(ima, "_call", side_effect=mock_call):
+            existing = await ima.check_document_exists("BV123")
+            assert existing == "note_quota_round2"
+
+            with pytest.raises(ImaQuotaExceededError, match="quota exhausted"):
+                await ima.add_to_knowledge_base(
+                    "note_quota_round2", "[BV123] Quota Hit", ""
+                )
