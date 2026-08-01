@@ -151,7 +151,8 @@ def _choice_value(v):
     dict → 取其 value；其余原样返回（None/"" 保持空）。
     """
     if isinstance(v, dict):
-        return v.get("value", "")
+        val = v.get("value", "")
+        return val if val is not None else ""
     return v or ""
 
 
@@ -970,7 +971,9 @@ async def on_kb_change(kb_id, state: dict):
         logger.debug("on_kb_change: 当前 kb_map 内容=%s", state.get("kb_map", {}))
         state = dict(state)
         state["kb_id"] = kb_id or ""
+        # 从 kb_map 查名称；若 loaded KBs 尚未加载，用 raw ID 作为可读回退
         state["kb_name"] = state.get("kb_map", {}).get(kb_id or "", kb_id or "")
+        # 重置文件夹选择：因为文件夹是 KB 绑定的，旧 KB 的 folder_id 在新 KB 无效
         state["kb_folder_value"] = ""
         kb_label = state["kb_name"] or "未选择"
         logger.info("on_kb_change: 切换至知识库=%s (id=%s)，已重置文件夹选择", kb_label, kb_id)
@@ -1306,9 +1309,10 @@ def build_ui():
     ) as app:
 
         # 全局状态（state 字典统一管理跨 Tab 的 ima 选择；初始带入 .env 已存值）
+        # kb_name 初始化为 kb_id（如已配置），待加载知识库后再从 kb_map 补全真实名称。
         state = gr.State({
             "kb_id": config.ima_knowledge_base_id,
-            "kb_name": "",
+            "kb_name": config.ima_knowledge_base_id or "",
             "kb_folder_value": config.ima_knowledge_base_folder_id
             or config.ima_knowledge_base_folder_name,
             "kb_map": {},
@@ -1511,7 +1515,7 @@ def build_ui():
                     test_ima_btn = gr.Button("🔗 测试 ima 连接", variant="secondary")
                     ima_current_kb = gr.Textbox(
                         label="当前知识库（在「登录与配置」选择）",
-                        value=config.ima_knowledge_base_id or "未选择",
+                        value=(f"已配置: {config.ima_knowledge_base_id}" if config.ima_knowledge_base_id else "未选择"),
                         interactive=False,
                     )
                     with gr.Row():
