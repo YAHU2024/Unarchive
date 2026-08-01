@@ -17,7 +17,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Optional, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import httpx
 
@@ -94,7 +94,7 @@ class ImaSync(SyncBase):
         self.client_id = client_id
         self.api_key = api_key
         self.knowledge_base_id = knowledge_base_id or ""
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
         # 请求节流：相邻 API 调用最小间隔（秒），降低频率限制（200001）概率
         self._last_call = 0.0
@@ -222,7 +222,7 @@ class ImaSync(SyncBase):
     # 文件夹（笔记本）操作
     # ------------------------------------------------------------------
 
-    async def create_folder(self, name: str, parent_id: str = None) -> str:
+    async def create_folder(self, name: str, parent_id: str | None = None) -> str:
         """解析/创建 ima 笔记目标笔记本
 
         ima OpenAPI 未直接提供"创建笔记本"接口，此处按名称查找已有笔记本，
@@ -268,7 +268,7 @@ class ImaSync(SyncBase):
     # 文档操作
     # ------------------------------------------------------------------
 
-    async def create_document(self, title: str, content: dict, folder_id: str = None) -> str:
+    async def create_document(self, title: str, content: dict, folder_id: str | None = None) -> str:
         """创建 ima 笔记（Markdown），返回笔记 ID（note_id）
 
         此方法只做 ``import_doc`` 一步，与基类 ``SyncBase.create_document() -> str``
@@ -328,7 +328,7 @@ class ImaSync(SyncBase):
         logger.info("ima 笔记追加更新成功: %s", document_id)
         return True
 
-    async def check_document_exists(self, video_id: str, folder_token: str = None) -> Optional[str]:
+    async def check_document_exists(self, video_id: str, folder_token: str | None = None) -> str | None:
         """检查笔记是否已存在（按标题前缀 [video_id] 去重）
 
         搜索接口按标题检索，匹配标题以 `[video_id]` 开头的笔记。
