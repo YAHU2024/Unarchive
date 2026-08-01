@@ -196,7 +196,9 @@ class TestQuotaAndRateLimit:
 
     @pytest.mark.asyncio
     async def test_quota_stops_create_document(self):
-        """Quota error during add_knowledge is propagated from create_document."""
+        """Quota error during add_knowledge is propagated from create_document,
+        and the already-created note_id is attached so the caller can recover
+        the partial-success state on the next run."""
         ima = _make_ima_sync(knowledge_base_id="kb_1")
 
         # First call: import_doc succeeds
@@ -213,11 +215,64 @@ class TestQuotaAndRateLimit:
             return {}
 
         with patch.object(ima, "_call", side_effect=mock_call):
-            with pytest.raises(ImaQuotaExceededError):
+            with pytest.raises(ImaQuotaExceededError) as exc_info:
                 await ima.create_document(
                     title="[BV123] Test", content={"title": "Test"},
                     kb_folder_id="folder_abc",
                 )
+            # Partial success: import_doc 已成功，note_id 必须挂在异常上，
+            # 调用方据此写入 ima_sync_state.json，下次运行通过
+            # check_document_exists + add_to_knowledge_base 恢复 KB 关联。
+            assert exc_info.value.note_id == "note_quota_test"
+
+    @pytest.mark.asyncio
+    async def test_quota_during_kb_preserves_note_id(self):
+        """When knowledge_base_id is set and add_knowledge hits quota after
+        import_doc succeeded, the ImaQuotaExceededError must carry the just-
+        created note_id so the caller can persist a recoverable state."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+        captured_note_id = []
+
+        async def mock_call(path, body, _retry=0):
+            if path == ima.PATH_IMPORT_DOC:
+                return {"note_id": "note_partial_kb"}
+            if path == ima.PATH_ADD_KNOWLEDGE:
+                raise ImaQuotaExceededError("daily quota exceeded")
+            return {}
+
+        with patch.object(ima, "_call", side_effect=mock_call):
+            with pytest.raises(ImaQuotaExceededError) as exc_info:
+                await ima.create_document(
+                    title="[BV456] Partial",
+                    content={"title": "Partial KB"},
+                    kb_folder_id="folder_xyz",
+                )
+            captured_note_id.append(exc_info.value.note_id)
+
+        assert captured_note_id == ["note_partial_kb"], (
+            "Quota after import_doc must preserve note_id on the exception; "
+            "otherwise the caller's `break` leaves the just-created note "
+            "with no KB association and no recoverable state."
+        )
+
+    @pytest.mark.asyncio
+    async def test_quota_during_import_doc_has_no_note_id(self):
+        """If quota is hit during import_doc itself, note_id stays empty —
+        no note was created, so there's nothing to recover."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        async def mock_call(path, body, _retry=0):
+            if path == ima.PATH_IMPORT_DOC:
+                raise ImaQuotaExceededError("daily quota exceeded")
+            return {}
+
+        with patch.object(ima, "_call", side_effect=mock_call):
+            with pytest.raises(ImaQuotaExceededError) as exc_info:
+                await ima.create_document(
+                    title="[BV789] NoNote",
+                    content={"title": "NoNote"},
+                )
+            assert exc_info.value.note_id == ""
 
 
 # ---------------------------------------------------------------------------

@@ -36,7 +36,17 @@ class CreateDocumentResult:
 
 
 class ImaQuotaExceededError(RuntimeError):
-    """ima 每日配额耗尽（code 200005），不可重试，应停止同步"""
+    """ima 每日配额耗尽（code 200005），不可重试，应停止同步。
+
+    Attributes:
+        note_id: 如果在 import_doc 成功后、add_knowledge 失败时抛出，会携带
+                 已创建笔记的 note_id，让调用方能持久化"未完成知识库关联"状态，
+                 下次运行通过 check_document_exists + add_to_knowledge_base 恢复。
+    """
+
+    def __init__(self, msg: str = "", note_id: str = ""):
+        super().__init__(msg or "请求超量，请明日再试")
+        self.note_id = note_id or ""
 
 
 class ImaRateLimitError(RuntimeError):
@@ -278,6 +288,11 @@ class ImaSync(SyncBase):
         - note_id: 笔记 ID（创建成功时有值）
         - kb_added: 知识库关联是否成功
         - kb_error: 关联失败原因（成功时为空）
+
+        配额耗尽（ImaQuotaExceededError）时，import_doc 阶段成功但 add_knowledge
+        阶段失败，会把已创建的 note_id 挂到异常 .note_id 上重新抛出，调用方应在
+        break 之前把"未完成知识库关联"写进 ima_sync_state.json，下次运行通过
+        check_document_exists + add_to_knowledge_base 恢复关联。
         """
         # 1. 构建并校验 Markdown
         markdown = self._build_markdown(title, content)
@@ -305,8 +320,17 @@ class ImaSync(SyncBase):
             try:
                 await self._add_to_knowledge_base(note_id, title, kb_folder_id)
                 result.kb_added = True
-            except ImaQuotaExceededError:
-                # 配额耗尽需向上传递，让同步循环及时停止
+            except ImaQuotaExceededError as e:
+                # 配额耗尽需向上传递，让同步循环及时停止。
+                # 但笔记已经创建成功，把 note_id 挂到异常上，调用方可在 break
+                # 之前把"未完成知识库关联"状态写进 ima_sync_state.json，下次运行
+                # 通过 check_document_exists + add_to_knowledge_base 恢复关联，
+                # 避免这条笔记的 KB 关联永久丢失。
+                e.note_id = note_id
+                logger.warning(
+                    "ima 配额耗尽，已创建笔记 %s 未能加入知识库，下次运行将恢复",
+                    note_id,
+                )
                 raise
             except Exception as e:
                 # 笔记已建成功，知识库失败仅告警，不中断整体同步

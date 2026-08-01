@@ -791,6 +791,29 @@ async def sync_to_ima(
             except ImaQuotaExceededError as e:
                 logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
                 logger.warning("sync_to_ima: ima 配额耗尽，提前结束")
+                # Partial success: import_doc 阶段已成功，note_id 由 create_document
+                # 挂在异常上。把"未完成知识库关联"状态写入 ima_sync_state.json，
+                # 下次运行通过 check_document_exists + add_to_knowledge_base 恢复，
+                # 避免这条笔记的 KB 关联永久丢失。
+                if getattr(e, "note_id", ""):
+                    partial_note_id = e.note_id
+                    ima_sync_state[_state_key(vid, knowledge_base_id or "")] = {
+                        "note_id": partial_note_id,
+                        "knowledge_base_id": knowledge_base_id or "",
+                        "kb_added": False,
+                        "kb_error": f"ImaQuotaExceededError: {e}",
+                        "kb_folder_id": resolved_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_ima_sync_state(ima_sync_state)
+                    logs += _format_log(
+                        f"  ↳ 笔记 {partial_note_id} 已创建但未关联知识库，"
+                        f"状态已保存，下次运行恢复"
+                    )
+                    logger.info(
+                        "sync_to_ima: 配额耗尽时已保存部分成功状态 vid=%s note_id=%s",
+                        vid, partial_note_id,
+                    )
                 break
             except Exception as e:
                 logs += _format_log(f"  ↳ 笔记创建失败: {e}")

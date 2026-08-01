@@ -243,7 +243,7 @@ async def cmd_sync(args):
 
 async def _cmd_sync_ima(config, args):
     """同步知识卡片到腾讯 ima（建笔记 + 可选加入知识库）"""
-    from src.sync.ima import ImaSync
+    from src.sync.ima import ImaSync, ImaQuotaExceededError
     from datetime import datetime as _dt
     import json
 
@@ -383,10 +383,33 @@ async def _cmd_sync_ima(config, args):
                     }
                     _save_state()
                 continue
-            result = await ima.create_document(
-                title=f"[{vid}] {title}", content=card, folder_id=folder_id,
-                kb_folder_id=kb_folder_id,
-            )
+            try:
+                result = await ima.create_document(
+                    title=f"[{vid}] {title}", content=card, folder_id=folder_id,
+                    kb_folder_id=kb_folder_id,
+                )
+            except ImaQuotaExceededError as e:
+                # 配额耗尽：import_doc 已成功时 create_document 会把 note_id 挂到
+                # 异常上。持久化"未完成知识库关联"状态后停止同步，下次运行通过
+                # check_document_exists + add_to_knowledge_base 恢复 KB 关联，
+                # 避免这条笔记的 KB 关联永久丢失。
+                print(f"[{i+1}/{len(cards)}] {title} — ima 配额已耗尽，停止同步: {e}")
+                if getattr(e, "note_id", ""):
+                    partial_note_id = e.note_id
+                    ima_sync_state[_state_key(vid, knowledge_base_id or "")] = {
+                        "note_id": partial_note_id,
+                        "knowledge_base_id": knowledge_base_id or "",
+                        "kb_added": False,
+                        "kb_error": f"ImaQuotaExceededError: {e}",
+                        "kb_folder_id": kb_folder_id,
+                        "synced_at": _dt.now().isoformat(),
+                    }
+                    _save_state()
+                    print(
+                        f"  ↳ 笔记 {partial_note_id} 已创建但未关联知识库，"
+                        f"状态已保存，下次运行恢复"
+                    )
+                break
             synced += 1
             # Persist local sync state under (vid, kb) composite key so a
             # different KB sync later doesn't see this entry as a hit.
