@@ -14,7 +14,7 @@
 <br>
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Gradio](https://img.shields.io/badge/UI-Gradio%204.x-FF7C00?logo=gradio&logoColor=white)](https://www.gradio.app/)
+[![Gradio](https://img.shields.io/badge/UI-Gradio%206.x-FF7C00?logo=gradio&logoColor=white)](https://www.gradio.app/)
 [![Playwright](https://img.shields.io/badge/Browser-Playwright-2EAD33)](https://playwright.dev/)
 [![Whisper](https://img.shields.io/badge/ASR-Whisper-000?logo=openai)](https://github.com/openai/whisper)
 [![License](https://img.shields.io/badge/License-MIT-green)]()
@@ -116,6 +116,13 @@ python app.py          # 访问 http://127.0.0.1:7860
 | `WHISPER_MODEL` | Whisper 模型 | `small` |
 | `CHROME_PATH` | Chrome 可执行文件路径 | *自动查找* |
 | `CHROME_HEADLESS` | 无头模式（`=1` 启用） | *禁用（显示窗口）* |
+| `DATA_DIR` | 数据根目录（所有状态/缓存统一存放） | `./data` |
+| `COOKIES_DIR` | 平台 Cookie 持久化目录 | `./data/cookies` |
+| `LOGS_DIR` | 应用日志目录 | `./data/logs` |
+| `CHROME_PROFILE_DIR` | Chrome CDP 用户数据目录 | `./data/chrome_profile` |
+| `VIDEO_DOWNLOAD_DIR` | 视频下载目录 | `./data/videos` |
+
+> **💡 数据目录统一管理：** 所有状态文件（cookies、日志、知识卡片、ima 同步状态）默认存放在 `./data/` 下。设置 `DATA_DIR=/custom/path` 即可一键迁移全部数据位置，也可通过单独的环境变量（如 `COOKIES_DIR`、`LOGS_DIR`）覆写特定子目录。
 
 <br>
 
@@ -199,6 +206,13 @@ python app.py          # Visit http://127.0.0.1:7860
 | `WHISPER_MODEL` | Whisper model size | `small` |
 | `CHROME_PATH` | Chrome executable path | *Auto-detect* |
 | `CHROME_HEADLESS` | Headless mode (`=1` to enable) | *Disabled (visible)* |
+| `DATA_DIR` | Data root (all state/cache in one place) | `./data` |
+| `COOKIES_DIR` | Platform cookie storage | `./data/cookies` |
+| `LOGS_DIR` | Application log directory | `./data/logs` |
+| `CHROME_PROFILE_DIR` | Chrome CDP user data directory | `./data/chrome_profile` |
+| `VIDEO_DOWNLOAD_DIR` | Video download directory | `./data/videos` |
+
+> **💡 Unified data directory:** All state files (cookies, logs, knowledge cards, ima sync state) live under `./data/` by default. Set `DATA_DIR=/custom/path` to relocate everything at once, or override individual subdirectories via dedicated env vars (e.g. `COOKIES_DIR`, `LOGS_DIR`).
 
 <br>
 
@@ -218,7 +232,10 @@ Unarchive/
 │   ├── audio_cache/           # 音频缓存 / Audio cache
 │   ├── knowledge_base/        # 知识卡片 / Knowledge cards
 │   ├── cookies/               # 浏览器 Cookie / Browser cookies
-│   └── chrome_profile/        # CDP 持久化浏览器 profile
+│   ├── chrome_profile/        # CDP 持久化浏览器 profile
+│   ├── logs/                  # 应用日志 / Application logs
+│   ├── videos/                # 下载的视频 / Downloaded videos
+│   └── ima_sync_state.json    # ima 同步状态缓存 / ima sync state
 ├── src/
 │   ├── scraper/               # 平台抓取器 / Scrapers
 │   │   ├── base.py            #   ScraperBase 抽象基类
@@ -248,7 +265,7 @@ Unarchive/
 
 | 组件 / Component | 技术 / Technology |
 |:---:|------|
-| 🖥️ 界面 / UI | **Gradio 4.x** |
+| 🖥️ 界面 / UI | **Gradio 6.x** |
 | 🌐 浏览器 / Browser | **Playwright** + **Chrome CDP**（自动拉起/复用登录态） |
 | 🎵 音频 / Audio | **yt-dlp** + **OpenAI Whisper** |
 | 🌍 网络 / HTTP | **httpx** |
