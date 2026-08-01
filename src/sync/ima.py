@@ -368,6 +368,15 @@ class ImaSync(SyncBase):
     # 知识库关联
     # ------------------------------------------------------------------
 
+    async def add_to_knowledge_base(self, note_id: str, title: str, kb_folder_id: str = "") -> None:
+        """Public: add an existing note to the knowledge base (media_type=11).
+
+        This is the public wrapper around _add_to_knowledge_base, used by the
+        kb-association recovery flow when a note already exists but kb_added
+        was previously False.
+        """
+        await self._add_to_knowledge_base(note_id, title, kb_folder_id)
+
     async def _add_to_knowledge_base(self, note_id: str, title: str, kb_folder_id: str = "") -> None:
         """将已有笔记关联到知识库（media_type=11 表示笔记）
 

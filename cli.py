@@ -195,10 +195,11 @@ async def cmd_sync(args):
 async def _cmd_sync_ima(config, args):
     """同步知识卡片到腾讯 ima（建笔记 + 可选加入知识库）"""
     from src.sync.ima import ImaSync
+    from datetime import datetime as _dt
     import json
 
     if not config.ima_client_id or not config.ima_api_key:
-        print("❌ 请先配置 ima Client ID 和 API Key")
+        print("请先配置 ima Client ID 和 API Key")
         print("   环境变量: IMA_CLIENT_ID / IMA_API_KEY，或写入 config.py / .env")
         return
 
@@ -208,12 +209,28 @@ async def _cmd_sync_ima(config, args):
         api_key=config.ima_api_key,
         knowledge_base_id=knowledge_base_id,
     )
+
+    # Load per-video local sync state for kb-association recovery
+    _ima_state_file = Path("data/ima_sync_state.json")
+    ima_sync_state = {}
+    try:
+        if _ima_state_file.exists():
+            ima_sync_state = json.loads(_ima_state_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"(警告) 读取同步状态失败: {e}")
+
+    def _save_state():
+        _ima_state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _ima_state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(ima_sync_state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_ima_state_file)
+
     try:
         ok = await ima.connect()
         if not ok:
-            print("❌ ima 连接失败，请检查 Client ID / API Key")
+            print("ima 连接失败，请检查 Client ID / API Key")
             return
-        print("✅ ima 连接成功")
+        print("ima 连接成功")
 
         kb_dir = Path(config.knowledge_base_dir)
         cards = []
@@ -237,19 +254,92 @@ async def _cmd_sync_ima(config, args):
         synced = 0
         kb_added = 0
         kb_failed = 0
+        kb_retried = 0
         for i, card in enumerate(cards):
             vid = card.get("video_id", "")
             title = card.get("title", "未知")
             existing = await ima.check_document_exists(vid)
             if existing:
-                print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
-                synced += 1
+                st = ima_sync_state.get(vid, {})
+                prev_kb_added = st.get("kb_added", False)
+
+                if not knowledge_base_id or not ima.knowledge_base_id:
+                    # No KB configured — truly done
+                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
+                    synced += 1
+                elif vid in ima_sync_state and prev_kb_added:
+                    # Already associated — truly done
+                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
+                    synced += 1
+                elif vid in ima_sync_state:
+                    # Known failure: kb_added=False — retry only add_knowledge
+                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，重试知识库关联...")
+                    try:
+                        await ima.add_to_knowledge_base(
+                            existing, f"[{vid}] {title}", kb_folder_id)
+                        kb_added += 1
+                        kb_retried += 1
+                        synced += 1
+                        print(f"  ↳ 知识库关联恢复成功: {existing}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": True, "kb_error": "",
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_state()
+                    except Exception as e:
+                        kb_failed += 1
+                        print(f"  ↳ 知识库关联重试失败: {e}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": False, "kb_error": str(e),
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_state()
+                else:
+                    # Legacy: no sync state entry, note exists, kb configured
+                    print(f"[{i+1}/{len(cards)}] {title} — 已存在，尝试关联知识库...")
+                    try:
+                        await ima.add_to_knowledge_base(
+                            existing, f"[{vid}] {title}", kb_folder_id)
+                        kb_added += 1
+                        kb_retried += 1
+                        synced += 1
+                        print(f"  ↳ 知识库关联成功: {existing}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": True, "kb_error": "",
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_state()
+                    except Exception as e:
+                        kb_failed += 1
+                        print(f"  ↳ 知识库关联失败: {e}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": False, "kb_error": str(e),
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_state()
                 continue
             result = await ima.create_document(
                 title=f"[{vid}] {title}", content=card, folder_id=folder_id,
                 kb_folder_id=kb_folder_id,
             )
             synced += 1
+            # Persist local sync state
+            ima_sync_state[vid] = {
+                "note_id": result.note_id,
+                "knowledge_base_id": knowledge_base_id,
+                "kb_added": result.kb_added,
+                "kb_error": result.kb_error,
+                "synced_at": _dt.now().isoformat(),
+            }
+            _save_state()
             if knowledge_base_id:
                 if result.kb_added:
                     kb_added += 1
@@ -263,8 +353,10 @@ async def _cmd_sync_ima(config, args):
                 print(f"[{i+1}/{len(cards)}] {title} → {result.note_id}")
 
         if knowledge_base_id:
+            retry_op = f"，恢复 {kb_retried}" if kb_retried else ""
             kb_summary = (
                 f"（笔记 {synced}/{len(cards)}，知识库关联成功 {kb_added}"
+                + retry_op
                 + (f"，失败 {kb_failed}" if kb_failed else "")
                 + "）"
             )

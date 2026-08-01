@@ -42,6 +42,30 @@ WHISPER_MODEL_CHOICES = [
     "distil-large-v2", "distil-large-v3",
 ]
 
+# ima local sync state: tracks per-video note_id / kb_added status
+# so that notes with kb_added=False can be retried on the next sync
+# without re-creating the note.
+from datetime import datetime as _dt
+_IMA_SYNC_STATE_FILE = Path("data/ima_sync_state.json")
+
+
+def _load_ima_sync_state() -> dict:
+    """Load per-video ima sync state from disk. Returns {} if file missing/corrupt."""
+    try:
+        if _IMA_SYNC_STATE_FILE.exists():
+            return json.loads(_IMA_SYNC_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Failed to load ima sync state: %s", e)
+    return {}
+
+
+def _save_ima_sync_state(state: dict) -> None:
+    """Persist per-video ima sync state to disk (atomic write)."""
+    _IMA_SYNC_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _IMA_SYNC_STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(_IMA_SYNC_STATE_FILE)
+
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
@@ -443,7 +467,11 @@ async def sync_to_ima(
     synced = 0
     kb_added = 0      # 知识库关联成功数
     kb_failed = 0     # 知识库关联失败数
+    kb_retried = 0    # 知识库关联恢复重试数
     ima_sync = None
+
+    # Load per-video local sync state for kb-association recovery
+    ima_sync_state = _load_ima_sync_state()
 
     try:
         progress(0, desc="正在连接 ima...")
@@ -515,8 +543,122 @@ async def sync_to_ima(
                 continue
 
             if existing_note:
-                logs += _format_log(f"  ↳ 笔记已存在 ({existing_note})，跳过")
-                synced += 1
+                # Check local sync state for kb-association recovery
+                st = ima_sync_state.get(vid, {})
+                prev_kb_added = st.get("kb_added", False)
+
+                if not knowledge_base_id or not ima_sync.knowledge_base_id:
+                    # No KB configured — truly done
+                    logs += _format_log(f"  ↳ 笔记已存在 ({existing_note})，跳过")
+                    synced += 1
+                elif vid in ima_sync_state and prev_kb_added:
+                    # Already associated with KB — truly done
+                    logs += _format_log(f"  ↳ 笔记已存在 ({existing_note})，跳过")
+                    synced += 1
+                elif vid in ima_sync_state:
+                    # Known failure: kb_added was False — retry only add_knowledge
+                    logs += _format_log(
+                        f"  ↳ 笔记已存在 ({existing_note})，知识库关联未完成，正在重试..."
+                    )
+                    logger.info(
+                        "sync_to_ima: vid=%s kb_added=False retry add_knowledge "
+                        "note_id=%s kb_id=%s",
+                        vid, existing_note, knowledge_base_id,
+                    )
+                    try:
+                        await ima_sync.add_to_knowledge_base(
+                            existing_note,
+                            f"[{vid}] {card.get('title', '未知')}",
+                            resolved_folder_id,
+                        )
+                        kb_added += 1
+                        kb_retried += 1
+                        synced += 1
+                        logs += _format_log(f"  ↳ 知识库关联恢复成功: {existing_note}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing_note,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": True,
+                            "kb_error": "",
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_ima_sync_state(ima_sync_state)
+                    except ImaQuotaExceededError as e:
+                        kb_failed += 1
+                        logs += _format_log(f"  ↳ 知识库关联重试失败（配额耗尽）: {e}")
+                        logger.warning("sync_to_ima: 配额耗尽于 kb 重试")
+                        ima_sync_state[vid] = {
+                            "note_id": existing_note,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": False,
+                            "kb_error": f"ImaQuotaExceededError: {e}",
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_ima_sync_state(ima_sync_state)
+                        break
+                    except Exception as e:
+                        kb_failed += 1
+                        logs += _format_log(f"  ↳ 知识库关联重试失败: {e}")
+                        logger.warning("sync_to_ima: kb 重试失败 vid=%s: %s", vid, e)
+                        ima_sync_state[vid] = {
+                            "note_id": existing_note,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": False,
+                            "kb_error": str(e),
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_ima_sync_state(ima_sync_state)
+                else:
+                    # Legacy: no sync state entry, note exists, kb configured
+                    # Attempt add_to_knowledge_base (may silently work or fail)
+                    logs += _format_log(
+                        f"  ↳ 笔记已存在 ({existing_note})，无同步状态，尝试关联知识库..."
+                    )
+                    logger.info(
+                        "sync_to_ima: vid=%s legacy (no sync state), attempting add_knowledge",
+                        vid,
+                    )
+                    try:
+                        await ima_sync.add_to_knowledge_base(
+                            existing_note,
+                            f"[{vid}] {card.get('title', '未知')}",
+                            resolved_folder_id,
+                        )
+                        kb_added += 1
+                        kb_retried += 1
+                        synced += 1
+                        logs += _format_log(f"  ↳ 知识库关联成功: {existing_note}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing_note,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": True,
+                            "kb_error": "",
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_ima_sync_state(ima_sync_state)
+                    except ImaQuotaExceededError as e:
+                        kb_failed += 1
+                        logs += _format_log(f"  ↳ 知识库关联失败（配额耗尽）: {e}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing_note,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": False,
+                            "kb_error": f"ImaQuotaExceededError: {e}",
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_ima_sync_state(ima_sync_state)
+                        break
+                    except Exception as e:
+                        kb_failed += 1
+                        logs += _format_log(f"  ↳ 知识库关联失败: {e}")
+                        ima_sync_state[vid] = {
+                            "note_id": existing_note,
+                            "knowledge_base_id": knowledge_base_id,
+                            "kb_added": False,
+                            "kb_error": str(e),
+                            "synced_at": _dt.now().isoformat(),
+                        }
+                        _save_ima_sync_state(ima_sync_state)
                 continue
 
             # 创建 ima 笔记
@@ -528,6 +670,15 @@ async def sync_to_ima(
                     kb_folder_id=resolved_folder_id,
                 )
                 synced += 1
+                # Persist local sync state for future kb-association recovery
+                ima_sync_state[vid] = {
+                    "note_id": result.note_id,
+                    "knowledge_base_id": knowledge_base_id,
+                    "kb_added": result.kb_added,
+                    "kb_error": result.kb_error,
+                    "synced_at": _dt.now().isoformat(),
+                }
+                _save_ima_sync_state(ima_sync_state)
                 if knowledge_base_id:
                     if result.kb_added:
                         kb_added += 1
@@ -552,8 +703,10 @@ async def sync_to_ima(
 
         progress(1.0, desc="同步完成")
         if knowledge_base_id:
+            retry_part = f"，恢复 {kb_retried}" if kb_retried else ""
             kb_summary = (
                 f"（笔记 {synced}/{total}，知识库关联成功 {kb_added}"
+                + retry_part
                 + (f"，失败 {kb_failed}" if kb_failed else "")
                 + "）"
             )
