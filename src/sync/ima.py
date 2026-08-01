@@ -17,6 +17,7 @@ import logging
 import re
 import time
 from datetime import datetime
+from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple
 
 import httpx
@@ -24,6 +25,14 @@ import httpx
 from .base import SyncBase
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CreateDocumentResult:
+    """ima 笔记创建结果，区分部分成功状态"""
+    note_id: str           # 笔记 ID（创建成功时有值）
+    kb_added: bool = False  # 知识库关联是否成功
+    kb_error: str = ""      # 知识库关联失败原因（成功时为空）
 
 
 class ImaQuotaExceededError(RuntimeError):
@@ -109,12 +118,32 @@ class ImaSync(SyncBase):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+    @staticmethod
+    def _handle_business_error(code: int, msg: str) -> None:
+        """统一处理 ima 业务错误码（与 HTTP 状态码无关）
+
+        IMA API 在 HTTP 200 / 429 等不同状态码下均可能返回业务错误。
+        此函数将判定逻辑集中到一处，调用方无需关心 HTTP 状态码。
+
+        Raises:
+            ImaQuotaExceededError: code 200005（每日配额耗尽，不可重试）
+            ImaRateLimitError:    code 200001（频率超限，可指数退避重试）
+            RuntimeError:         其它非零业务码
+        """
+        if code == 0:
+            return
+        if code == 200005:
+            raise ImaQuotaExceededError(msg or "请求超量，请明日再试")
+        if code == 200001:
+            raise ImaRateLimitError(msg or "请求频率超限，请稍后重试")
+        raise RuntimeError(f"ima API 错误: {msg} (code={code})")
+
     async def _call(self, path: str, body: dict, _retry: int = 0) -> dict:
         """统一的 ima API 请求方法
 
         自动携带 ima-openapi-* 头，处理响应结构 {code, msg, data}。
 
-        错误处理：
+        业务错误通过 _handle_business_error 统一处理，与 HTTP 状态码无关：
         - code 200005（请求超量/每日配额耗尽）：抛出 ImaQuotaExceededError，调用方应停止同步
         - code 200001（请求频率超限）：指数退避重试，耗尽后抛 ImaRateLimitError
         - 其它错误：抛出 RuntimeError，附上 API 返回的 msg
@@ -137,46 +166,42 @@ class ImaSync(SyncBase):
         client = await self._get_client()
         resp = await client.post(url, headers=headers, json=body)
 
-        if resp.status_code >= 400:
-            code, msg = self._parse_error(resp)
-            logger.error(
-                "ima HTTP 错误 [%s]: status=%s code=%s msg=%s", path, resp.status_code, code, msg
-            )
-            if code == 200005:
-                raise ImaQuotaExceededError(msg or "请求超量，请明日再试")
-            if code == 200001:
-                if _retry < self._max_retry:
-                    wait = min(2 ** _retry * self._retry_base, self._retry_cap)
-                    logger.warning(
-                        "ima 频率超限，%0.1fs 后重试 [%s] (%d/%d)",
-                        wait, path, _retry + 1, self._max_retry,
-                    )
-                    await asyncio.sleep(wait)
-                    return await self._call(path, body, _retry=_retry + 1)
-                raise ImaRateLimitError(msg or "请求频率超限，请稍后重试")
+        # 解析响应体（无论 HTTP 状态码，IMA 都在 body 里返回业务码）
+        try:
+            data = resp.json()
+        except Exception:
             raise RuntimeError(
-                f"ima API 错误: {msg} (code={code}, status={resp.status_code})"
+                f"ima API 响应非 JSON (status={resp.status_code}, path={path})"
             )
 
-        data = resp.json()
+        code = data.get("code", 0)
+        msg = data.get("msg", "")
         logger.debug(
-            "ima 响应 [%s] code=%s msg=%s data_keys=%s",
-            path, data.get("code"), data.get("msg"), list(data.get("data", {}).keys()) if isinstance(data.get("data"), dict) else type(data.get("data")).__name__,
+            "ima 响应 [%s] HTTP=%s code=%s msg=%s",
+            path, resp.status_code, code, msg,
         )
-        if data.get("code") != 0:
-            logger.error("ima API 错误 [%s]: code=%s, msg=%s", path, data.get("code"), data.get("msg"))
-            raise RuntimeError(f"ima API 错误: {data.get('msg')} (code={data.get('code')})")
+
+        # 统一业务错误处理（适用于 HTTP 200、429 等任意状态码）
+        try:
+            self._handle_business_error(code, msg)
+        except ImaRateLimitError as e:
+            if _retry < self._max_retry:
+                wait = min(2 ** _retry * self._retry_base, self._retry_cap)
+                logger.warning(
+                    "ima 频率超限，%0.1fs 后重试 [%s] (%d/%d)",
+                    wait, path, _retry + 1, self._max_retry,
+                )
+                await asyncio.sleep(wait)
+                return await self._call(path, body, _retry=_retry + 1)
+            raise  # 重试耗尽
+
+        # 保险：HTTP 错误但业务码为 0（不常见）
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"ima HTTP 错误: status={resp.status_code}, path={path}"
+            )
 
         return data.get("data", {})
-
-    @staticmethod
-    def _parse_error(resp) -> Tuple[Optional[int], str]:
-        """从错误响应体解析 (code, msg)，非 JSON 时返回 (None, '')"""
-        try:
-            err = resp.json()
-        except Exception:
-            return None, ""
-        return err.get("code"), err.get("msg", "")
 
     # ------------------------------------------------------------------
     # 文件夹（笔记本）操作
@@ -228,10 +253,13 @@ class ImaSync(SyncBase):
     # 文档操作
     # ------------------------------------------------------------------
 
-    async def create_document(self, title: str, content: dict, folder_id: str = None, kb_folder_id: str = "") -> str:
+    async def create_document(self, title: str, content: dict, folder_id: str = None, kb_folder_id: str = "") -> CreateDocumentResult:
         """创建 ima 笔记（Markdown），成功后可选加入知识库
 
-        返回 note_id
+        返回 CreateDocumentResult，其中：
+        - note_id: 笔记 ID（创建成功时有值）
+        - kb_added: 知识库关联是否成功
+        - kb_error: 关联失败原因（成功时为空）
         """
         # 1. 构建并校验 Markdown
         markdown = self._build_markdown(title, content)
@@ -252,18 +280,22 @@ class ImaSync(SyncBase):
         note_id = data.get("note_id", "")
         logger.info("ima 笔记创建成功: %s", note_id)
 
+        result = CreateDocumentResult(note_id=note_id)
+
         # 3. 可选：加入知识库
         if self.knowledge_base_id and note_id:
             try:
                 await self._add_to_knowledge_base(note_id, title, kb_folder_id)
+                result.kb_added = True
             except ImaQuotaExceededError:
                 # 配额耗尽需向上传递，让同步循环及时停止
                 raise
             except Exception as e:
                 # 笔记已建成功，知识库失败仅告警，不中断整体同步
+                result.kb_error = str(e)
                 logger.warning("笔记已创建，但加入知识库失败: %s", e)
 
-        return note_id
+        return result
 
     async def update_document(self, document_id: str, content: dict) -> bool:
         """更新已有 ima 笔记
@@ -291,35 +323,44 @@ class ImaSync(SyncBase):
         """检查笔记是否已存在（按标题前缀 [video_id] 去重）
 
         搜索接口按标题检索，匹配标题以 `[video_id]` 开头的笔记。
-        返回 note_id 或 None
+        返回 note_id 或 None。
+
+        为确保搜索覆盖到含前缀的标题，同时用 video_id 和 [video_id]
+        两种 query 做并集搜索，避免 API 忽略方括号导致漏检。
         """
         prefix = f"[{video_id}]"
-        start, page = 0, 20
-        while True:
-            data = await self._call(
-                self.PATH_SEARCH_NOTE,
-                {
-                    "search_type": 0,
-                    "query_info": {"title": video_id},
-                    "start": start,
-                    "end": start + page,
-                },
-            )
-            infos = data.get("search_note_infos", []) or []
-            for info in infos:
-                nb = info.get("note_book_info", {})
-                title = nb.get("title", "")
-                note_id = nb.get("note_id", "")
-                if title.startswith(prefix) and note_id:
-                    logger.info("ima 发现已有笔记: %s -> %s", title, note_id)
-                    return note_id
+        seen: set = set()
+        # 双 query 并集：video_id 本身 + 带方括号的 [video_id] 前缀
+        for query_title in (video_id, f"[{video_id}]"):
+            start, page = 0, 20
+            while True:
+                data = await self._call(
+                    self.PATH_SEARCH_NOTE,
+                    {
+                        "search_type": 0,
+                        "query_info": {"title": query_title},
+                        "start": start,
+                        "end": start + page,
+                    },
+                )
+                infos = data.get("search_note_infos", []) or []
+                for info in infos:
+                    nb = info.get("note_book_info", {})
+                    title = nb.get("title", "")
+                    note_id = nb.get("note_id", "")
+                    if note_id and note_id not in seen:
+                        seen.add(note_id)
+                        # 匹配：标题以 [video_id] 开头 或 标题中包含 video_id
+                        if title.startswith(prefix) or video_id in title:
+                            logger.info("ima 发现已有笔记: %s -> %s", title, note_id)
+                            return note_id
 
-            if data.get("is_end", True):
-                break
-            start += page
-            total = data.get("total", start + page)
-            if start >= total:
-                break
+                if data.get("is_end", True):
+                    break
+                start += page
+                total = data.get("total", start + page)
+                if start >= total:
+                    break
 
         return None
 
@@ -509,11 +550,18 @@ class ImaSync(SyncBase):
 
     @staticmethod
     def _build_markdown(title: str, content: dict) -> str:
-        """将知识卡片内容转换为 Markdown（结构与飞书 block 等价）"""
+        """将知识卡片内容转换为 Markdown（结构与飞书 block 等价）
+
+        title 参数应包含 [video_id] 前缀（由调用方传入），确保笔记标题与
+        check_document_exists 的前缀匹配逻辑一致，实现幂等查重。
+        """
         lines: List[str] = []
 
-        title = content.get("title") or title or "未知标题"
-        lines.append(f"# {title}")
+        # 优先使用传入的 title（含 [video_id] 前缀），fallback 到卡片原始标题
+        display_title = title or content.get("title") or "未知标题"
+        # 转义标题中的 # 防止破坏 Markdown 标题层级
+        safe_title = display_title.replace("#", "&#35;")
+        lines.append(f"# {safe_title}")
 
         # ---- 元信息 ----
         author = content.get("author", "")

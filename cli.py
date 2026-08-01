@@ -234,21 +234,43 @@ async def _cmd_sync_ima(config, args):
             if kb_folder_id:
                 print(f"目标知识库文件夹: {kb_folder_id}")
 
-        kb_suffix = f" +知识库[{knowledge_base_id}]" if knowledge_base_id else ""
+        synced = 0
+        kb_added = 0
+        kb_failed = 0
         for i, card in enumerate(cards):
             vid = card.get("video_id", "")
             title = card.get("title", "未知")
             existing = await ima.check_document_exists(vid)
             if existing:
                 print(f"[{i+1}/{len(cards)}] {title} — 已存在，跳过")
+                synced += 1
                 continue
-            note_id = await ima.create_document(
+            result = await ima.create_document(
                 title=f"[{vid}] {title}", content=card, folder_id=folder_id,
                 kb_folder_id=kb_folder_id,
             )
-            print(f"[{i+1}/{len(cards)}] {title} → {note_id}{kb_suffix}")
+            synced += 1
+            if knowledge_base_id:
+                if result.kb_added:
+                    kb_added += 1
+                    print(f"[{i+1}/{len(cards)}] {title} → {result.note_id} + 知识库")
+                elif result.kb_error:
+                    kb_failed += 1
+                    print(f"[{i+1}/{len(cards)}] {title} → {result.note_id} (知识库关联失败: {result.kb_error})")
+                else:
+                    print(f"[{i+1}/{len(cards)}] {title} → {result.note_id}")
+            else:
+                print(f"[{i+1}/{len(cards)}] {title} → {result.note_id}")
 
-        print("\n同步完成！")
+        if knowledge_base_id:
+            kb_summary = (
+                f"（笔记 {synced}/{len(cards)}，知识库关联成功 {kb_added}"
+                + (f"，失败 {kb_failed}" if kb_failed else "")
+                + "）"
+            )
+            print(f"\n同步完成！{kb_summary}")
+        else:
+            print(f"\n同步完成！共 {synced}/{len(cards)} 个笔记")
     finally:
         await ima.close()
 

@@ -18,7 +18,7 @@ from typing import Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
-from src.scraper.base import ScraperBase, FavoriteFolder, VideoInfo, SubtitleSegment
+from src.scraper.base import ScraperBase, FavoriteFolder, VideoInfo, SubtitleSegment, VideoAvailability
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,9 @@ class BilibiliScraper(ScraperBase):
 
     # 需要 wbi 签名的 API 错误码（参考用）
     _WBI_REQUIRED_CODES = {-403, 10004}
-    # 视频不可见的 API 错误码（-400=请求错误, -352=风控拦截, 62xxx=稿件状态异常）
-    _VIDEO_UNAVAILABLE_CODES = {-400, -352, -404, 62001, 62002, 62003, 62004}
+    # 视频不可见的 API 错误码（-404=不存在, 62xxx=稿件状态异常）
+    # -352=风控拦截(临时), -400=请求错误(临时) 归类为 TEMPORARY_ERROR，允许重试
+    _VIDEO_UNAVAILABLE_CODES = {-404, 62001, 62002, 62003, 62004}
 
     async def _api_request(self, url: str) -> dict:
         """
@@ -225,33 +226,37 @@ class BilibiliScraper(ScraperBase):
         cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
         return {"Cookie": cookie_str} if cookie_str else {}
 
-    async def check_video_available(self, video_id: str) -> bool:
+    async def check_video_available(self, video_id: str) -> VideoAvailability:
         """
         检查视频是否可用（未被删除/下架/设为私密）。
 
         通过 /x/web-interface/view 接口判断，同时缓存结果供后续复用。
-        返回 True 表示可用，False 表示不可用。
+        返回 VideoAvailability 枚举值：
+        - AVAILABLE: 可正常访问
+        - UNAVAILABLE: 明确不可用（删除/下架/私密），应永久跳过
+        - TEMPORARY_ERROR: 临时错误（网络/风控/Cookie 失效等），应重试
         """
         # 已有缓存说明之前检查过
         if video_id in self._view_cache:
-            return True
+            return VideoAvailability.AVAILABLE
 
         url = f"{_API_BASE}/x/web-interface/view?bvid={video_id}"
         try:
             data = await self._api_request(url)
             inner = data.get("data") or {}
             self._view_cache[video_id] = inner
-            return True
+            return VideoAvailability.AVAILABLE
         except RuntimeError as e:
             msg = str(e)
-            # 识别不可用错误码
+            # 识别明确不可用错误码（删除/下架/私密）
             for code in self._VIDEO_UNAVAILABLE_CODES:
                 if f"code={code}" in msg:
-                    logger.info("视频 %s 不可用 (code=%s)，已跳过", video_id, code)
-                    return False
-            # 风控等临时错误也跳过，避免后续接口连环报错
-            logger.warning("视频 %s 可用性检查失败: %s", video_id, e)
-            return False
+                    logger.info("视频 %s 不可用 (code=%s)，永久跳过", video_id, code)
+                    return VideoAvailability.UNAVAILABLE
+            # 其余 RuntimeError（网络错误、HTTP 异常、Cookie 失效、风控等）
+            # 均视为临时错误，允许后续重试
+            logger.warning("视频 %s 可用性检查临时失败: %s", video_id, e)
+            return VideoAvailability.TEMPORARY_ERROR
 
     async def get_video_owner(self, video_id: str) -> str:
         """

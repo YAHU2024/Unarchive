@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,7 @@ from typing import Optional
 import gradio as gr
 
 from config import AppConfig, get_config
+from src.scraper.base import VideoAvailability
 from src.scraper.bilibili import BilibiliScraper
 from src.scraper.douyin import DouyinScraper
 from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
@@ -31,9 +33,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 全局常量
 # ---------------------------------------------------------------------------
-KNOWLEDGE_BASE_DIR = Path("data/knowledge_base")
-KNOWLEDGE_BASE_DIR.mkdir(parents=True, exist_ok=True)
-
 PLATFORM_CHOICES = ["Bilibili", "抖音"]
 WHISPER_MODEL_CHOICES = [
     "tiny", "base", "small", "medium",
@@ -47,9 +46,17 @@ WHISPER_MODEL_CHOICES = [
 # 工具函数
 # ---------------------------------------------------------------------------
 
+def _kb_dir() -> Path:
+    """获取知识库目录（从 AppConfig 读取，确保 GUI/CLI 共用同一目录）"""
+    from config import get_config
+    p = Path(get_config().knowledge_base_dir)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def _save_knowledge_card(video_id: str, data: dict) -> Path:
     """保存知识卡片为 JSON 文件"""
-    path = KNOWLEDGE_BASE_DIR / f"{video_id}.json"
+    path = _kb_dir() / f"{video_id}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return path
@@ -57,7 +64,7 @@ def _save_knowledge_card(video_id: str, data: dict) -> Path:
 
 def _load_knowledge_card(video_id: str) -> Optional[dict]:
     """加载知识卡片 JSON"""
-    path = KNOWLEDGE_BASE_DIR / f"{video_id}.json"
+    path = _kb_dir() / f"{video_id}.json"
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -67,7 +74,7 @@ def _load_knowledge_card(video_id: str) -> Optional[dict]:
 def _list_knowledge_cards() -> list[dict]:
     """列出所有已保存的知识卡片"""
     cards = []
-    for fp in KNOWLEDGE_BASE_DIR.glob("*.json"):
+    for fp in _kb_dir().glob("*.json"):
         try:
             with open(fp, "r", encoding="utf-8") as f:
                 cards.append(json.load(f))
@@ -213,10 +220,15 @@ async def process_videos(
                 yield results, logs, current, gr.update()
                 continue
 
-            available = await scraper.check_video_available(video.video_id)
-            if not available:
-                logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），跳过")
+            availability = await scraper.check_video_available(video.video_id)
+            if availability == VideoAvailability.UNAVAILABLE:
+                logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），永久跳过")
                 stats["unavailable"] += 1
+                yield results, logs, current, gr.update()
+                continue
+            elif availability == VideoAvailability.TEMPORARY_ERROR:
+                logs += _format_log(f"  ↳ 视频可用性检查临时失败（网络/风控等），跳过本次，下次重试")
+                stats["temp_error"] = stats.get("temp_error", 0) + 1
                 yield results, logs, current, gr.update()
                 continue
 
@@ -288,10 +300,12 @@ async def process_videos(
 
         # 汇总
         elapsed = time.time() - t_start
+        temp_error_count = stats.get("temp_error", 0)
         logs += _format_log(
             f"全部完成！处理 {total_processed}/{total} 个 (跳过 {stats['skipped']}、"
-            f"不可用 {stats['unavailable']}、转录失败 {stats['transcript_fail']}、"
-            f"LLM失败 {stats['llm_fail']})，总耗时 {elapsed:.0f}s"
+            f"不可用 {stats['unavailable']}、临时错误 {temp_error_count}、"
+            f"转录失败 {stats['transcript_fail']}、LLM失败 {stats['llm_fail']})，"
+            f"总耗时 {elapsed:.0f}s"
         )
         current = f"全部完成！共处理 {total_processed}/{total} 个视频"
         yield results, logs, current, gr.update(value=total, maximum=total, label=f"进度 {total}/{total}")
@@ -427,6 +441,8 @@ async def sync_to_ima(
     """
     logs = ""
     synced = 0
+    kb_added = 0      # 知识库关联成功数
+    kb_failed = 0     # 知识库关联失败数
     ima_sync = None
 
     try:
@@ -505,14 +521,26 @@ async def sync_to_ima(
 
             # 创建 ima 笔记
             try:
-                note_id = await ima_sync.create_document(
+                result = await ima_sync.create_document(
                     title=f"[{vid}] {card.get('title', '未知')}",
                     content=card,
                     folder_id=folder_id,
                     kb_folder_id=resolved_folder_id,
                 )
-                logs += _format_log(f"  ↳ 笔记创建成功: {note_id}")
                 synced += 1
+                if knowledge_base_id:
+                    if result.kb_added:
+                        kb_added += 1
+                        logs += _format_log(f"  ↳ 笔记 + 知识库 创建成功: {result.note_id}")
+                    elif result.kb_error:
+                        kb_failed += 1
+                        logs += _format_log(
+                            f"  ↳ 笔记创建成功 ({result.note_id})，但知识库关联失败: {result.kb_error}"
+                        )
+                    else:
+                        logs += _format_log(f"  ↳ 笔记创建成功: {result.note_id}")
+                else:
+                    logs += _format_log(f"  ↳ 笔记创建成功: {result.note_id}")
             except ImaQuotaExceededError as e:
                 logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
                 logger.warning("sync_to_ima: ima 配额耗尽，提前结束")
@@ -523,8 +551,15 @@ async def sync_to_ima(
             yield logs, gr.update()
 
         progress(1.0, desc="同步完成")
-        kb_suffix = f" +知识库" if knowledge_base_id else ""
-        logs += _format_log(f"同步完成！成功 {synced}/{total} 个笔记{kb_suffix}")
+        if knowledge_base_id:
+            kb_summary = (
+                f"（笔记 {synced}/{total}，知识库关联成功 {kb_added}"
+                + (f"，失败 {kb_failed}" if kb_failed else "")
+                + "）"
+            )
+            logs += _format_log(f"同步完成！{kb_summary}")
+        else:
+            logs += _format_log(f"同步完成！成功 {synced}/{total} 个笔记")
         yield logs, gr.update()
 
     except Exception as e:
@@ -870,7 +905,11 @@ async def do_sync(
 
 def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_app_secret,
                    ima_client_id, ima_api_key, ima_knowledge_base_id, state: dict):
-    """保存配置到 .env 文件（含 ima 知识库与文件夹选择）"""
+    """保存配置到 .env 文件（含 ima 知识库与文件夹选择）
+
+    读取现有 .env 文件，仅更新表单编辑的字段，保留 LLM_PROVIDER、Whisper、
+    数据目录、CDP 等未在表单中的配置不变。对换行和等号做安全序列化。
+    """
     try:
         # 下拉框回传可能是 choice dict，归一化为 value 再处理
         kb_id = _choice_value(ima_knowledge_base_id) or state.get("kb_id", "")
@@ -879,28 +918,60 @@ def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_a
             kb_folder_id, kb_folder_name = fv, ""
         else:
             kb_folder_id, kb_folder_name = "", fv
-        logger.info(
-            "do_save_config: 写入 ima_knowledge_base_id=%r folder_id=%r folder_name=%r",
-            kb_id, kb_folder_id, kb_folder_name,
-        )
 
-        lines = [
-            f"LLM_API_KEY={llm_api_key}",
-            f"LLM_BASE_URL={llm_base_url}",
-            f"LLM_MODEL={llm_model}",
-            f"FEISHU_APP_ID={feishu_app_id}",
-            f"FEISHU_APP_SECRET={feishu_app_secret}",
-            f"IMA_CLIENT_ID={ima_client_id}",
-            f"IMA_API_KEY={ima_api_key}",
-            f"IMA_KNOWLEDGE_BASE_ID={kb_id}",
-            f"IMA_KNOWLEDGE_BASE_FOLDER_ID={kb_folder_id}",
-            f"IMA_KNOWLEDGE_BASE_FOLDER_NAME={kb_folder_name}",
-        ]
-        with open(".env", "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        return "✅ 配置已保存到 .env 文件"
+        # 构建本次要更新的字段映射（key -> value）
+        # 对含换行/等号的值做安全处理
+        updates = {
+            "LLM_API_KEY": (llm_api_key or "").replace("\n", "").replace("\r", ""),
+            "LLM_BASE_URL": (llm_base_url or "").replace("\n", "").replace("\r", ""),
+            "LLM_MODEL": (llm_model or "").replace("\n", "").replace("\r", ""),
+            "FEISHU_APP_ID": (feishu_app_id or "").replace("\n", "").replace("\r", ""),
+            "FEISHU_APP_SECRET": (feishu_app_secret or "").replace("\n", "").replace("\r", ""),
+            "IMA_CLIENT_ID": (ima_client_id or "").replace("\n", "").replace("\r", ""),
+            "IMA_API_KEY": (ima_api_key or "").replace("\n", "").replace("\r", ""),
+            "IMA_KNOWLEDGE_BASE_ID": (kb_id or "").replace("\n", "").replace("\r", ""),
+            "IMA_KNOWLEDGE_BASE_FOLDER_ID": (kb_folder_id or "").replace("\n", "").replace("\r", ""),
+            "IMA_KNOWLEDGE_BASE_FOLDER_NAME": (kb_folder_name or "").replace("\n", "").replace("\r", ""),
+        }
+
+        # 读取现有 .env 行（如果存在），逐行更新匹配的 key
+        existing_lines: list[str] = []
+        updated_keys: set = set()
+        env_path = ".env"
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    stripped = line.rstrip("\n\r")
+                    if not stripped or stripped.startswith("#"):
+                        existing_lines.append(stripped)
+                        continue
+                    # 解析 KEY=VALUE 行（允许等号出现在值中）
+                    if "=" in stripped:
+                        key = stripped.split("=", 1)[0].strip()
+                        if key in updates:
+                            existing_lines.append(f"{key}={updates[key]}")
+                            updated_keys.add(key)
+                        else:
+                            existing_lines.append(stripped)
+                    else:
+                        existing_lines.append(stripped)
+
+        # 追加尚未在 .env 中出现的新字段
+        for key, val in updates.items():
+            if key not in updated_keys:
+                existing_lines.append(f"{key}={val}")
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(existing_lines) + "\n")
+
+        logger.info(
+            "do_save_config: 已保存 %d 个字段, 保留 %d 行现有配置",
+            len(updates), len(existing_lines) - len(updates),
+        )
+        return "配置已保存到 .env 文件"
     except Exception as e:
-        return f"❌ 保存失败: {e}"
+        logger.exception("do_save_config 失败")
+        return f"保存失败: {e}"
 
 
 def do_load_knowledge(search_query):
