@@ -37,10 +37,14 @@ logger = logging.getLogger("cli")
 
 
 def _create_scraper(platform: str):
+    config = get_config()
     if platform.lower() == "bilibili":
-        return BilibiliScraper(cookie_path="data/cookies/bilibili.json")
+        return BilibiliScraper(cookie_path=str(Path(config.cookies_dir) / "bilibili.json"))
     elif platform.lower() in ("douyin", "抖音"):
-        return DouyinScraper()
+        return DouyinScraper(
+            cookie_path=str(Path(config.cookies_dir) / "douyin.json"),
+            chrome_profile_dir=config.chrome_profile_dir,
+        )
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
@@ -151,10 +155,11 @@ async def cmd_process(args):
 
 
 async def cmd_download(args):
+    config = get_config()
     scraper = _create_scraper(args.platform)
     try:
         await scraper.login()
-        output_path = args.output or f"data/videos/{args.video_id}.mp4"
+        output_path = args.output or str(Path(config.video_download_dir) / f"{args.video_id}.mp4")
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         result = await scraper.download_video(args.video_id, output_path)
         if result:

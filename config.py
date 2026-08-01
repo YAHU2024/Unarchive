@@ -46,6 +46,9 @@ class AppConfig(BaseModel):
     transcripts_dir: str = Field(default="./data/transcripts", description="字幕/转写文件目录")
     audio_cache_dir: str = Field(default="./data/audio_cache", description="音频缓存目录")
     knowledge_base_dir: str = Field(default="./data/knowledge_base", description="知识库目录")
+    cookies_dir: str = Field(default="./data/cookies", description="平台 Cookie 持久化目录")
+    logs_dir: str = Field(default="./data/logs", description="应用日志目录")
+    chrome_profile_dir: str = Field(default="./data/chrome_profile", description="Chrome CDP 用户数据目录")
 
     # CDP 配置
     douyin_cdp_port: int = Field(default=9222, description="Chrome 远程调试端口")
@@ -73,13 +76,21 @@ class AppConfig(BaseModel):
             transcripts_dir=os.getenv("TRANSCRIPTS_DIR", "./data/transcripts"),
             audio_cache_dir=os.getenv("AUDIO_CACHE_DIR", "./data/audio_cache"),
             knowledge_base_dir=os.getenv("KNOWLEDGE_BASE_DIR", "./data/knowledge_base"),
+            cookies_dir=os.getenv("COOKIES_DIR", "./data/cookies"),
+            logs_dir=os.getenv("LOGS_DIR", "./data/logs"),
+            chrome_profile_dir=os.getenv("CHROME_PROFILE_DIR", "./data/chrome_profile"),
             douyin_cdp_port=int(os.getenv("DOUYIN_CDP_PORT", "9222")),
             video_download_dir=os.getenv("VIDEO_DOWNLOAD_DIR", "./data/videos"),
         )
 
     def ensure_dirs(self) -> None:
         """确保所有数据目录存在"""
-        for dir_path in [self.data_dir, self.transcripts_dir, self.audio_cache_dir, self.knowledge_base_dir]:
+        for dir_path in [
+            self.data_dir, self.transcripts_dir,
+            self.audio_cache_dir, self.knowledge_base_dir,
+            self.cookies_dir, self.logs_dir,
+            self.chrome_profile_dir, self.video_download_dir,
+        ]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
 
 

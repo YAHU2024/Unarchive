@@ -62,9 +62,11 @@ class DouyinScraper(ScraperBase):
     """
 
     def __init__(self, cookie_path: str = "data/cookies/douyin.json",
-                 cdp_port: int = 9222) -> None:
+                 cdp_port: int = 9222,
+                 chrome_profile_dir: str = "data/chrome_profile") -> None:
         self._cookie_path = Path(cookie_path)
         self._cdp_port = cdp_port
+        self._chrome_profile_dir = chrome_profile_dir
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
@@ -143,7 +145,8 @@ class DouyinScraper(ScraperBase):
         3. CDP 彻底不可用 → Playwright 自管浏览器 + 扫码登录
         """
         # 方案1: CDP 连接（优先复用已有，失败则自动拉起 Chrome）
-        self._cdp = CDPClient(debug_port=self._cdp_port)
+        self._cdp = CDPClient(debug_port=self._cdp_port,
+                              chrome_profile_dir=self._chrome_profile_dir)
         if await self._cdp.connect():
             self._login_mode = "cdp"
             self._page = self._cdp.page

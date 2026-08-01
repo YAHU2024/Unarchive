@@ -127,11 +127,15 @@ def _list_knowledge_cards() -> list[dict]:
 
 
 def _create_scraper(platform: str) -> object:
-    """根据平台名称创建 Scraper 实例"""
+    """根据平台名称创建 Scraper 实例（路径从 AppConfig 派生）"""
+    config = get_config()
     if platform == "Bilibili":
-        return BilibiliScraper(cookie_path="data/cookies/bilibili.json")
+        return BilibiliScraper(cookie_path=str(Path(config.cookies_dir) / "bilibili.json"))
     elif platform == "抖音":
-        return DouyinScraper()
+        return DouyinScraper(
+            cookie_path=str(Path(config.cookies_dir) / "douyin.json"),
+            chrome_profile_dir=config.chrome_profile_dir,
+        )
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
@@ -1707,9 +1711,12 @@ def main():
     """启动 Gradio 应用"""
     import os
 
+    # 确保数据目录存在
+    config = get_config()
+    config.ensure_dirs()
+
     # 日志配置：控制台 INFO + 文件 DEBUG（持久化用于排查问题）
-    log_dir = Path("data/logs")
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(config.logs_dir)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
@@ -1736,10 +1743,6 @@ def main():
     # 清除系统代理环境变量，避免 httpx 走代理导致连接失败
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         os.environ.pop(key, None)
-
-    # 确保数据目录存在
-    config = get_config()
-    config.ensure_dirs()
 
     app = build_ui()
     app.launch(
