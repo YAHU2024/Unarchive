@@ -241,6 +241,12 @@ class CDPClient:
             self._browser = None
 
         self._context = None
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
 
     async def disconnect(self) -> None:
         """断开 CDP 连接
@@ -267,6 +273,13 @@ class CDPClient:
             self._browser = None
 
         self._context = None
+
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
 
         # 终止我们拉起的 Chrome 进程
         if self._chrome_process is not None:

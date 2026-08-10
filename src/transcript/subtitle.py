@@ -133,6 +133,14 @@ class SubtitleParser:
         lines = [f"[{_format_time(seg.start)}] {seg.text}" for seg in segments]
         return "\n".join(lines)
 
+    @staticmethod
+    def segments_to_records(segments: list[SubtitleSegment]) -> list[dict]:
+        """Convert transcript segments into JSON-serializable evidence records."""
+        return [
+            {"start": segment.start, "end": segment.end, "text": segment.text}
+            for segment in segments
+        ]
+
 
 async def get_transcript(
     video_id: str,

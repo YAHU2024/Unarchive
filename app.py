@@ -26,6 +26,12 @@ from src.scraper.bilibili import BilibiliScraper
 from src.scraper.douyin import DouyinScraper
 from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
 from src.analyzer.llm_analyzer import LLMAnalyzer, LLMQuotaExceededError
+from src.knowledge_store import (
+    get_knowledge_base_dir,
+    list_knowledge_cards,
+    load_knowledge_card,
+    save_knowledge_card,
+)
 from src.sync.feishu import FeishuSync
 from src.sync.ima import ImaSync, ImaQuotaExceededError
 from src.sync.ima_state import (
@@ -91,39 +97,22 @@ def _save_ima_sync_state(state: dict) -> None:
 
 def _kb_dir() -> Path:
     """获取知识库目录（从 AppConfig 读取，确保 GUI/CLI 共用同一目录）"""
-    from config import get_config
-    p = Path(get_config().knowledge_base_dir)
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return get_knowledge_base_dir()
 
 
 def _save_knowledge_card(video_id: str, data: dict) -> Path:
     """保存知识卡片为 JSON 文件"""
-    path = _kb_dir() / f"{video_id}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return path
+    return save_knowledge_card(video_id, data)
 
 
 def _load_knowledge_card(video_id: str) -> Optional[dict]:
     """加载知识卡片 JSON"""
-    path = _kb_dir() / f"{video_id}.json"
-    if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
+    return load_knowledge_card(video_id)
 
 
 def _list_knowledge_cards() -> list[dict]:
     """列出所有已保存的知识卡片"""
-    cards = []
-    for fp in _kb_dir().glob("*.json"):
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                cards.append(json.load(f))
-        except Exception:
-            continue
-    return cards
+    return list_knowledge_cards()
 
 
 def _create_scraper(platform: str) -> object:
@@ -269,6 +258,7 @@ async def process_videos(
                     resume_llm = True
                     transcript_text = existing.get("transcript", "")
                     transcript_source = existing.get("transcript_source", "unknown")
+                    transcript_segments = existing.get("transcript_segments", [])
                     real_author = existing.get("author", video.author)
                     logs += _format_log(
                         f"  ↳ 检测到部分知识卡片（缺少 LLM 分析），"
@@ -306,6 +296,7 @@ async def process_videos(
                     )
                     transcript_text = SubtitleParser.segments_to_text(segments)
                     transcript_source = source
+                    transcript_segments = SubtitleParser.segments_to_records(segments)
                     logs += _format_log(
                         f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段, "
                         f"耗时 {time.time() - t0:.1f}s)"
@@ -348,6 +339,7 @@ async def process_videos(
                     "platform": platform,
                     "transcript_source": transcript_source,
                     "transcript": transcript_text,
+                    "transcript_segments": transcript_segments,
                     "_partial": True,
                 }
                 _save_knowledge_card(video.video_id, partial)
@@ -368,6 +360,7 @@ async def process_videos(
                     "platform": platform,
                     "transcript_source": transcript_source,
                     "transcript": transcript_text,
+                    "transcript_segments": transcript_segments,
                     "_partial": True,
                 }
                 _save_knowledge_card(video.video_id, partial)
@@ -384,6 +377,7 @@ async def process_videos(
                 "platform": platform,
                 "transcript_source": transcript_source,
                 "transcript": transcript_text,
+                "transcript_segments": transcript_segments,
                 **analysis,
             }
             _save_knowledge_card(video.video_id, card)

@@ -40,6 +40,7 @@ class BilibiliScraper(ScraperBase):
 
     def __init__(self, cookie_path: str = "data/cookies/bilibili.json") -> None:
         self._cookie_path = Path(cookie_path)
+        self._playwright = None
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
@@ -400,8 +401,8 @@ class BilibiliScraper(ScraperBase):
         3. 若 Cookie 无效或不存在，打开登录页等待用户手动扫码
         4. 登录成功后保存 Cookie 到本地
         """
-        pw = await async_playwright().start()
-        self._browser = await pw.chromium.launch(headless=False)
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=False)
         self._context = await self._browser.new_context(
             user_agent=_HEADERS["User-Agent"],
             extra_http_headers=_HEADERS,
@@ -783,3 +784,9 @@ class BilibiliScraper(ScraperBase):
             except Exception:
                 pass
             self._browser = None
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None

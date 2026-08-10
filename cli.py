@@ -19,7 +19,9 @@ import sys
 from pathlib import Path
 
 from config import get_config
+from src.knowledge_store import load_knowledge_card, save_knowledge_card
 from src.scraper import BilibiliScraper, DouyinScraper
+from src.scraper.base import VideoAvailability
 from src.sync.ima_state import (
     get_ima_state_path,
     kb_state_decision,
@@ -84,9 +86,8 @@ async def cmd_list_favorites(args):
 
 
 async def cmd_process(args):
-    import json
     from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
-    from src.analyzer.llm_analyzer import LLMAnalyzer
+    from src.analyzer.llm_analyzer import LLMAnalyzer, LLMQuotaExceededError
 
     config = get_config()
     scraper = _create_scraper(args.platform)
@@ -102,48 +103,108 @@ async def cmd_process(args):
             videos = videos[:args.max_videos]
         print(f"获取到 {len(videos)} 个视频")
 
-        output_dir = Path(config.knowledge_base_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         for i, video in enumerate(videos):
             print(f"\n[{i+1}/{len(videos)}] {video.title}")
 
-            output_path = output_dir / f"{video.video_id}.json"
-            if output_path.exists() and not args.force:
-                print(f"  ↳ 已存在，跳过")
-                continue
+            existing = load_knowledge_card(video.video_id, config)
+            resume_llm = False
+            preserve_complete_card = bool(existing and not existing.get("_partial"))
+            transcript_segments = []
 
-            # 获取逐字稿
-            try:
-                segments, source = await get_transcript(
-                    video.video_id, scraper, whisper,
-                    download_headers=await scraper.get_audio_cookies(),
-                )
-                transcript_text = SubtitleParser.segments_to_text(segments)
-                print(f"  ↳ 逐字稿: {source}, {len(segments)} 条片段")
-            except Exception as e:
-                print(f"  ✗ 逐字稿失败: {e}")
-                continue
+            if existing and not args.force:
+                if existing.get("_partial"):
+                    resume_llm = True
+                    transcript_text = existing.get("transcript", "")
+                    transcript_source = existing.get("transcript_source", "unknown")
+                    transcript_segments = existing.get("transcript_segments", [])
+                    real_author = existing.get("author", video.author)
+                    print("  ↳ 检测到部分知识卡片，跳过转录并恢复 LLM 分析")
+                else:
+                    print(f"  ↳ 已存在，跳过")
+                    continue
+
+            if not resume_llm:
+                availability = await scraper.check_video_available(video.video_id)
+                if availability == VideoAvailability.UNAVAILABLE:
+                    print("  ↳ 视频不可用（已删除/下架/私密），永久跳过")
+                    continue
+                if availability == VideoAvailability.TEMPORARY_ERROR:
+                    print("  ↳ 视频可用性检查临时失败，跳过本次并保留重试机会")
+                    continue
+
+                # 获取逐字稿
+                try:
+                    segments, source = await get_transcript(
+                        video.video_id, scraper, whisper,
+                        download_headers=await scraper.get_audio_cookies(),
+                    )
+                    transcript_text = SubtitleParser.segments_to_text(segments)
+                    transcript_source = source
+                    transcript_segments = SubtitleParser.segments_to_records(segments)
+                    print(f"  ↳ 逐字稿: {source}, {len(segments)} 条片段")
+                except Exception as e:
+                    print(f"  ✗ 逐字稿失败: {e}")
+                    continue
+
+                real_author = video.author
+                owner = await scraper.get_video_owner(video.video_id)
+                if owner:
+                    real_author = owner
 
             # LLM 分析
             try:
                 analysis = await analyzer.analyze_video(
-                    title=video.title, author=video.author, transcript=transcript_text,
+                    title=video.title, author=real_author, transcript=transcript_text,
                 )
                 print(f"  ↳ LLM 分析完成")
+            except LLMQuotaExceededError as e:
+                if preserve_complete_card:
+                    print(f"  ✗ LLM 配额耗尽，保留原有完整卡片: {e}")
+                else:
+                    partial = {
+                        "video_id": video.video_id,
+                        "title": video.title,
+                        "author": real_author,
+                        "source_url": video.url,
+                        "platform": args.platform,
+                        "transcript_source": transcript_source,
+                        "transcript": transcript_text,
+                        "transcript_segments": transcript_segments,
+                        "_partial": True,
+                    }
+                    save_knowledge_card(video.video_id, partial, config)
+                    print(f"  ✗ LLM 配额耗尽，已保存部分卡片: {e}")
+                print("  ↳ 停止处理后续视频")
+                break
             except Exception as e:
-                print(f"  ✗ LLM 分析失败: {e}")
+                if preserve_complete_card:
+                    print(f"  ✗ LLM 分析失败，保留原有完整卡片: {e}")
+                else:
+                    partial = {
+                        "video_id": video.video_id,
+                        "title": video.title,
+                        "author": real_author,
+                        "source_url": video.url,
+                        "platform": args.platform,
+                        "transcript_source": transcript_source,
+                        "transcript": transcript_text,
+                        "transcript_segments": transcript_segments,
+                        "_partial": True,
+                    }
+                    save_knowledge_card(video.video_id, partial, config)
+                    print(f"  ✗ LLM 分析失败，已保存部分卡片: {e}")
                 continue
 
             # 保存
             card = {
                 "video_id": video.video_id, "title": video.title,
-                "author": video.author, "source_url": video.url,
-                "platform": args.platform, "transcript_source": source,
-                "transcript": transcript_text, **analysis,
+                "author": real_author, "source_url": video.url,
+                "platform": args.platform, "transcript_source": transcript_source,
+                "transcript": transcript_text,
+                "transcript_segments": transcript_segments,
+                **analysis,
             }
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(card, f, ensure_ascii=False, indent=2)
+            save_knowledge_card(video.video_id, card, config)
             print(f"  ✅ 已保存")
 
         print(f"\n完成！")

@@ -67,6 +67,7 @@ class DouyinScraper(ScraperBase):
         self._cookie_path = Path(cookie_path)
         self._cdp_port = cdp_port
         self._chrome_profile_dir = chrome_profile_dir
+        self._playwright = None
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
@@ -186,8 +187,8 @@ class DouyinScraper(ScraperBase):
 
     async def _login_playwright(self) -> None:
         """Playwright 自管浏览器登录（回退方案）"""
-        pw = await async_playwright().start()
-        self._browser = await pw.chromium.launch(headless=False)
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=False)
         self._context = await self._browser.new_context(
             user_agent=_HEADERS["User-Agent"],
             viewport={"width": 1280, "height": 800},
@@ -891,3 +892,9 @@ class DouyinScraper(ScraperBase):
             except Exception:
                 pass
             self._browser = None
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
