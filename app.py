@@ -463,10 +463,11 @@ async def sync_to_feishu(
 
         # 创建/获取知识库文件夹
         if not folder_token:
-            logs += _format_log("正在创建知识库文件夹...")
+            logs += _format_log("正在查找知识库文件夹...")
             yield logs, gr.update()
-            folder_token = await feishu_sync.create_folder("视频知识库")
-            logs += _format_log(f"文件夹已创建: {folder_token}")
+            folder_token, created = await feishu_sync.get_or_create_folder("视频知识库")
+            action = "创建" if created else "复用"
+            logs += _format_log(f"文件夹已{action}: {folder_token}")
 
         total = len(video_ids)
         for idx, vid in enumerate(video_ids):
@@ -1555,7 +1556,7 @@ def build_ui():
                     )
                     test_feishu_btn = gr.Button("🔗 测试连接", variant="secondary")
                     feishu_folder_input = gr.Textbox(
-                        label="飞书目标文件夹 Token（留空则自动创建）",
+                        label="飞书目标文件夹 Token（留空则自动查找或创建）",
                         value="",
                     )
                     sync_video_ids = gr.Textbox(

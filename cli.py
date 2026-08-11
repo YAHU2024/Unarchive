@@ -265,7 +265,11 @@ async def cmd_sync(args):
             with open(fp, "r", encoding="utf-8") as f:
                 cards.append(json.load(f))
 
-        folder_token = args.folder_token or await feishu.create_folder("视频知识库")
+        if args.folder_token:
+            folder_token = args.folder_token
+        else:
+            folder_token, created = await feishu.get_or_create_folder("视频知识库")
+            print(f"{'创建' if created else '复用'}默认文件夹: {folder_token}")
         print(f"目标文件夹: {folder_token}")
 
         for i, card in enumerate(cards):

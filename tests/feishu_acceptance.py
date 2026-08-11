@@ -27,12 +27,13 @@ def _value_after(logs: str, marker: str) -> str:
 
 async def run(video_id: str) -> None:
     first_log = await _collect(video_id, "")
-    folder_token = _value_after(first_log, "文件夹已创建: ")
-    _value_after(first_log, "文档创建成功: ")
+    if "文件夹已创建: " not in first_log and "文件夹已复用: " not in first_log:
+        raise RuntimeError(f"first round did not resolve the default folder\n{first_log}")
     if "同步完成！成功 1/1 个文档" not in first_log:
         raise RuntimeError(f"first-round sync did not complete\n{first_log}")
 
-    second_log = await _collect(video_id, folder_token)
+    second_log = await _collect(video_id, "")
+    _value_after(second_log, "文件夹已复用: ")
     _value_after(second_log, "文档已存在 (")
     if "同步完成！成功 1/1 个文档" not in second_log:
         raise RuntimeError(f"second-round sync did not complete\n{second_log}")

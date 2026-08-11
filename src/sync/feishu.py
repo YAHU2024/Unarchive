@@ -151,6 +151,51 @@ class FeishuSync(SyncBase):
         logger.info("获取根文件夹 token: %s", token)
         return token
 
+    async def find_folder(self, name: str, parent_id: str | None = None) -> str | None:
+        """Find an exact-name child folder under the given parent."""
+        if not parent_id:
+            parent_id = await self.get_root_folder_token()
+
+        page_token = ""
+        while True:
+            params: dict = {
+                "folder_token": parent_id,
+                "page_size": 200,
+                "order_by": "CreatedTime",
+                "direction": "ASC",
+            }
+            if page_token:
+                params["page_token"] = page_token
+
+            data = await self._request("GET", "/drive/v1/files", params=params)
+            for item in data.get("files", []) or []:
+                if item.get("type") == "folder" and item.get("name") == name:
+                    token = item.get("token", "")
+                    if token:
+                        logger.info("发现已有飞书文件夹: %s -> %s", name, token)
+                        return token
+
+            if not data.get("has_more"):
+                break
+            page_token = data.get("next_page_token", "") or data.get("page_token", "")
+            if not page_token:
+                break
+
+        return None
+
+    async def get_or_create_folder(
+        self, name: str, parent_id: str | None = None
+    ) -> tuple[str, bool]:
+        """Return ``(folder_token, created)`` for an exact-name child folder."""
+        if not parent_id:
+            parent_id = await self.get_root_folder_token()
+
+        existing = await self.find_folder(name, parent_id)
+        if existing:
+            return existing, False
+
+        return await self.create_folder(name, parent_id), True
+
     async def create_folder(self, name: str, parent_id: str | None = None) -> str:
         """创建飞书文件夹
 
@@ -280,7 +325,7 @@ class FeishuSync(SyncBase):
             # 翻页
             if not data.get("has_more"):
                 break
-            page_token = data.get("page_token", "")
+            page_token = data.get("next_page_token", "") or data.get("page_token", "")
             if not page_token:
                 break
 
