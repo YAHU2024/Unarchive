@@ -16,7 +16,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Gradio](https://img.shields.io/badge/UI-Gradio%206.x-FF7C00?logo=gradio&logoColor=white)](https://www.gradio.app/)
 [![Playwright](https://img.shields.io/badge/Browser-Playwright-2EAD33)](https://playwright.dev/)
-[![Whisper](https://img.shields.io/badge/ASR-Whisper-000?logo=openai)](https://github.com/openai/whisper)
+[![faster-whisper](https://img.shields.io/badge/ASR-faster--whisper-000)](https://github.com/SYSTRAN/faster-whisper)
 [![License](https://img.shields.io/badge/License-MIT-green)]()
 
 <br>
@@ -53,7 +53,7 @@ graph LR
     C --> D["🤖 AI 分析"]
     D --> E["📖 知识卡片"]
     E --> F["🔄 同步飞书 / ima"]
-    C -.-> C1["字幕 / Whisper"]
+    C -.-> C1["字幕 / faster-whisper"]
 ```
 
 ### ✨ 核心特性
@@ -62,6 +62,15 @@ graph LR
 |:---:|:---:|:---:|
 | 🎬 **多平台**<br>Bilibili · 抖音 | 📝 **智能转写**<br>字幕优先 + Whisper 兜底 | 🤖 **AI 分析**<br>DeepSeek · 通义千问 |
 | 📖 **知识卡片**<br>摘要 · 关键词 · 要点 | 🔄 **多端同步**<br>飞书 · ima 一键同步 | 🖥️ **Web 界面**<br>Gradio 实时进度 |
+
+### 📍 当前状态
+
+- Bilibili、抖音的真实视频处理、本地卡片恢复和飞书二轮去重已通过验收。
+- ima 同步逻辑已有自动化与历史真实验收，但当前凭据失效，仍需在新凭据下重新完成单视频两轮验证。
+- faster-whisper 的短、中视频链路可用；长视频 CPU 性能尚未达到正式使用标准。
+- 小红书目前只有未实现的适配器桩，不属于已支持平台。
+
+后续优先级和验收门槛见 [项目路线图](PLAN.md)。
 
 ### 📋 知识卡片示例
 
@@ -143,15 +152,24 @@ graph LR
     C --> D["🤖 AI Analysis"]
     D --> E["📖 Knowledge Card"]
     E --> F["🔄 Feishu / ima Sync"]
-    C -.-> C1["Subtitles / Whisper"]
+    C -.-> C1["Subtitles / faster-whisper"]
 ```
 
 ### ✨ Key Features
 
 | | | |
 |:---:|:---:|:---:|
-| 🎬 **Multi-Platform**<br>Bilibili · Douyin | 📝 **Smart Transcription**<br>Subtitles + Whisper fallback | 🤖 **AI Analysis**<br>DeepSeek · Qwen |
+| 🎬 **Multi-Platform**<br>Bilibili · Douyin | 📝 **Smart Transcription**<br>Subtitles + faster-whisper fallback | 🤖 **AI Analysis**<br>DeepSeek · Qwen |
 | 📖 **Knowledge Cards**<br>Summary · Keywords · Points | 🔄 **Multi-target Sync**<br>Feishu · ima one-click | 🖥️ **Web UI**<br>Gradio real-time progress |
+
+### 📍 Current Status
+
+- Real Bilibili and Douyin processing, local-card recovery, and two-round Feishu deduplication have passed acceptance checks.
+- ima has automated and historical live-API evidence, but the current credentials are invalid and require a new single-video, two-round validation.
+- The faster-whisper path works for short and medium samples; long-video CPU performance is not production-accepted.
+- Xiaohongshu is only an unimplemented adapter stub and is not a supported platform.
+
+See the [project roadmap](PLAN.md) for priorities and acceptance gates.
 
 ### 📋 Knowledge Card Example
 
@@ -267,7 +285,7 @@ Unarchive/
 |:---:|------|
 | 🖥️ 界面 / UI | **Gradio 6.x** |
 | 🌐 浏览器 / Browser | **Playwright** + **Chrome CDP**（自动拉起/复用登录态） |
-| 🎵 音频 / Audio | **yt-dlp** + **OpenAI Whisper** |
+| 🎵 音频 / Audio | **yt-dlp** + **faster-whisper**（CTranslate2） |
 | 🌍 网络 / HTTP | **httpx** |
 | ⚙️ 配置 / Config | **Pydantic** + **python-dotenv** |
 | 🧠 模型 / AI | **DeepSeek** / **Qwen** (OpenAI-compatible) |

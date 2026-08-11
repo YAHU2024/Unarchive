@@ -40,9 +40,11 @@ Thumbs.db
 # CodeBuddy (project data, not source)
 .codebuddy/
 
-# Plan files
+# Personal development documents
 .plan.md
 PLAN.md
+AGENTS.md
+CLAUDE.md
 
 # CodeBuddy guidance (project-local, not source)
 CODEBUDDY.md
