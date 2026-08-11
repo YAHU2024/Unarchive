@@ -103,6 +103,7 @@ class ImaSync(SyncBase):
         self._max_retry = 5
         self._retry_base = 2.0
         self._retry_cap = 30.0
+        self._search_note_cache: dict[str, str | None] = {}
 
     # ------------------------------------------------------------------
     # 连接与请求
@@ -337,6 +338,9 @@ class ImaSync(SyncBase):
         为确保搜索覆盖到含前缀的标题，同时用 video_id 和 [video_id]
         两种 query 做并集搜索，避免 API 忽略方括号导致漏检。
         """
+        if video_id in self._search_note_cache:
+            return self._search_note_cache[video_id]
+
         prefix = f"[{video_id}]"
         seen: set = set()
         # 双 query 并集：video_id 本身 + 带方括号的 [video_id] 前缀
@@ -362,6 +366,7 @@ class ImaSync(SyncBase):
                         # Standard: title starts with [video_id] prefix
                         if title.startswith(prefix):
                             logger.info("ima found existing note: %s -> %s", title, note_id)
+                            self._search_note_cache[video_id] = note_id
                             return note_id
                         # Legacy: raw video_id at title start followed by a boundary
                         if _match_legacy_title(title, video_id):
@@ -369,6 +374,7 @@ class ImaSync(SyncBase):
                                 "ima found existing note (legacy format): %s -> %s",
                                 title, note_id,
                             )
+                            self._search_note_cache[video_id] = note_id
                             return note_id
 
                 if data.get("is_end", True):
@@ -378,6 +384,7 @@ class ImaSync(SyncBase):
                 if start >= total:
                     break
 
+        self._search_note_cache[video_id] = None
         return None
 
     # ------------------------------------------------------------------

@@ -5,6 +5,7 @@ LLM 内容分析模块
 使用 OpenAI 兼容接口格式，支持多种国产大模型。
 """
 
+import asyncio
 import json
 import re
 import logging
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 # 项目根目录（src/analyzer -> 上两级）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PROMPTS_DIR = _PROJECT_ROOT / "prompts"
+_LONG_TRANSCRIPT_LIMIT = 12000
+_TRANSCRIPT_CHUNK_SIZE = 9000
+_TRANSCRIPT_CHUNK_OVERLAP = 300
 
 
 class LLMQuotaExceededError(RuntimeError):
@@ -71,15 +75,22 @@ class LLMAnalyzer:
         """
         logger.info("开始分析视频: %s (作者: %s)", title, author)
 
-        # 截断过长的逐字稿
-        truncated = self._truncate_transcript(transcript)
+        analysis_transcript = transcript
+        if len(transcript) > _LONG_TRANSCRIPT_LIMIT:
+            analysis_transcript = await self._summarize_long_transcript(
+                title, author, transcript
+            )
+            logger.info(
+                "逐字稿分块分析完成: %d -> %d 字符，原文未截断",
+                len(transcript),
+                len(analysis_transcript),
+            )
 
         # 并行执行结构分析和内容总结
         try:
-            import asyncio
             structure_result, summary_result = await asyncio.gather(
-                self._analyze_structure(title, author, truncated),
-                self._summarize(title, author, truncated),
+                self._analyze_structure(title, author, analysis_transcript),
+                self._summarize(title, author, analysis_transcript),
             )
         except Exception as e:
             logger.error("LLM 分析调用失败: %s", e)
@@ -107,6 +118,49 @@ class LLMAnalyzer:
 
         logger.info("视频分析完成: %s", title)
         return merged
+
+    @staticmethod
+    def _split_transcript(transcript: str) -> list[str]:
+        """Split with overlap so every source character reaches a chunk."""
+        chunks: list[str] = []
+        step = _TRANSCRIPT_CHUNK_SIZE - _TRANSCRIPT_CHUNK_OVERLAP
+        start = 0
+        while start < len(transcript):
+            end = min(len(transcript), start + _TRANSCRIPT_CHUNK_SIZE)
+            chunks.append(transcript[start:end])
+            if end >= len(transcript):
+                break
+            start += step
+        return chunks
+
+    async def _summarize_long_transcript(
+        self, title: str, author: str, transcript: str
+    ) -> str:
+        chunks = self._split_transcript(transcript)
+
+        async def summarize(index: int, chunk: str) -> str:
+            prompt = self._load_prompt(
+                "chunk_summarize.txt",
+                title=title,
+                author=author,
+                chunk_index=index + 1,
+                chunk_total=len(chunks),
+                transcript=chunk,
+            )
+            return await self._call_llm(
+                prompt,
+                "你是视频逐字稿事实提取器。只保留原文明确表达的事实、步骤、数字和结论，"
+                "不要补充原文没有的信息。",
+            )
+
+        summaries = await asyncio.gather(
+            *(summarize(index, chunk) for index, chunk in enumerate(chunks))
+        )
+        return "\n\n".join(
+            f"[原文分段 {index + 1}/{len(summaries)}]\n{summary.strip()}"
+            for index, summary in enumerate(summaries)
+            if summary.strip()
+        )
 
     @staticmethod
     def _chat_completions_url(base_url: str) -> str:

@@ -87,6 +87,20 @@ class TestTitleAndDedup:
             assert result is None
 
     @pytest.mark.asyncio
+    async def test_check_document_exists_caches_result_within_sync_round(self):
+        """Repeated checks for one ID must not repeat equivalent API searches."""
+        ima = _make_ima_sync()
+        request = AsyncMock(return_value={
+            "search_note_infos": [],
+            "is_end": True,
+        })
+        with patch.object(ima, "_call", request):
+            assert await ima.check_document_exists("BV999") is None
+            assert await ima.check_document_exists("BV999") is None
+
+        assert request.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_check_document_exists_legacy_prefix_match(self):
         """Legacy match: raw video_id at title start followed by a boundary char."""
         ima = _make_ima_sync()
