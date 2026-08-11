@@ -99,6 +99,12 @@ async def cmd_process(args):
         print(f"✅ {args.platform} 登录成功")
 
         videos = await scraper.get_favorite_videos(args.folder_id)
+        requested_video_id = getattr(args, "video_id", "")
+        if requested_video_id:
+            videos = [video for video in videos if video.video_id == requested_video_id]
+            if not videos:
+                print(f"未在收藏夹 {args.folder_id} 中找到视频 {requested_video_id}")
+                return
         if args.max_videos > 0:
             videos = videos[:args.max_videos]
         print(f"获取到 {len(videos)} 个视频")
@@ -558,6 +564,7 @@ def main():
     p = sub.add_parser("process")
     p.add_argument("platform", choices=["bilibili", "douyin"])
     p.add_argument("--folder-id", required=True)
+    p.add_argument("--video-id", help="只处理收藏夹中的指定视频，用于单视频验收")
     p.add_argument("--max-videos", type=int, default=20)
     p.add_argument("--no-whisper", action="store_true")
     p.add_argument("--force", action="store_true", help="强制重新处理已有卡片")

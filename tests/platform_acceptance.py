@@ -25,14 +25,14 @@ from src.knowledge_store import load_knowledge_card
 from src.scraper.base import VideoAvailability
 
 
-async def probe(platform: str, folder_id: str, limit: int) -> int:
+async def probe(platform: str, folder_id: str, limit: int, offset: int = 0) -> int:
     config = get_config()
     scraper = _create_scraper(platform)
     results = []
     try:
         await scraper.login()
         videos = await scraper.get_favorite_videos(folder_id)
-        for video in videos[:limit]:
+        for video in videos[offset:offset + limit]:
             availability = await scraper.check_video_available(video.video_id)
             transcript_path = "not_checked"
             segment_count = 0
@@ -54,6 +54,7 @@ async def probe(platform: str, folder_id: str, limit: int) -> int:
             results.append({
                 "video_id": video.video_id,
                 "title": video.title,
+                "duration_seconds": video.duration,
                 "availability": availability.name,
                 "transcript_path": transcript_path,
                 "segment_count": segment_count,
@@ -72,8 +73,9 @@ def main() -> int:
     parser.add_argument("platform", choices=["bilibili", "douyin"])
     parser.add_argument("--folder-id", required=True)
     parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--offset", type=int, default=0)
     args = parser.parse_args()
-    return asyncio.run(probe(args.platform, args.folder_id, args.limit))
+    return asyncio.run(probe(args.platform, args.folder_id, args.limit, args.offset))
 
 
 if __name__ == "__main__":

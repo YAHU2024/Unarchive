@@ -661,9 +661,22 @@ class BilibiliScraper(ScraperBase):
         调用 B站 API: /x/player/playurl，fnval=16 返回 DASH 格式
         从 data.dash.audio 中选择带宽最高的音频流
         """
+        inner = self._view_cache.get(video_id)
+        if inner is None:
+            view_data = await self._api_request(
+                f"{_API_BASE}/x/web-interface/view?bvid={video_id}"
+            )
+            inner = view_data.get("data") or {}
+            self._view_cache[video_id] = inner
+
+        cid = inner.get("cid", "") if isinstance(inner, dict) else ""
+        if not cid:
+            logger.warning("视频 %s 详情缺少 cid，无法获取音频流", video_id)
+            return None
+
         base_url = (
             f"{_API_BASE}/x/player/playurl"
-            f"?bvid={video_id}&fnval=16&fnver=0&fourk=1"
+            f"?bvid={video_id}&cid={cid}&fnval=16&fnver=0&fourk=1"
         )
         url = await self._sign_url_with_wbi(base_url)
         data = await self._api_request(url)

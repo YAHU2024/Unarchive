@@ -1,0 +1,56 @@
+"""Single-card real Feishu write and second-round deduplication acceptance."""
+
+import argparse
+import asyncio
+
+import app
+from config import get_config
+
+
+async def _collect(video_id: str, folder_token: str) -> str:
+    last_log = ""
+    async for logs, _ in app.sync_to_feishu(
+        [video_id],
+        folder_token,
+        get_config(),
+        progress=lambda *args, **kwargs: None,
+    ):
+        last_log = logs
+    return last_log
+
+
+def _value_after(logs: str, marker: str) -> str:
+    if marker not in logs:
+        raise RuntimeError(f"acceptance marker missing: {marker}\n{logs}")
+    return logs.split(marker, 1)[1].splitlines()[0].strip()
+
+
+async def run(video_id: str) -> None:
+    first_log = await _collect(video_id, "")
+    folder_token = _value_after(first_log, "文件夹已创建: ")
+    _value_after(first_log, "文档创建成功: ")
+    if "同步完成！成功 1/1 个文档" not in first_log:
+        raise RuntimeError(f"first-round sync did not complete\n{first_log}")
+
+    second_log = await _collect(video_id, folder_token)
+    _value_after(second_log, "文档已存在 (")
+    if "同步完成！成功 1/1 个文档" not in second_log:
+        raise RuntimeError(f"second-round sync did not complete\n{second_log}")
+
+    print("FIRST_LOG_BEGIN")
+    print(first_log, end="")
+    print("FIRST_LOG_END")
+    print("SECOND_LOG_BEGIN")
+    print(second_log, end="")
+    print("SECOND_LOG_END")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--video-id", required=True)
+    args = parser.parse_args()
+    asyncio.run(run(args.video_id))
+
+
+if __name__ == "__main__":
+    main()

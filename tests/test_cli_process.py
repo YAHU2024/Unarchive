@@ -71,6 +71,7 @@ def _args(**overrides):
         "max_videos": 20,
         "no_whisper": True,
         "force": False,
+        "video_id": "",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -172,6 +173,30 @@ async def test_temporary_availability_error_does_not_create_card(tmp_path, monke
 
     assert not (Path(config.knowledge_base_dir) / "v1.json").exists()
     assert FakeAnalyzer.calls == []
+
+
+@pytest.mark.asyncio
+async def test_video_id_filter_processes_only_requested_video(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    videos = [
+        VideoInfo("v1", "First", "https://example/v1"),
+        VideoInfo("v2", "Second", "https://example/v2"),
+    ]
+    scraper = FakeScraper(videos)
+
+    async def fake_transcript(video_id, *args, **kwargs):
+        return [SubtitleSegment(0.0, 1.0, video_id)], "subtitle"
+
+    monkeypatch.setattr(cli, "get_config", lambda: config)
+    monkeypatch.setattr(cli, "_create_scraper", lambda platform: scraper)
+    monkeypatch.setattr("src.transcript.get_transcript", fake_transcript)
+    monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
+
+    await cli.cmd_process(_args(video_id="v2"))
+
+    assert FakeAnalyzer.calls == [("Second", "Verified Author", "v2")]
+    assert not (Path(config.knowledge_base_dir) / "v1.json").exists()
+    assert (Path(config.knowledge_base_dir) / "v2.json").exists()
 
 
 @pytest.mark.asyncio

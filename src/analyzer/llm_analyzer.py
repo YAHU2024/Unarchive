@@ -109,6 +109,16 @@ class LLMAnalyzer:
         return merged
 
     @staticmethod
+    def _chat_completions_url(base_url: str) -> str:
+        """Build an OpenAI-compatible chat endpoint without duplicating ``/v1``."""
+        normalized = base_url.rstrip("/")
+        if normalized.endswith("/chat/completions"):
+            return normalized
+        if normalized.endswith("/v1"):
+            return f"{normalized}/chat/completions"
+        return f"{normalized}/v1/chat/completions"
+
+    @staticmethod
     def _is_quota_error(status_code: int, body: str) -> bool:
         """Detect LLM quota/balance exhaustion from HTTP status + response body.
 
@@ -157,7 +167,7 @@ class LLMAnalyzer:
             httpx.HTTPStatusError: API 返回非 200 状态码（非配额）
             RuntimeError: 所有重试均失败
         """
-        url = f"{self.base_url}/v1/chat/completions"
+        url = self._chat_completions_url(self.base_url)
 
         messages = []
         if system_prompt:

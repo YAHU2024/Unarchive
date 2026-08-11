@@ -167,6 +167,7 @@ async def process_videos(
     total_processed = 0
     analyzer = None
     whisper_transcriber = None
+    scraper = None
     current = "等待开始..."
 
     # 统计
@@ -419,6 +420,11 @@ async def process_videos(
         if whisper_transcriber:
             try:
                 whisper_transcriber.cleanup()
+            except Exception:
+                pass
+        if scraper:
+            try:
+                await scraper.close()
             except Exception:
                 pass
 
