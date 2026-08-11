@@ -75,8 +75,9 @@ class LLMAnalyzer:
         """
         logger.info("开始分析视频: %s (作者: %s)", title, author)
 
+        analysis_chunked = len(transcript) > _LONG_TRANSCRIPT_LIMIT
         analysis_transcript = transcript
-        if len(transcript) > _LONG_TRANSCRIPT_LIMIT:
+        if analysis_chunked:
             analysis_transcript = await self._summarize_long_transcript(
                 title, author, transcript
             )
@@ -110,6 +111,7 @@ class LLMAnalyzer:
             "knowledge_tags": structure_result.get("knowledge_tags", []),
             "target_audience": structure_result.get("target_audience", ""),
             "action_items": structure_result.get("action_items", []),
+            "analysis_chunked": analysis_chunked,
             "mindmap_structure": structure_result.get("mindmap_structure", {
                 "center": title,
                 "branches": [],

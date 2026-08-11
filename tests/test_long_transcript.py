@@ -35,3 +35,24 @@ async def test_long_transcript_chunk_summary_keeps_all_chunk_results():
     assert "facts-2" in result
     assert analyzer._call_llm.await_count == 2
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("transcript", "expected_chunked"),
+    [("short transcript", False), ("L" * 15000, True)],
+)
+async def test_analysis_records_whether_transcript_was_chunked(
+    transcript, expected_chunked
+):
+    analyzer = object.__new__(LLMAnalyzer)
+    analyzer._summarize_long_transcript = AsyncMock(return_value="chunk facts")
+    analyzer._analyze_structure = AsyncMock(return_value={})
+    analyzer._summarize = AsyncMock(return_value={})
+
+    result = await analyzer.analyze_video("Title", "Author", transcript)
+
+    assert result["analysis_chunked"] is expected_chunked
+    if expected_chunked:
+        analyzer._summarize_long_transcript.assert_awaited_once()
+    else:
+        analyzer._summarize_long_transcript.assert_not_awaited()
