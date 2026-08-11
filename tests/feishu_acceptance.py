@@ -2,6 +2,10 @@
 
 import argparse
 import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import app
 from config import get_config
