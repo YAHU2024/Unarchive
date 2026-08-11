@@ -254,3 +254,21 @@ async def get_transcript(
             raise RuntimeError(f"[{video_id}] Whisper 转写结果为空")
     except Exception as e:
         raise RuntimeError(f"[{video_id}] Whisper 转写失败: {e}") from e
+
+
+async def prefetch_transcript_media(
+    video_id: str,
+    scraper: "ScraperBase",
+) -> Path | None:
+    """Download the next video's media while the current LLM call is idle."""
+    cache_path = _audio_cache_path(video_id, scraper)
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        return cache_path
+
+    audio_url = await scraper.get_video_audio_url(video_id)
+    if not audio_url:
+        return None
+    downloaded = await scraper.download_audio_to_file(audio_url, str(cache_path))
+    if downloaded and cache_path.exists() and cache_path.stat().st_size > 0:
+        return cache_path
+    return None

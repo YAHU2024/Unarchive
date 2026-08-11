@@ -92,7 +92,19 @@ async def cmd_process(args):
     config = get_config()
     scraper = _create_scraper(args.platform)
     analyzer = LLMAnalyzer(config=config)
-    whisper = WhisperTranscriber(model_name=config.whisper_model) if not args.no_whisper else None
+    whisper = None
+    if not args.no_whisper:
+        profile = getattr(args, "whisper_profile", None) or getattr(
+            config, "whisper_profile", "fast"
+        )
+        language = getattr(config, "whisper_language", "auto").strip()
+        whisper = WhisperTranscriber(
+            model_name=config.whisper_model,
+            device=getattr(config, "whisper_device", "auto"),
+            compute_type=getattr(config, "whisper_compute_type", "auto"),
+            beam_size=5 if profile == "quality" else 1,
+            language=None if not language or language.lower() == "auto" else language,
+        )
 
     try:
         await scraper.login()
@@ -571,6 +583,11 @@ def main():
     p.add_argument("--video-id", help="只处理收藏夹中的指定视频，用于单视频验收")
     p.add_argument("--max-videos", type=int, default=20)
     p.add_argument("--no-whisper", action="store_true")
+    p.add_argument(
+        "--whisper-profile",
+        choices=["fast", "quality"],
+        help="Whisper 性能预设（默认读取 WHISPER_PROFILE）",
+    )
     p.add_argument("--force", action="store_true", help="强制重新处理已有卡片")
 
     # download

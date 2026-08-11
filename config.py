@@ -40,6 +40,8 @@ class AppConfig(BaseModel):
     whisper_model: str = Field(default="small", description="Whisper 模型: tiny/base/small/medium/large")
     whisper_device: str = Field(default="auto", description="Whisper 运行设备: auto / cpu / cuda")
     whisper_compute_type: str = Field(default="auto", description="faster-whisper 计算精度: auto / float16 / int8_float16 / int8")
+    whisper_profile: str = Field(default="fast", description="Whisper 性能预设: fast / quality")
+    whisper_language: str = Field(default="auto", description="Whisper 语言: auto 或语言代码")
     audio_cache_max_age_days: int = Field(default=7, description="媒体缓存最长保留天数")
     audio_cache_max_bytes: int = Field(default=2 * 1024 * 1024 * 1024, description="媒体缓存最大字节数")
 
@@ -74,6 +76,8 @@ class AppConfig(BaseModel):
             whisper_model=os.getenv("WHISPER_MODEL", "small"),
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "auto"),
+            whisper_profile=os.getenv("WHISPER_PROFILE", "fast"),
+            whisper_language=os.getenv("WHISPER_LANGUAGE", "auto"),
             audio_cache_max_age_days=int(os.getenv("AUDIO_CACHE_MAX_AGE_DAYS", "7")),
             audio_cache_max_bytes=int(os.getenv("AUDIO_CACHE_MAX_BYTES", str(2 * 1024 * 1024 * 1024))),
             data_dir=os.getenv("DATA_DIR", "./data"),

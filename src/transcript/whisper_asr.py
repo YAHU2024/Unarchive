@@ -33,14 +33,28 @@ class WhisperTranscriber:
     仅依赖 faster-whisper，不引入 torch / openai-whisper。
     """
 
-    def __init__(self, model_name: str = "medium", device: str = "auto",
-                 compute_type: str = "auto"):
+    def __init__(
+        self,
+        model_name: str = "medium",
+        device: str = "auto",
+        compute_type: str = "auto",
+        beam_size: int = 1,
+        language: str | None = None,
+    ):
         self.model_name = model_name
         self.device = self._resolve_device(device)
         self.compute_type = self._resolve_compute_type(compute_type)
+        self.beam_size = max(1, int(beam_size))
+        self.language = language or None
         self._model = None
         logger.info(
-            f"WhisperTranscriber 初始化: model={model_name}, device={self.device}"
+            "WhisperTranscriber 初始化: model=%s, device=%s, compute=%s, "
+            "beam=%d, language=%s",
+            model_name,
+            self.device,
+            self.compute_type,
+            self.beam_size,
+            self.language or "auto",
         )
 
     @staticmethod
@@ -262,10 +276,15 @@ class WhisperTranscriber:
         """faster-whisper 推理（生成器模式，vad_filter 加速）"""
         logger.info("faster-whisper 开始转写: %s", file_path)
         try:
-            segments_gen, info = self._model.transcribe(
-                file_path, language="zh", task="transcribe",
-                beam_size=5, vad_filter=True,
-            )
+            options = {
+                "task": "transcribe",
+                "beam_size": self.beam_size,
+                "vad_filter": True,
+            }
+            if self.language:
+                options["language"] = self.language
+            started = time.perf_counter()
+            segments_gen, info = self._model.transcribe(file_path, **options)
         except FileNotFoundError:
             raise RuntimeError("Whisper 转写失败: 系统未找到 ffmpeg，请先安装 ffmpeg 并加入 PATH")
         except Exception as e:
@@ -277,7 +296,12 @@ class WhisperTranscriber:
             if text:
                 segments.append(SubtitleSegment(start=seg.start, end=seg.end, text=text))
 
-        logger.info("faster-whisper 转写完成: %d 条片段, 时长=%.1fs", len(segments), info.duration)
+        logger.info(
+            "faster-whisper 转写完成: %d 条片段, 媒体时长=%.1fs, 耗时=%.1fs",
+            len(segments),
+            info.duration,
+            time.perf_counter() - started,
+        )
         return segments
 
 

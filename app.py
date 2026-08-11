@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 import json
 import logging
 import os
@@ -24,7 +26,12 @@ from config import AppConfig, get_config
 from src.scraper.base import VideoAvailability
 from src.scraper.bilibili import BilibiliScraper
 from src.scraper.douyin import DouyinScraper
-from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
+from src.transcript import (
+    SubtitleParser,
+    WhisperTranscriber,
+    get_transcript,
+    prefetch_transcript_media,
+)
 from src.analyzer.llm_analyzer import LLMAnalyzer, LLMQuotaExceededError
 from src.knowledge_store import (
     get_knowledge_base_dir,
@@ -181,6 +188,7 @@ async def process_videos(
     whisper_model: str,
     max_videos: int,
     config: AppConfig,
+    whisper_profile: str = "fast",
 ):
     """处理选中收藏夹中的视频"""
     logs = ""
@@ -190,6 +198,8 @@ async def process_videos(
     whisper_transcriber = None
     scraper = None
     current = "等待开始..."
+    media_prefetch_task: asyncio.Task | None = None
+    prefetched_video_id = ""
 
     # 统计
     stats = {"skipped": 0, "transcript_fail": 0, "llm_fail": 0, "unavailable": 0}
@@ -249,7 +259,15 @@ async def process_videos(
             logs += _format_log(f"初始化 Whisper 模型: {whisper_model}")
             current = f"正在加载 Whisper 模型: {whisper_model}"
             yield results, logs, current, gr.update()
-            whisper_transcriber = WhisperTranscriber(model_name=whisper_model)
+            profile = "quality" if whisper_profile in ("quality", "质量") else "fast"
+            language = config.whisper_language.strip()
+            whisper_transcriber = WhisperTranscriber(
+                model_name=whisper_model,
+                device=config.whisper_device,
+                compute_type=config.whisper_compute_type,
+                beam_size=5 if profile == "quality" else 1,
+                language=None if not language or language.lower() == "auto" else language,
+            )
             logs += _format_log(f"Whisper 模型 {whisper_model} 加载完成 (耗时 {time.time() - t0:.1f}s)")
             yield results, logs, current, gr.update()
 
@@ -265,6 +283,22 @@ async def process_videos(
 
         # 6. 处理每个视频
         for idx, video in enumerate(all_videos):
+            if media_prefetch_task and prefetched_video_id == video.video_id:
+                try:
+                    prefetched_path = await media_prefetch_task
+                    if prefetched_path:
+                        logs += _format_log(
+                            f"  ↳ 已预取当前视频媒体: {prefetched_path.name}"
+                        )
+                except Exception as e:
+                    logger.info(
+                        "视频 %s 媒体预取失败，将按普通路径重试: %s",
+                        video.video_id,
+                        e,
+                    )
+                finally:
+                    media_prefetch_task = None
+                    prefetched_video_id = ""
             t_video_start = time.time()
             current = f"[{idx+1}/{total}] {video.title}"
             logs += _format_log(f"[{idx+1}/{total}] 正在处理: {video.title}")
@@ -339,6 +373,14 @@ async def process_videos(
 
             # c. LLM 分析（新卡片和恢复卡片共用）
             try:
+                if whisper_transcriber and idx + 1 < total and media_prefetch_task is None:
+                    next_video = all_videos[idx + 1]
+                    next_existing = _load_knowledge_card(next_video.video_id)
+                    if not next_existing:
+                        prefetched_video_id = next_video.video_id
+                        media_prefetch_task = asyncio.create_task(
+                            prefetch_transcript_media(next_video.video_id, scraper)
+                        )
                 t0 = time.time()
                 logs += _format_log(f"  ↳ 正在调用 LLM 分析...")
                 current = f"[{idx+1}/{total}] LLM 分析中: {video.title}"
@@ -433,6 +475,10 @@ async def process_videos(
         current = f"处理出错: {e}"
         yield results, logs, current, gr.update()
     finally:
+        if media_prefetch_task and not media_prefetch_task.done():
+            media_prefetch_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await media_prefetch_task
         if analyzer:
             try:
                 await analyzer.close()
@@ -893,7 +939,7 @@ async def do_get_favorites(state: dict):
 
 
 async def do_process(
-    platform, selected_folders, whisper_enabled, whisper_model, max_videos,
+    platform, selected_folders, whisper_enabled, whisper_model, whisper_profile, max_videos,
     llm_api_key, llm_base_url, llm_model,
     feishu_app_id, feishu_app_secret,
     state: dict,
@@ -921,13 +967,17 @@ async def do_process(
     state = dict(state)
     state["last_processed_video_ids"] = []
 
-    # 构建临时配置
+    # 构建临时配置；运行参数覆盖表单字段，设备/语言沿用环境配置。
+    base_config = get_config()
     config = AppConfig(
         llm_api_key=llm_api_key,
         llm_base_url=llm_base_url,
         llm_model=llm_model,
         feishu_app_id=feishu_app_id,
         feishu_app_secret=feishu_app_secret,
+        whisper_device=base_config.whisper_device,
+        whisper_compute_type=base_config.whisper_compute_type,
+        whisper_language=base_config.whisper_language,
     )
 
     # 运行异步处理管道（async for 迭代 async generator）
@@ -940,6 +990,7 @@ async def do_process(
         whisper_model=whisper_model,
         max_videos=int(max_videos),
         config=config,
+        whisper_profile=whisper_profile,
     ):
         results = r
         logs = l
@@ -1493,6 +1544,15 @@ def build_ui():
                         value=True,
                         label="启用 Whisper（无字幕时使用）",
                     )
+                    whisper_profile_select = gr.Radio(
+                        choices=["快速", "质量"],
+                        value=(
+                            "质量"
+                            if getattr(config, "whisper_profile", "fast") == "quality"
+                            else "快速"
+                        ),
+                        label="Whisper 模式",
+                    )
                     max_videos_input = gr.Slider(
                         minimum=0, maximum=200, value=20, step=1,
                         label="最大处理视频数（0=不限）",
@@ -1661,7 +1721,8 @@ def build_ui():
             fn=do_process,
             inputs=[
                 platform_dropdown, favorites_display,
-                whisper_enabled_check, whisper_model_select, max_videos_input,
+                whisper_enabled_check, whisper_model_select, whisper_profile_select,
+                max_videos_input,
                 llm_api_key_input, llm_base_url_input, llm_model_input,
                 feishu_app_id_input, feishu_app_secret_input,
                 state,
