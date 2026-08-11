@@ -1748,7 +1748,9 @@ def main():
     app = build_ui()
     app.launch(
         server_name="127.0.0.1",
-        server_port=7860,
+        # Let Gradio search from 7860 when the preferred port is occupied.
+        # GRADIO_SERVER_PORT can still override the starting port.
+        server_port=None,
         share=False,
         theme=gr.themes.Soft(),
     )
