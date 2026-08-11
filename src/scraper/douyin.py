@@ -168,17 +168,26 @@ class DouyinScraper(ScraperBase):
                 logger.info("CDP 模式: 抖音已登录，复用浏览器会话")
                 return
 
-            # 自动拉起的 Chrome 尚未登录，等待用户在可见窗口中扫码
+            # 已有持久化 Cookie 时直接走自管浏览器验证，避免 CDP profile
+            # 未登录却固定等待 120 秒后才进入可用的 Cookie 回退路径。
+            saved_cookies = self._load_cookies()
+
+            # 自动拉起的 Chrome 尚未登录，且没有可复用 Cookie 时，等待用户扫码。
             if self._cdp.launched_by_us:
-                logger.info("Chrome 已自动拉起，请在浏览器窗口中登录抖音（120s 超时）...")
-                try:
-                    for _ in range(40):
-                        await asyncio.sleep(3)
-                        if await self._check_login_status(navigate=False):
-                            logger.info("CDP 模式: 登录成功")
-                            return
-                except TimeoutError:
-                    pass
+                if saved_cookies:
+                    logger.info(
+                        "CDP profile 未登录，但存在持久化 Cookie，立即回退验证"
+                    )
+                else:
+                    logger.info("Chrome 已自动拉起，请在浏览器窗口中登录抖音（120s 超时）...")
+                    try:
+                        for _ in range(40):
+                            await asyncio.sleep(3)
+                            if await self._check_login_status(navigate=False):
+                                logger.info("CDP 模式: 登录成功")
+                                return
+                    except TimeoutError:
+                        pass
 
             logger.warning("CDP 连接成功但抖音未登录，请在浏览器中手动登录后重试")
             await self._cdp.disconnect()
