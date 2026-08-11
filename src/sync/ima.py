@@ -40,6 +40,10 @@ class ImaRateLimitError(RuntimeError):
     """ima 请求频率超限（code 200001），可重试"""
 
 
+class ImaKnowledgeAlreadyAddedError(RuntimeError):
+    """ima 笔记已关联到目标知识库（code 220001），可按幂等成功处理。"""
+
+
 # 本地图片引用正则（ima 笔记不支持本地图片，需过滤）
 _LOCAL_IMAGE_RE = re.compile(
     r"!\[[^\]]*\]\((file:///|/Users/|/home/|C:\\|D:\\|E:\\)[^)]*\)",
@@ -144,6 +148,7 @@ class ImaSync(SyncBase):
         Raises:
             ImaQuotaExceededError: code 200005（每日配额耗尽，不可重试）
             ImaRateLimitError:    code 200001（频率超限，可指数退避重试）
+            ImaKnowledgeAlreadyAddedError: code 220001（知识已关联）
             RuntimeError:         其它非零业务码
         """
         if code == 0:
@@ -152,6 +157,8 @@ class ImaSync(SyncBase):
             raise ImaQuotaExceededError(msg or "请求超量，请明日再试")
         if code == 200001:
             raise ImaRateLimitError(msg or "请求频率超限，请稍后重试")
+        if code == 220001:
+            raise ImaKnowledgeAlreadyAddedError(msg or "知识重复添加")
         raise RuntimeError(f"ima API 错误: {msg} (code={code})")
 
     async def _call(self, path: str, body: dict, _retry: int = 0) -> dict:
@@ -424,7 +431,15 @@ class ImaSync(SyncBase):
         }
         if kb_folder_id:
             body["folder_id"] = kb_folder_id
-        await self._call(self.PATH_ADD_KNOWLEDGE, body)
+        try:
+            await self._call(self.PATH_ADD_KNOWLEDGE, body)
+        except ImaKnowledgeAlreadyAddedError:
+            logger.info(
+                "ima 笔记已存在于知识库 %s，按幂等成功处理: %s",
+                self.knowledge_base_id,
+                note_id,
+            )
+            return
         logger.info("ima 笔记已加入知识库 %s: %s", self.knowledge_base_id, note_id)
 
     # ------------------------------------------------------------------

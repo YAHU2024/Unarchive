@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.sync.ima import (
+    ImaKnowledgeAlreadyAddedError,
     ImaSync,
     ImaQuotaExceededError,
     ImaRateLimitError,
@@ -286,6 +287,11 @@ class TestBusinessErrorHandling:
         with pytest.raises(ImaRateLimitError, match="频率超限"):
             ImaSync._handle_business_error(200001, "频率超限")
 
+    def test_already_added_code_220001_raises_specific_error(self):
+        """code 220001 remains distinguishable for add_knowledge idempotency."""
+        with pytest.raises(ImaKnowledgeAlreadyAddedError, match="知识重复添加"):
+            ImaSync._handle_business_error(220001, "知识重复添加")
+
     def test_other_nonzero_code_raises_runtime_error(self):
         """Arbitrary non-zero codes raise RuntimeError."""
         with pytest.raises(RuntimeError, match="ima API 错误"):
@@ -499,6 +505,20 @@ class TestTwoRoundSync:
             # Must not raise
             await ima.add_to_knowledge_base(
                 "note_standalone", "[BV123] Standalone Note", "folder_abc"
+            )
+
+    @pytest.mark.asyncio
+    async def test_add_to_knowledge_base_treats_already_added_as_success(self):
+        """A stale local state can recover when ima reports duplicate association."""
+        ima = _make_ima_sync(knowledge_base_id="kb_1")
+
+        with patch.object(
+            ima,
+            "_call",
+            AsyncMock(side_effect=ImaKnowledgeAlreadyAddedError("知识重复添加")),
+        ):
+            await ima.add_to_knowledge_base(
+                "note_existing", "[BV123] Existing Note", "folder_abc"
             )
 
     @pytest.mark.asyncio
