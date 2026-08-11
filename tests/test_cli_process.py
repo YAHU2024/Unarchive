@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,11 @@ import pytest
 import cli
 from src.analyzer.llm_analyzer import LLMQuotaExceededError
 from src.scraper.base import SubtitleSegment, VideoAvailability, VideoInfo
+
+
+def test_cli_suppresses_http_client_request_logs():
+    assert logging.getLogger("httpx").level >= logging.WARNING
+    assert logging.getLogger("httpcore").level >= logging.WARNING
 
 
 class FakeScraper:
