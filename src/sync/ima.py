@@ -98,7 +98,7 @@ class ImaSync(SyncBase):
 
         # 请求节流：相邻 API 调用最小间隔（秒），降低频率限制（200001）概率
         self._last_call = 0.0
-        self._min_interval = 0.5
+        self._min_interval = 0.8
         # 频率限制重试：指数退避参数
         self._max_retry = 5
         self._retry_base = 2.0
@@ -343,8 +343,9 @@ class ImaSync(SyncBase):
 
         prefix = f"[{video_id}]"
         seen: set = set()
-        # 双 query 并集：video_id 本身 + 带方括号的 [video_id] 前缀
-        for query_title in (video_id, f"[{video_id}]"):
+        # 新笔记统一使用 [video_id] 前缀，优先走标准查询；只有未命中
+        # 时才回退裸 ID，兼容历史标题格式。
+        for query_title in (f"[{video_id}]", video_id):
             start, page = 0, 20
             while True:
                 data = await self._call(
