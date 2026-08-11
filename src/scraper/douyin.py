@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Response
 
 from src.scraper.base import ScraperBase, FavoriteFolder, VideoInfo, SubtitleSegment
@@ -902,28 +903,71 @@ class DouyinScraper(ScraperBase):
         # contains the background song and drops the spoken content.
         video_info = aweme_detail.get("video", {})
         if isinstance(video_info, dict):
+            audio_url = self._select_low_bitrate_h264(video_info)
+            if audio_url:
+                logger.info("视频 %s 从 bit_rate 获取到低码率完整音轨", video_id)
+                return audio_url
+
             for key in ("play_addr_h264", "play_addr", "download_addr"):
-                address = video_info.get(key, {})
-                if isinstance(address, dict):
-                    urls = address.get("url_list", [])
-                    audio_url = urls[0] if urls else ""
-                else:
-                    audio_url = address if isinstance(address, str) else ""
+                audio_url = self._address_url(video_info.get(key, {}))
                 if audio_url:
-                    if audio_url.startswith("//"):
-                        audio_url = "https:" + audio_url
                     logger.info("视频 %s 从 %s 获取到完整音轨", video_id, key)
                     return audio_url
 
         logger.warning("视频 %s 未能获取到音频 URL", video_id)
         return None
 
+    @staticmethod
+    def _address_url(address: object) -> str:
+        if isinstance(address, dict):
+            urls = address.get("url_list", [])
+            value = urls[0] if isinstance(urls, list) and urls else ""
+        else:
+            value = address if isinstance(address, str) else ""
+        if value.startswith("//"):
+            return "https:" + value
+        return value
+
+    @classmethod
+    def _select_low_bitrate_h264(cls, video_info: dict) -> str:
+        """Select the smallest combined H.264 stream from Douyin variants."""
+        candidates: list[tuple[int, str]] = []
+        variants = video_info.get("bit_rate", [])
+        if not isinstance(variants, list):
+            return ""
+
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            codec = str(
+                variant.get("codec_type", variant.get("codec", "")) or ""
+            ).lower()
+            gear_name = str(variant.get("gear_name", "") or "").lower()
+            if variant.get("is_h265") or "h265" in codec or "hevc" in codec:
+                continue
+            if "h265" in gear_name or "hevc" in gear_name:
+                continue
+
+            url = cls._address_url(
+                variant.get("play_addr") or variant.get("play_addr_h264") or {}
+            )
+            if not url:
+                continue
+            bitrate = int(variant.get("bit_rate", 0) or 0)
+            data_size = int(variant.get("data_size", 0) or 0)
+            size_key = bitrate or data_size or 2**63 - 1
+            candidates.append((size_key, url))
+
+        return min(candidates, key=lambda item: item[0])[1] if candidates else ""
+
+    @staticmethod
+    def _safe_media_url(url: str) -> str:
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
     async def download_audio_to_file(self, audio_url: str, output_path: str) -> bool:
         """
-        通过 Playwright 浏览器上下文下载音频文件
-
-        利用已登录的 BrowserContext（含完整 Cookie/Headers）下载音频，
-        绕过 CDN 403 问题。
+        Stream media through httpx, then use the browser context as fallback.
 
         Args:
             audio_url: 音频 URL
@@ -932,27 +976,65 @@ class DouyinScraper(ScraperBase):
         Returns:
             是否下载成功
         """
+        destination = Path(output_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_suffix(destination.suffix + ".part")
+        safe_url = self._safe_media_url(audio_url)
+
+        try:
+            headers = dict(_HEADERS)
+            headers.update(await self.get_audio_cookies())
+            timeout = httpx.Timeout(90.0, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                async with client.stream("GET", audio_url, headers=headers) as response:
+                    response.raise_for_status()
+                    with partial.open("wb") as stream:
+                        async for chunk in response.aiter_bytes(64 * 1024):
+                            stream.write(chunk)
+            if not partial.exists() or partial.stat().st_size == 0:
+                raise RuntimeError("下载结果为空")
+            partial.replace(destination)
+            logger.info("httpx 流式音频下载成功: %s", destination)
+            return True
+        except Exception as e:
+            partial.unlink(missing_ok=True)
+            logger.warning(
+                "httpx 音频下载失败，尝试浏览器回退: %s (%s)",
+                safe_url,
+                type(e).__name__,
+            )
+
         if self._context is None:
-            logger.warning("浏览器上下文不可用，无法通过 Playwright 下载音频")
+            logger.warning("浏览器上下文不可用，音频下载失败: %s", safe_url)
             return False
         try:
             resp = await self._context.request.get(
-                audio_url, headers={"Referer": _DOUYIN_BASE}
+                audio_url,
+                headers={"Referer": _DOUYIN_BASE},
+                timeout=8_000,
             )
             if resp.status != 200:
                 logger.warning(
                     "Playwright 音频下载 HTTP %d: %s",
                     resp.status,
-                    audio_url[:120],
+                    safe_url,
                 )
                 return False
             body = await resp.body()
-            with open(output_path, "wb") as f:
-                f.write(body)
-            logger.info("Playwright 音频下载成功: %s", output_path)
+            partial.write_bytes(body)
+            if partial.stat().st_size == 0:
+                partial.unlink(missing_ok=True)
+                return False
+            partial.replace(destination)
+            logger.info("Playwright 音频下载成功: %s", destination)
             return True
         except Exception as e:
-            logger.warning("Playwright 音频下载异常: %s", e)
+            partial.unlink(missing_ok=True)
+            logger.warning(
+                "Playwright 音频下载异常: %s (%s)",
+                safe_url,
+                type(e).__name__,
+            )
             return False
 
     async def get_audio_cookies(self) -> dict:

@@ -13,7 +13,9 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+import time
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -104,11 +106,14 @@ class WhisperTranscriber:
             url_hash = hashlib.sha256(audio_url.encode()).hexdigest()[:8]
             output_path = str(cache_dir / f"audio_{url_hash}.mp4")
 
-        # 下载音频
-        loop = asyncio.get_event_loop()
-        local_path = await loop.run_in_executor(
-            None, self._download_audio, audio_url, output_path, download_headers
-        )
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            local_path = output_path
+            logger.info("复用媒体缓存: %s", local_path)
+        else:
+            loop = asyncio.get_event_loop()
+            local_path = await loop.run_in_executor(
+                None, self._download_audio, audio_url, output_path, download_headers
+            )
 
         try:
             # 使用 Whisper 转写
@@ -164,7 +169,6 @@ class WhisperTranscriber:
             本地文件路径
         """
         # 从 URL 推断平台 Referer（避免硬编码导致跨平台 CDN 403）
-        from urllib.parse import urlparse
         url_domain = urlparse(url).netloc.lower()
         if "douyin" in url_domain:
             default_referer = "https://www.douyin.com"
@@ -184,22 +188,37 @@ class WhisperTranscriber:
         if extra_headers:
             headers.update(extra_headers)
 
+        destination = Path(output_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_suffix(destination.suffix + ".part")
+        parsed = urlparse(url)
+        safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
         # 优先尝试 httpx 直接下载
         try:
-            logger.info(f"使用 httpx 下载音频: {url[:120]}")
+            logger.info("使用 httpx 下载音频: %s", safe_url)
             with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-                resp = client.get(url, headers=headers)
-                resp.raise_for_status()
-                with open(output_path, "wb") as f:
-                    f.write(resp.content)
-            logger.info(f"音频下载成功: {output_path}")
-            return output_path
+                with client.stream("GET", url, headers=headers) as response:
+                    response.raise_for_status()
+                    with partial.open("wb") as stream:
+                        for chunk in response.iter_bytes(64 * 1024):
+                            stream.write(chunk)
+            if not partial.exists() or partial.stat().st_size == 0:
+                raise RuntimeError("下载结果为空")
+            partial.replace(destination)
+            logger.info("音频下载成功: %s", destination)
+            return str(destination)
         except Exception as e:
-            logger.warning(f"httpx 下载失败: {e}，尝试 yt-dlp 回退...")
+            partial.unlink(missing_ok=True)
+            logger.warning(
+                "httpx 下载失败，尝试 yt-dlp 回退: %s (%s)",
+                safe_url,
+                type(e).__name__,
+            )
 
         # 回退到 yt-dlp
         try:
-            logger.info(f"使用 yt-dlp 下载音频: {url}")
+            logger.info("使用 yt-dlp 下载音频: %s", safe_url)
             import subprocess
 
             yt_dlp_cmd = [
@@ -263,20 +282,53 @@ class WhisperTranscriber:
 
 
 
+    @staticmethod
+    def prune_audio_cache(
+        cache_dir: Path,
+        *,
+        max_age_days: int = 7,
+        max_bytes: int = 2 * 1024 * 1024 * 1024,
+    ) -> int:
+        """Remove stale/oversized media cache entries and return the count."""
+        if not cache_dir.exists():
+            return 0
+
+        removed = 0
+        now = time.time()
+        files = [path for path in cache_dir.iterdir() if path.is_file()]
+        kept: list[Path] = []
+        for path in files:
+            age_seconds = now - path.stat().st_mtime
+            if path.suffix == ".part" or age_seconds > max_age_days * 86400:
+                path.unlink(missing_ok=True)
+                removed += 1
+            else:
+                kept.append(path)
+
+        total_size = sum(path.stat().st_size for path in kept if path.exists())
+        for path in sorted(kept, key=lambda item: item.stat().st_mtime):
+            if total_size <= max_bytes:
+                break
+            size = path.stat().st_size
+            path.unlink(missing_ok=True)
+            total_size -= size
+            removed += 1
+        return removed
+
     def cleanup(self):
-        """释放模型内存并清理临时文件"""
+        """Release model memory and prune, rather than erase, media cache."""
         if self._model is not None:
             logger.info("释放 faster-whisper 模型内存...")
             self._model = None
 
-        # 清理音频缓存目录中的临时文件
         try:
             config = get_config()
             cache_dir = Path(config.audio_cache_dir)
-            if cache_dir.exists():
-                for f in cache_dir.iterdir():
-                    if f.is_file():
-                        f.unlink()
-                logger.info("音频缓存已清理")
+            removed = self.prune_audio_cache(
+                cache_dir,
+                max_age_days=config.audio_cache_max_age_days,
+                max_bytes=config.audio_cache_max_bytes,
+            )
+            logger.info("媒体缓存修剪完成: 删除 %d 个文件", removed)
         except Exception as e:
-            logger.warning(f"清理音频缓存失败: {e}")
+            logger.warning(f"修剪音频缓存失败: {e}")

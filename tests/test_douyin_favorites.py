@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from src.scraper.base import FavoriteFolder
@@ -251,6 +253,114 @@ def test_parse_video_duration_falls_back_to_nested_video_field():
 
     assert video is not None
     assert video.duration == 12.0
+
+
+def test_select_low_bitrate_h264_prefers_smallest_compatible_stream():
+    video_info = {
+        "bit_rate": [
+            {
+                "bit_rate": 900_000,
+                "play_addr": {"url_list": ["https://cdn/high.mp4"]},
+            },
+            {
+                "bit_rate": 250_000,
+                "play_addr": {"url_list": ["//cdn/low.mp4"]},
+            },
+            {
+                "bit_rate": 100_000,
+                "is_h265": 1,
+                "play_addr": {"url_list": ["https://cdn/h265.mp4"]},
+            },
+        ]
+    }
+
+    result = DouyinScraper._select_low_bitrate_h264(video_info)
+
+    assert result == "https://cdn/low.mp4"
+
+
+def test_select_low_bitrate_h264_returns_empty_for_invalid_variants():
+    assert DouyinScraper._select_low_bitrate_h264({"bit_rate": "invalid"}) == ""
+
+
+class _StreamResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def raise_for_status(self):
+        return None
+
+    async def aiter_bytes(self, _size):
+        yield b"first"
+        yield b"second"
+
+    async def body(self):
+        return b"browser"
+
+
+class _HttpxClient:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def stream(self, *_args, **_kwargs):
+        return _StreamResponse()
+
+
+class _DownloadContext:
+    def __init__(self):
+        self.request = type("Request", (), {"get": AsyncMock(return_value=_StreamResponse())})()
+
+    async def cookies(self):
+        return [{"name": "session", "value": "secret"}]
+
+
+@pytest.mark.asyncio
+async def test_douyin_download_streams_with_httpx_before_browser(monkeypatch, tmp_path):
+    scraper = DouyinScraper()
+    scraper._context = _DownloadContext()
+    monkeypatch.setattr("src.scraper.douyin.httpx.AsyncClient", _HttpxClient)
+    output = tmp_path / "audio.mp4"
+
+    result = await scraper.download_audio_to_file(
+        "https://cdn.example/media.mp4?signature=secret", str(output)
+    )
+
+    assert result is True
+    assert output.read_bytes() == b"firstsecond"
+    scraper._context.request.get.assert_not_awaited()
+    assert not (tmp_path / "audio.mp4.part").exists()
+
+
+class _FailingHttpxClient(_HttpxClient):
+    def stream(self, *_args, **_kwargs):
+        raise RuntimeError("network")
+
+
+@pytest.mark.asyncio
+async def test_douyin_download_falls_back_to_short_browser_request(monkeypatch, tmp_path):
+    scraper = DouyinScraper()
+    scraper._context = _DownloadContext()
+    monkeypatch.setattr("src.scraper.douyin.httpx.AsyncClient", _FailingHttpxClient)
+    output = tmp_path / "audio.mp4"
+
+    result = await scraper.download_audio_to_file(
+        "https://cdn.example/media.mp4?signature=secret", str(output)
+    )
+
+    assert result is True
+    assert output.read_bytes() == b"browser"
+    assert scraper._context.request.get.await_args.kwargs["timeout"] == 8_000
 
 
 @pytest.mark.asyncio

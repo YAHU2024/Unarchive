@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.scraper.base import SubtitleSegment
@@ -16,6 +18,17 @@ if TYPE_CHECKING:
     from src.transcript.whisper_asr import WhisperTranscriber
 
 logger = logging.getLogger(__name__)
+
+
+def _audio_cache_path(video_id: str, scraper: "ScraperBase") -> Path:
+    """Return a stable cache path independent of expiring CDN signatures."""
+    from config import get_config
+
+    platform = scraper.__class__.__name__.removesuffix("Scraper").lower() or "video"
+    safe_video_id = re.sub(r"[^A-Za-z0-9._-]+", "_", str(video_id)).strip("._")
+    cache_dir = Path(get_config().audio_cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"audio_{platform}_{safe_video_id or 'unknown'}.mp4"
 
 
 class SubtitleParser:
@@ -193,26 +206,30 @@ async def get_transcript(
         )
 
     logger.info(f"[{video_id}] 平台无字幕/AI总结，尝试 Whisper 语音识别...")
+    local_audio_path = _audio_cache_path(video_id, scraper)
+    if local_audio_path.exists() and local_audio_path.stat().st_size > 0:
+        logger.info("[%s] 复用媒体缓存: %s", video_id, local_audio_path)
+        try:
+            segments = await whisper_transcriber.transcribe_audio_file(
+                str(local_audio_path)
+            )
+            if segments:
+                logger.info(f"[{video_id}] Whisper 转写成功，共 {len(segments)} 条片段")
+                return segments, "whisper"
+        except Exception as e:
+            logger.warning("[%s] 媒体缓存不可用，将重新下载: %s", video_id, e)
+            local_audio_path.unlink(missing_ok=True)
+
     audio_url = await scraper.get_video_audio_url(video_id)
     if not audio_url:
         raise RuntimeError(
             f"[{video_id}] 无法获取音频地址，Whisper 转写失败"
         )
 
-    # 优先用 Playwright 下载音频（完整浏览器指纹，绕过 CDN 403）
-    import hashlib, os
-    from pathlib import Path
-    from config import get_config
-    config = get_config()
-    cache_dir = Path(config.audio_cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    url_hash = hashlib.sha256(audio_url.encode()).hexdigest()[:8]
-    local_audio_path = str(cache_dir / f"audio_{url_hash}.mp4")
-
-    downloaded = await scraper.download_audio_to_file(audio_url, local_audio_path)
-    if downloaded and os.path.exists(local_audio_path):
+    downloaded = await scraper.download_audio_to_file(audio_url, str(local_audio_path))
+    if downloaded and local_audio_path.exists() and local_audio_path.stat().st_size > 0:
         try:
-            segments = await whisper_transcriber.transcribe_audio_file(local_audio_path)
+            segments = await whisper_transcriber.transcribe_audio_file(str(local_audio_path))
             if segments:
                 logger.info(f"[{video_id}] Whisper 转写成功，共 {len(segments)} 条片段")
                 return segments, "whisper"
@@ -221,12 +238,14 @@ async def get_transcript(
         except Exception as e:
             raise RuntimeError(f"[{video_id}] Whisper 转写失败: {e}") from e
 
-    logger.warning(f"[{video_id}] Playwright 音频下载失败，回退到 httpx...")
+    logger.warning(f"[{video_id}] 平台媒体下载失败，使用通用下载回退...")
 
     # 回退：通过 httpx 下载（带 Cookie headers）
     try:
         segments = await whisper_transcriber.transcribe_audio_url(
-            audio_url, download_headers=download_headers
+            audio_url,
+            output_path=str(local_audio_path),
+            download_headers=download_headers,
         )
         if segments:
             logger.info(f"[{video_id}] Whisper 转写成功，共 {len(segments)} 条片段")
