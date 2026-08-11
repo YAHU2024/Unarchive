@@ -19,6 +19,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Response
 
@@ -43,6 +44,12 @@ _HEADERS = {
 _FAV_FOLDER_API = "/aweme/v1/web/collects/list"          # 收藏夹列表
 _FAV_VIDEO_API = "/aweme/v1/web/collects/video/list"    # 收藏夹内视频
 _VIDEO_DETAIL_API = "/aweme/v1/web/aweme/detail"         # 视频详情
+
+_FOLDER_QUERY_KEYS = ("collects_id", "collection_id", "folder_id")
+_CURSOR_QUERY_KEYS = ("cursor", "max_cursor")
+_INITIAL_RESPONSE_TIMEOUT = 15.0
+_NEXT_PAGE_TIMEOUT = 3.0
+_MAX_IDLE_SCROLLS = 4
 
 # 收藏页面所有可能的 API 路径关键字（用于拦截）
 _ALL_FAV_API_KEYWORDS = [
@@ -73,6 +80,8 @@ class DouyinScraper(ScraperBase):
         self._page: Optional[Page] = None
         self._cdp: Optional[CDPClient] = None
         self._login_mode: str = ""  # "cdp" | "playwright"
+        self._favorite_counts: dict[str, int] = {}
+        self._aweme_cache: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # 内部工具方法
@@ -224,6 +233,130 @@ class DouyinScraper(ScraperBase):
         """判断 URL 是否为收藏夹相关的 API 请求"""
         return any(kw in url for kw in _ALL_FAV_API_KEYWORDS)
 
+    @staticmethod
+    def _query_value(url: str, keys: tuple[str, ...]) -> str:
+        """Return the first non-empty query value for ``keys``."""
+        query = parse_qs(urlparse(url).query)
+        for key in keys:
+            values = query.get(key, [])
+            if values and values[0] != "":
+                return str(values[0])
+        return ""
+
+    @classmethod
+    def _response_matches_folder(cls, url: str, folder_id: str) -> bool:
+        """Reject video-list responses prefetched for another folder."""
+        response_folder_id = cls._query_value(url, _FOLDER_QUERY_KEYS)
+        if folder_id == "default":
+            return not response_folder_id
+        return response_folder_id == str(folder_id)
+
+    @classmethod
+    def _request_cursor(cls, url: str) -> str:
+        return cls._query_value(url, _CURSOR_QUERY_KEYS) or "0"
+
+    @staticmethod
+    def _response_body(data: dict) -> dict:
+        inner = data.get("data", data)
+        return inner if isinstance(inner, dict) else {}
+
+    @staticmethod
+    def _aweme_items(data: dict) -> list[dict]:
+        inner = DouyinScraper._response_body(data)
+        items = (
+            inner.get("aweme_list")
+            or inner.get("video_list")
+            or inner.get("collection_list")
+            or []
+        )
+        return items if isinstance(items, list) else []
+
+    @staticmethod
+    def _pagination_needs_more(pages: dict[str, tuple[bool, str]]) -> bool:
+        """Follow the cursor chain instead of trusting response arrival order."""
+        if not pages:
+            return True
+
+        cursor = "0"
+        visited: set[str] = set()
+        while cursor in pages and cursor not in visited:
+            visited.add(cursor)
+            has_more, next_cursor = pages[cursor]
+            if not has_more:
+                return False
+            cursor = next_cursor
+        return True
+
+    @staticmethod
+    async def _wait_for_response(event: asyncio.Event, timeout: float) -> bool:
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def _trigger_lazy_load(self) -> int:
+        """Scroll the document and nested virtual-list containers to their end."""
+        if self._page is None:
+            return 0
+        result = await self._page.evaluate(
+            """
+            () => {
+                const candidates = [document.scrollingElement, ...document.querySelectorAll('*')];
+                let scrolled = 0;
+                for (const element of candidates) {
+                    if (!element || element.scrollHeight <= element.clientHeight + 8) continue;
+                    const before = element.scrollTop;
+                    element.scrollTop = element.scrollHeight;
+                    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    if (element.scrollTop !== before) scrolled += 1;
+                }
+                window.scrollTo(0, document.body.scrollHeight);
+                return scrolled;
+            }
+            """
+        )
+        return int(result or 0)
+
+    async def _open_favorite_folder(self, folder_id: str, folders: list[FavoriteFolder]) -> None:
+        """Open a folder through the visible UI so Douyin signs later pages."""
+        if self._page is None:
+            raise RuntimeError("浏览器未初始化，请先调用 login()")
+        target_index = next(
+            (index for index, folder in enumerate(folders) if folder.folder_id == folder_id),
+            None,
+        )
+        if target_index is None:
+            raise RuntimeError(f"抖音收藏夹不存在或当前不可见: {folder_id}")
+        target = folders[target_index]
+        same_title_before = sum(
+            1 for folder in folders[:target_index] if folder.title == target.title
+        )
+        locator = self._page.get_by_text(target.title, exact=True)
+        visible = []
+        for index in range(await locator.count()):
+            candidate = locator.nth(index)
+            if await candidate.is_visible():
+                visible.append(candidate)
+        if same_title_before >= len(visible):
+            raise RuntimeError(f"未找到收藏夹页面条目: {target.title} ({folder_id})")
+        await visible[same_title_before].click()
+
+    async def _wheel_collection_page(self) -> None:
+        """Use a real wheel event inside Douyin's route container."""
+        if self._page is None:
+            return
+        route = self._page.locator(".route-scroll-container").first
+        box = await route.bounding_box()
+        if not box:
+            await self._trigger_lazy_load()
+            return
+        await self._page.mouse.move(
+            box["x"] + box["width"] / 2,
+            box["y"] + box["height"] / 2,
+        )
+        await self._page.mouse.wheel(0, max(700, int(box["height"] * 0.8)))
+
     async def _scroll_until_complete(self, max_scrolls: int = 50,
                                       scroll_pause: float = 1.5) -> None:
         """滚动直到页面高度不再增长（更可靠的懒加载触发）"""
@@ -248,8 +381,8 @@ class DouyinScraper(ScraperBase):
     async def get_favorites(self) -> list[FavoriteFolder]:
         """获取当前用户的所有收藏夹列表
 
-        导航到收藏夹页面，拦截 API 请求获取收藏夹数据，
-        循环滚动直到 has_more=false。
+        导航到收藏夹页面，按请求游标收集收藏夹 API 响应。滚动后只等待
+        新响应到达，不再使用固定休眠，也不会重复合并同一页。
         """
         if self._page is None or self._context is None:
             raise RuntimeError("浏览器未初始化，请先调用 login()")
@@ -257,32 +390,52 @@ class DouyinScraper(ScraperBase):
         logger.info("正在获取收藏夹列表")
 
         all_api_responses: list[tuple[str, dict]] = []
-        folder_has_more = True
+        pages: dict[str, tuple[bool, str]] = {}
+        seen_page_keys: set[tuple[str, tuple[str, ...]]] = set()
+        response_event = asyncio.Event()
         folder_total = 0
 
         async def _on_response_all(response: Response) -> None:
-            nonlocal folder_has_more, folder_total
+            nonlocal folder_total
             url = response.url
             if response.status == 200 and _FAV_FOLDER_API in url:
                 try:
                     data = await response.json()
-                    path = url.split("?")[0]
-                    all_api_responses.append((path, data))
-                    inner = data.get("data", data)
-                    if isinstance(inner, dict) and "collects_list" in inner:
-                        folder_has_more = bool(inner.get("has_more", False))
-                        total = inner.get("total_number", 0)
-                        if total:
-                            folder_total = total
-                        collected_count = sum(
-                            len(d.get("data", d).get("collects_list", []))
-                            for _, d in all_api_responses
-                            if isinstance(d.get("data", d), dict) and "collects_list" in d.get("data", d)
-                        )
-                        logger.info("收藏夹列表: has_more=%s, 已捕获=%d/%d",
-                                     folder_has_more, collected_count, folder_total)
-                except Exception:
-                    pass
+                    inner = self._response_body(data)
+                    collects_list = inner.get("collects_list", [])
+                    if not isinstance(collects_list, list):
+                        return
+
+                    cursor = self._request_cursor(url)
+                    folder_ids = tuple(
+                        str(item.get("collects_id_str", item.get("collects_id", "")))
+                        for item in collects_list
+                        if isinstance(item, dict)
+                    )
+                    page_key = (cursor, folder_ids)
+                    if page_key in seen_page_keys:
+                        return
+                    seen_page_keys.add(page_key)
+
+                    has_more = bool(inner.get("has_more", False))
+                    next_cursor = str(inner.get("cursor", cursor))
+                    pages[cursor] = (has_more, next_cursor)
+                    all_api_responses.append((urlparse(url).path, data))
+
+                    total = int(inner.get("total_number", 0) or 0)
+                    if total:
+                        folder_total = total
+                    collected_count = len(self._extract_folders(all_api_responses))
+                    logger.info(
+                        "收藏夹列表: cursor=%s, has_more=%s, 已获取=%d/%d",
+                        cursor,
+                        has_more,
+                        collected_count,
+                        folder_total,
+                    )
+                    response_event.set()
+                except Exception as e:
+                    logger.warning("解析收藏夹列表响应失败: %s", e)
 
         self._page.on("response", _on_response_all)
 
@@ -295,26 +448,20 @@ class DouyinScraper(ScraperBase):
                 f"&showSubTab=favorite_folder"
             )
             await self._page.goto(favorites_url, wait_until="domcontentloaded")
-            await asyncio.sleep(3)
 
-            # 滚动加载直到数据完整
-            prev_count = 0
-            no_new_count = 0
-            for i in range(50):
-                await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(2)
+            if not await self._wait_for_response(response_event, _INITIAL_RESPONSE_TIMEOUT):
+                raise RuntimeError("未捕获到抖音收藏夹列表接口，请确认登录状态后重试")
 
-                cur_count = len(all_api_responses)
-                if cur_count > prev_count:
-                    prev_count = cur_count
-                    no_new_count = 0
+            idle_scrolls = 0
+            while self._pagination_needs_more(pages):
+                response_event.clear()
+                await self._trigger_lazy_load()
+                if await self._wait_for_response(response_event, _NEXT_PAGE_TIMEOUT):
+                    idle_scrolls = 0
                 else:
-                    no_new_count += 1
-
-                if not folder_has_more and cur_count > 0 and no_new_count >= 1:
-                    break
-                if no_new_count >= 5:
-                    break
+                    idle_scrolls += 1
+                    if idle_scrolls >= _MAX_IDLE_SCROLLS:
+                        raise RuntimeError("抖音收藏夹列表分页未完成，请稍后重试")
         finally:
             self._page.remove_listener("response", _on_response_all)
 
@@ -327,7 +474,7 @@ class DouyinScraper(ScraperBase):
 
     def _extract_folders(self, api_responses: list[tuple[str, dict]]) -> list[FavoriteFolder]:
         """从 API 响应中提取收藏夹列表"""
-        folders: list[FavoriteFolder] = []
+        folders_by_id: dict[str, FavoriteFolder] = {}
 
         for path, data in api_responses:
             inner = data.get("data", data)
@@ -337,17 +484,21 @@ class DouyinScraper(ScraperBase):
             collects_list = inner.get("collects_list", [])
             if isinstance(collects_list, list) and collects_list:
                 first = collects_list[0] if collects_list else {}
-                if isinstance(first, dict) and "collects_id" in first:
+                if isinstance(first, dict) and (
+                    "collects_id" in first or "collects_id_str" in first
+                ):
                     for item in collects_list:
                         fid = str(item.get("collects_id_str", item.get("collects_id", "")))
-                        folders.append(FavoriteFolder(
+                        if not fid:
+                            continue
+                        folders_by_id[fid] = FavoriteFolder(
                             folder_id=fid,
                             title=item.get("collects_name", "未命名收藏夹"),
                             video_count=item.get("total_number", 0),
                             url=f"{_DOUYIN_BASE}/user/self?from_tab_name=main"
                                 f"&showTab=favorite_collection"
                                 f"&showSubTab=favorite_folder&collects_id={fid}",
-                        ))
+                        )
                     continue
 
             # 兼容其他可能的格式
@@ -365,7 +516,9 @@ class DouyinScraper(ScraperBase):
                     for item in value:
                         fid = str(item.get("collects_id_str", item.get("collects_id",
                                    item.get("folder_id", item.get("id", "")))))
-                        folders.append(FavoriteFolder(
+                        if not fid:
+                            continue
+                        folders_by_id[fid] = FavoriteFolder(
                             folder_id=fid,
                             title=item.get("collects_name", item.get("title",
                                    item.get("name", "未命名收藏夹"))),
@@ -374,96 +527,136 @@ class DouyinScraper(ScraperBase):
                             url=f"{_DOUYIN_BASE}/user/self?from_tab_name=main"
                                 f"&showTab=favorite_collection"
                                 f"&showSubTab=favorite_folder&collects_id={fid}",
-                        ))
+                        )
 
+        folders = list(folders_by_id.values())
+        self._favorite_counts.update(
+            {folder.folder_id: int(folder.video_count or 0) for folder in folders}
+        )
         return folders
 
     async def get_favorite_videos(self, folder_id: str) -> list[VideoInfo]:
         """获取指定收藏夹中的所有视频（自动处理分页）
 
-        导航到收藏夹页面，拦截 API 请求获取视频数据，
-        滚动直到 has_more=false。
+        抖音会并发预加载多个收藏夹。这里只接收请求 URL 中收藏夹 ID
+        与 ``folder_id`` 完全一致的响应，并按请求游标去重、闭合分页链。
         """
         if self._page is None or self._context is None:
             raise RuntimeError("浏览器未初始化，请先调用 login()")
 
         collected_data: list[dict] = []
-        page_has_more = True
-        page_cursor = 0
-        total_video_count = 0
+        pages: dict[str, tuple[bool, str]] = {}
+        response_event = asyncio.Event()
+        expected_count = self._favorite_counts.get(str(folder_id), 0)
+
+        def _accept_page(url: str, data: dict) -> bool:
+            inner = self._response_body(data)
+            required_keys = {"aweme_list", "cursor", "has_more"}
+            if not required_keys.issubset(inner):
+                logger.warning(
+                    "收藏夹 %s 视频接口响应结构无效: keys=%s",
+                    folder_id,
+                    sorted(inner.keys()),
+                )
+                return False
+            if int(inner.get("status_code", 0) or 0) != 0:
+                logger.warning(
+                    "收藏夹 %s 视频接口业务失败: status_code=%s",
+                    folder_id,
+                    inner.get("status_code"),
+                )
+                return False
+            if not self._aweme_items(data):
+                logger.debug("收藏夹 %s 返回空页: %s", folder_id, urlparse(url).path)
+
+            request_cursor = self._request_cursor(url)
+            if request_cursor in pages:
+                return False
+
+            has_more = bool(inner.get("has_more", False))
+            next_cursor = str(inner.get("cursor", request_cursor))
+            pages[request_cursor] = (has_more, next_cursor)
+            collected_data.append(data)
+            video_count = len(self._extract_videos(collected_data))
+            logger.info(
+                "收藏夹 %s 视频页: request_cursor=%s, next_cursor=%s, "
+                "has_more=%s, 已获取=%d/%s",
+                folder_id,
+                request_cursor,
+                next_cursor,
+                has_more,
+                video_count,
+                expected_count or "?",
+            )
+            response_event.set()
+            return True
 
         async def _on_response(response: Response) -> None:
-            nonlocal page_has_more, page_cursor, total_video_count
             url = response.url
-            if response.status == 200 and _FAV_VIDEO_API in url:
+            if (
+                response.status == 200
+                and _FAV_VIDEO_API in url
+                and self._response_matches_folder(url, folder_id)
+            ):
                 try:
                     data = await response.json()
-                    collected_data.append(data)
-                    inner = data.get("data", data)
-                    if isinstance(inner, dict):
-                        hm = inner.get("has_more", None)
-                        if hm is not None:
-                            page_has_more = bool(hm)
-                        cursor = inner.get("cursor", None)
-                        if cursor is not None:
-                            page_cursor = cursor
-                        tc = inner.get("total_number", 0)
-                        if tc:
-                            total_video_count = tc
-                    logger.info("收藏夹视频 API: cursor=%d, has_more=%s, 累计=%d",
-                                 page_cursor, page_has_more, len(collected_data))
+                    _accept_page(url, data)
                 except Exception as e:
                     logger.warning("解析收藏夹视频响应失败: %s", e)
 
         self._page.on("response", _on_response)
 
         try:
-            # 导航到指定收藏夹
             if folder_id == "default":
                 fav_url = (
                     f"{_DOUYIN_BASE}/user/self"
                     f"?from_tab_name=main&showTab=favorite_collection"
                     f"&showSubTab=favorite_folder"
                 )
+                logger.info("导航到默认收藏页: %s", fav_url)
+                await self._page.goto(fav_url, wait_until="domcontentloaded")
             else:
-                fav_url = (
-                    f"{_DOUYIN_BASE}/user/self"
-                    f"?from_tab_name=main&showTab=favorite_collection"
-                    f"&showSubTab=favorite_folder"
-                    f"&collects_id={folder_id}"
+                folders = await self.get_favorites()
+                expected_count = self._favorite_counts.get(str(folder_id), 0)
+                logger.info("通过页面条目打开收藏夹: %s", folder_id)
+                await self._open_favorite_folder(folder_id, folders)
+
+            if not await self._wait_for_response(response_event, _INITIAL_RESPONSE_TIMEOUT):
+                raise RuntimeError(
+                    f"未捕获到收藏夹 {folder_id} 的视频接口响应；"
+                    "已拒绝使用其他收藏夹的预加载数据"
                 )
-            logger.info("导航到收藏夹: %s", fav_url)
-            await self._page.goto(fav_url, wait_until="domcontentloaded")
-            await asyncio.sleep(3)
 
-            # 滚动加载
-            prev_count = 0
-            no_new_count = 0
-            for i in range(50):
-                await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(2)
-
-                cur_count = len(collected_data)
-                if cur_count > prev_count:
-                    prev_count = cur_count
-                    no_new_count = 0
+            idle_scrolls = 0
+            while self._pagination_needs_more(pages):
+                response_event.clear()
+                await self._wheel_collection_page()
+                if await self._wait_for_response(response_event, _NEXT_PAGE_TIMEOUT):
+                    idle_scrolls = 0
                 else:
-                    no_new_count += 1
-
-                if not page_has_more and cur_count > 0 and no_new_count >= 1:
-                    logger.info("视频列表分页完毕 (has_more=false)")
-                    break
-                if no_new_count >= 5:
-                    logger.info("连续 %d 次无新数据，停止", no_new_count)
-                    break
+                    idle_scrolls += 1
+                    if idle_scrolls >= _MAX_IDLE_SCROLLS:
+                        raise RuntimeError(
+                            f"收藏夹 {folder_id} 分页未完成，已获取 "
+                            f"{len(self._extract_videos(collected_data))} 个视频；"
+                            "为避免返回不完整数据，本次已停止"
+                        )
         finally:
             self._page.remove_listener("response", _on_response)
 
         # 解析视频数据
         videos = self._extract_videos(collected_data)
 
-        if total_video_count:
-            logger.info("收藏夹 %s: 获取到 %d/%d 个视频", folder_id, len(videos), total_video_count)
+        if expected_count:
+            logger.info("收藏夹 %s: 获取到 %d/%d 个视频", folder_id, len(videos), expected_count)
+            if len(videos) != expected_count:
+                logger.warning(
+                    "收藏夹 %s 的列表数量与收藏夹元数据不一致 (%d/%d)，"
+                    "可能包含已失效或刚变更的视频",
+                    folder_id,
+                    len(videos),
+                    expected_count,
+                )
         else:
             logger.info("收藏夹 %s: 获取到 %d 个视频", folder_id, len(videos))
         return videos
@@ -489,6 +682,7 @@ class DouyinScraper(ScraperBase):
                 video_item = item.get("aweme_info", item)
                 video = self._parse_video_info(video_item)
                 if video and video.video_id not in seen_ids:
+                    self._aweme_cache[video.video_id] = video_item
                     seen_ids.add(video.video_id)
                     videos.append(video)
         return videos
@@ -510,7 +704,10 @@ class DouyinScraper(ScraperBase):
 
             desc = item.get("desc", "")
             # 视频时长（单位通常是秒或百分之一秒，需要兼容）
+            video_data = item.get("video", {})
             duration = item.get("duration", 0)
+            if not duration and isinstance(video_data, dict):
+                duration = video_data.get("duration", 0)
             if duration and duration > 1000:
                 duration = duration / 1000  # 毫秒转秒
             duration = float(duration) if duration else None
@@ -520,7 +717,7 @@ class DouyinScraper(ScraperBase):
             author = author_info.get("nickname", "") if isinstance(author_info, dict) else ""
 
             # 封面图
-            cover_data = item.get("video", {}).get("cover", {})
+            cover_data = video_data.get("cover", {}) if isinstance(video_data, dict) else {}
             cover_url = ""
             if isinstance(cover_data, dict):
                 url_list = cover_data.get("url_list", [])
@@ -548,6 +745,65 @@ class DouyinScraper(ScraperBase):
             logger.warning("解析视频信息失败: %s", e)
             return None
 
+    @staticmethod
+    def _detail_matches_video(detail: dict, video_id: str) -> bool:
+        return str(detail.get("aweme_id", "")) == str(video_id)
+
+    async def _get_video_detail(self, video_id: str) -> dict:
+        """Return an aweme object, preferring collection-list data.
+
+        Collection responses already contain the video, author, caption and media
+        fields used by the pipeline. Reusing them removes two playback-page
+        navigations per video. Direct detail fetch and page navigation remain
+        fallbacks for callers that supply an isolated video ID.
+        """
+        cached = self._aweme_cache.get(str(video_id))
+        if cached:
+            return cached
+        if self._page is None or self._context is None:
+            raise RuntimeError("浏览器未初始化，请先调用 login()")
+
+        detail_url = f"{_DOUYIN_BASE}/aweme/v1/web/aweme/detail/?aweme_id={video_id}"
+        try:
+            response = await self._context.request.get(detail_url, headers=_HEADERS)
+            if response.status == 200:
+                data = await response.json()
+                detail = data.get("aweme_detail", {})
+                if isinstance(detail, dict) and self._detail_matches_video(detail, video_id):
+                    self._aweme_cache[str(video_id)] = detail
+                    return detail
+        except Exception as e:
+            logger.debug("视频 %s 详情接口直取失败: %s", video_id, e)
+
+        detail_data: dict = {}
+        detail_event = asyncio.Event()
+
+        async def _on_response(response: Response) -> None:
+            if _VIDEO_DETAIL_API not in response.url or response.status != 200:
+                return
+            try:
+                data = await response.json()
+                detail = data.get("aweme_detail", {})
+                if isinstance(detail, dict) and self._detail_matches_video(detail, video_id):
+                    detail_data.update(detail)
+                    detail_event.set()
+            except Exception:
+                return
+
+        self._page.on("response", _on_response)
+        try:
+            await self._page.goto(
+                f"{_DOUYIN_BASE}/video/{video_id}",
+                wait_until="domcontentloaded",
+            )
+            await self._wait_for_response(detail_event, 6.0)
+        finally:
+            self._page.remove_listener("response", _on_response)
+
+        if detail_data:
+            self._aweme_cache[str(video_id)] = detail_data
+        return detail_data
+
     async def get_video_subtitle(self, video_id: str) -> list[SubtitleSegment] | None:
         """
         获取抖音视频字幕
@@ -559,31 +815,8 @@ class DouyinScraper(ScraperBase):
         if self._page is None or self._context is None:
             raise RuntimeError("浏览器未初始化，请先调用 login()")
 
-        detail_url = f"{_DOUYIN_BASE}/aweme/v1/web/aweme/detail/?aweme_id={video_id}"
         logger.info("正在获取视频 %s 的字幕信息", video_id)
-
-        # 通过拦截 API 响应获取视频详情
-        detail_data: dict = {}
-
-        async def _on_response(response: Response) -> None:
-            if _VIDEO_DETAIL_API in response.url and response.status == 200:
-                try:
-                    data = await response.json()
-                    detail_data.update(data)
-                except Exception:
-                    pass
-
-        self._page.on("response", _on_response)
-        try:
-            # 导航到视频页面以触发 API 请求
-            video_url = f"{_DOUYIN_BASE}/video/{video_id}"
-            await self._page.goto(video_url, wait_until="domcontentloaded")
-            await asyncio.sleep(5)
-        finally:
-            self._page.remove_listener("response", _on_response)
-
-        # 从详情数据中提取字幕
-        aweme_detail = detail_data.get("aweme_detail", {})
+        aweme_detail = await self._get_video_detail(video_id)
         if not aweme_detail:
             logger.warning("未获取到视频 %s 的详情数据", video_id)
             return None
@@ -652,79 +885,34 @@ class DouyinScraper(ScraperBase):
         """
         获取抖音视频的音频 URL
 
-        通过视频详情 API 获取音频/视频播放地址。
-        优先从 music.play_url 获取背景音乐，
-        其次从 video.play_addr 获取视频自带音频。
+        优先复用收藏夹列表中的视频播放地址。返回完整视频音轨而不是
+        ``music.play_url``，确保 Whisper 能听到视频中的人声。
         """
         if self._page is None or self._context is None:
             raise RuntimeError("浏览器未初始化，请先调用 login()")
 
         logger.info("正在获取视频 %s 的音频 URL", video_id)
 
-        # 通过拦截 API 响应获取视频详情
-        detail_data: dict = {}
-
-        async def _on_response(response: Response) -> None:
-            if _VIDEO_DETAIL_API in response.url and response.status == 200:
-                try:
-                    data = await response.json()
-                    detail_data.update(data)
-                except Exception:
-                    pass
-
-        self._page.on("response", _on_response)
-        try:
-            video_url = f"{_DOUYIN_BASE}/video/{video_id}"
-            await self._page.goto(video_url, wait_until="domcontentloaded")
-            await asyncio.sleep(5)
-        finally:
-            self._page.remove_listener("response", _on_response)
-
-        aweme_detail = detail_data.get("aweme_detail", {})
+        aweme_detail = await self._get_video_detail(video_id)
         if not aweme_detail:
             logger.warning("未获取到视频 %s 的详情数据", video_id)
             return None
 
-        # 方案1: 从 music 字段获取背景音乐
-        music = aweme_detail.get("music", {})
-        if isinstance(music, dict):
-            play_url = music.get("play_url", {})
-            if isinstance(play_url, dict):
-                url_list = play_url.get("url_list", [])
-                if url_list:
-                    audio_url = url_list[0]
-                    if audio_url and audio_url.startswith("//"):
-                        audio_url = "https:" + audio_url
-                    logger.info("视频 %s 获取到背景音乐 URL", video_id)
-                    return audio_url
-            # play_url 也可能是直接的字符串
-            if isinstance(play_url, str) and play_url:
-                if play_url.startswith("//"):
-                    play_url = "https:" + play_url
-                return play_url
-
-        # 方案2: 从 video.play_addr 获取视频地址（包含音频）
+        # Whisper needs the video's full audio track. music.play_url often only
+        # contains the background song and drops the spoken content.
         video_info = aweme_detail.get("video", {})
         if isinstance(video_info, dict):
-            play_addr = video_info.get("play_addr", {})
-            if isinstance(play_addr, dict):
-                url_list = play_addr.get("url_list", [])
-                if url_list:
-                    audio_url = url_list[0]
-                    if audio_url and audio_url.startswith("//"):
+            for key in ("play_addr_h264", "play_addr", "download_addr"):
+                address = video_info.get(key, {})
+                if isinstance(address, dict):
+                    urls = address.get("url_list", [])
+                    audio_url = urls[0] if urls else ""
+                else:
+                    audio_url = address if isinstance(address, str) else ""
+                if audio_url:
+                    if audio_url.startswith("//"):
                         audio_url = "https:" + audio_url
-                    logger.info("视频 %s 从 play_addr 获取到音频 URL", video_id)
-                    return audio_url
-
-            # 方案3: download_addr
-            download_addr = video_info.get("download_addr", {})
-            if isinstance(download_addr, dict):
-                url_list = download_addr.get("url_list", [])
-                if url_list:
-                    audio_url = url_list[0]
-                    if audio_url and audio_url.startswith("//"):
-                        audio_url = "https:" + audio_url
-                    logger.info("视频 %s 从 download_addr 获取到音频 URL", video_id)
+                    logger.info("视频 %s 从 %s 获取到完整音轨", video_id, key)
                     return audio_url
 
         logger.warning("视频 %s 未能获取到音频 URL", video_id)
@@ -798,25 +986,7 @@ class DouyinScraper(ScraperBase):
 
         logger.info("正在获取视频 %s 的下载地址", video_id)
 
-        detail_data: dict = {}
-
-        async def _on_response(response: Response) -> None:
-            if _VIDEO_DETAIL_API in response.url and response.status == 200:
-                try:
-                    data = await response.json()
-                    detail_data.update(data)
-                except Exception:
-                    pass
-
-        self._page.on("response", _on_response)
-        try:
-            video_url = f"{_DOUYIN_BASE}/video/{video_id}"
-            await self._page.goto(video_url, wait_until="domcontentloaded")
-            await asyncio.sleep(4)
-        finally:
-            self._page.remove_listener("response", _on_response)
-
-        aweme_detail = detail_data.get("aweme_detail", {})
+        aweme_detail = await self._get_video_detail(video_id)
         video_info = aweme_detail.get("video", {})
 
         # 获取无 watermark 播放地址
