@@ -24,6 +24,7 @@ _PROMPTS_DIR = _PROJECT_ROOT / "prompts"
 _LONG_TRANSCRIPT_LIMIT = 12000
 _TRANSCRIPT_CHUNK_SIZE = 9000
 _TRANSCRIPT_CHUNK_OVERLAP = 300
+_CHUNK_SUMMARY_MAX_TOKENS = 768
 
 
 class LLMQuotaExceededError(RuntimeError):
@@ -48,6 +49,9 @@ class LLMAnalyzer:
         self.base_url = self.config.llm_base_url.rstrip("/")
         self.model = self.config.llm_model
         self.provider = self.config.llm_provider
+        self.enable_thinking = bool(self.config.llm_enable_thinking)
+        self.thinking_budget = max(0, int(self.config.llm_thinking_budget))
+        self.max_tokens = max(256, int(self.config.llm_max_tokens))
 
         # httpx 异步客户端，设置合理超时
         self._client = httpx.AsyncClient(
@@ -87,11 +91,10 @@ class LLMAnalyzer:
                 len(analysis_transcript),
             )
 
-        # 并行执行结构分析和内容总结
+        # 一次请求同时生成摘要和结构化字段，减少重复输入、排队与重试。
         try:
-            structure_result, summary_result = await asyncio.gather(
-                self._analyze_structure(title, author, analysis_transcript),
-                self._summarize(title, author, analysis_transcript),
+            combined_result = await self._analyze_combined(
+                title, author, analysis_transcript
             )
         except Exception as e:
             logger.error("LLM 分析调用失败: %s", e)
@@ -101,18 +104,16 @@ class LLMAnalyzer:
         merged = {
             "title": title,
             "author": author,
-            # 来自 summary
-            "summary": summary_result.get("summary", ""),
-            "keywords": summary_result.get("keywords", []),
-            "one_line_summary": summary_result.get("one_line_summary", ""),
-            # 来自 structure
-            "topics": structure_result.get("topics", []),
-            "key_points": structure_result.get("key_points", []),
-            "knowledge_tags": structure_result.get("knowledge_tags", []),
-            "target_audience": structure_result.get("target_audience", ""),
-            "action_items": structure_result.get("action_items", []),
+            "summary": combined_result.get("summary", ""),
+            "keywords": combined_result.get("keywords", []),
+            "one_line_summary": combined_result.get("one_line_summary", ""),
+            "topics": combined_result.get("topics", []),
+            "key_points": combined_result.get("key_points", []),
+            "knowledge_tags": combined_result.get("knowledge_tags", []),
+            "target_audience": combined_result.get("target_audience", ""),
+            "action_items": combined_result.get("action_items", []),
             "analysis_chunked": analysis_chunked,
-            "mindmap_structure": structure_result.get("mindmap_structure", {
+            "mindmap_structure": combined_result.get("mindmap_structure", {
                 "center": title,
                 "branches": [],
             }),
@@ -120,6 +121,19 @@ class LLMAnalyzer:
 
         logger.info("视频分析完成: %s", title)
         return merged
+
+    async def _analyze_combined(self, title: str, author: str, transcript: str) -> dict:
+        prompt = self._load_prompt(
+            "analyze_combined.txt",
+            title=title,
+            author=author,
+            transcript=transcript,
+        )
+        response = await self._call_llm(
+            prompt,
+            "你是专业的视频知识整理助手。只依据输入内容，并始终返回合法 JSON。",
+        )
+        return self._parse_llm_json(response)
 
     @staticmethod
     def _split_transcript(transcript: str) -> list[str]:
@@ -153,6 +167,7 @@ class LLMAnalyzer:
                 prompt,
                 "你是视频逐字稿事实提取器。只保留原文明确表达的事实、步骤、数字和结论，"
                 "不要补充原文没有的信息。",
+                max_tokens=_CHUNK_SUMMARY_MAX_TOKENS,
             )
 
         summaries = await asyncio.gather(
@@ -205,7 +220,13 @@ class LLMAnalyzer:
             pass
         return False
 
-    async def _call_llm(self, prompt: str, system_prompt: str = None) -> str:
+    async def _call_llm(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        *,
+        max_tokens: int | None = None,
+    ) -> str:
         """调用 LLM API（OpenAI 兼容接口格式）
 
         自动重试最多 _max_retries 次，支持 DeepSeek 和通义千问。
@@ -234,8 +255,15 @@ class LLMAnalyzer:
             "model": self.model,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens or self.max_tokens,
         }
+        use_stream = "siliconflow" in self.base_url.lower()
+        if use_stream:
+            payload["stream"] = True
+        if self._supports_thinking_controls():
+            payload["enable_thinking"] = self.enable_thinking
+            if self.enable_thinking and self.thinking_budget > 0:
+                payload["thinking_budget"] = self.thinking_budget
 
         last_error = None
         last_response_body = None  # 用于记录 API 响应体，辅助诊断
@@ -245,7 +273,11 @@ class LLMAnalyzer:
                 logger.debug("LLM API 调用 (第 %d/%d 次), provider=%s, model=%s",
                              attempt, self._max_retries, self.provider, self.model)
 
-                response = await self._client.post(url, json=payload)
+                if use_stream:
+                    response, content = await self._stream_completion(url, payload)
+                else:
+                    response = await self._client.post(url, json=payload)
+                    content = None
 
                 # 非 200 时主动读取响应体，检查是否配额耗尽
                 if response.status_code != 200:
@@ -261,8 +293,9 @@ class LLMAnalyzer:
                         )
                     response.raise_for_status()
 
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                if content is None:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
                 logger.debug("LLM 响应长度: %d 字符", len(content))
                 return content
 
@@ -312,6 +345,34 @@ class LLMAnalyzer:
         # 用 repr 兜底，确保错误信息不为空
         error_detail = str(last_error) or repr(last_error)
         raise RuntimeError(f"LLM API 调用在 {self._max_retries} 次重试后仍失败: {error_detail}")
+
+    def _supports_thinking_controls(self) -> bool:
+        """Only send SiliconFlow/Qwen3-specific fields to compatible endpoints."""
+        return "siliconflow" in self.base_url.lower() and "qwen3" in self.model.lower()
+
+    async def _stream_completion(self, url: str, payload: dict) -> tuple[httpx.Response, str]:
+        """Read SiliconFlow SSE content so long outputs keep the connection active."""
+        content_parts: list[str] = []
+        async with self._client.stream("POST", url, json=payload) as response:
+            if response.status_code != 200:
+                await response.aread()
+                return response, ""
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                chunk = json.loads(raw)
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                part = choices[0].get("delta", {}).get("content", "")
+                if part:
+                    content_parts.append(part)
+        if not content_parts:
+            raise KeyError("stream content")
+        return response, "".join(content_parts)
 
     async def _analyze_structure(self, title: str, author: str, transcript: str) -> dict:
         """结构分析 - 使用 prompts/analyze.txt 模板

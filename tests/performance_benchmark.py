@@ -65,10 +65,20 @@ def _parse_ids(values: list[str] | None) -> list[str]:
     return result
 
 
-def _build_config(base: AppConfig, *, llm_model: str | None = None) -> AppConfig:
+def _build_config(
+    base: AppConfig,
+    *,
+    llm_model: str | None = None,
+    enable_thinking: bool | None = None,
+    thinking_budget: int | None = None,
+) -> AppConfig:
     updates: dict[str, Any] = {}
     if llm_model:
         updates["llm_model"] = llm_model
+    if enable_thinking is not None:
+        updates["llm_enable_thinking"] = enable_thinking
+    if thinking_budget is not None:
+        updates["llm_thinking_budget"] = thinking_budget
     return base.model_copy(update=updates) if updates else base
 
 
@@ -95,6 +105,11 @@ def _transcript_metrics(segments: list[Any], reference: str) -> dict[str, Any]:
         "transcript_chars": len(text),
         "transcript_words": len(text.split()),
         "reference_similarity": similarity,
+        "samples": {
+            "start": text[:240],
+            "middle": text[max(0, len(text) // 2 - 120):len(text) // 2 + 120],
+            "end": text[-240:],
+        },
     }
 
 
@@ -125,9 +140,19 @@ def _write_results(output_dir: Path, results: dict[str, Any]) -> tuple[Path, Pat
     return json_path, md_path
 
 
-def _run_asr(video_ids: list[str], config: AppConfig, models: list[str], profile: str) -> list[dict[str, Any]]:
+def _run_asr(
+    video_ids: list[str],
+    config: AppConfig,
+    models: list[str],
+    profile: str,
+    language_override: str | None = None,
+) -> list[dict[str, Any]]:
     measurements: list[dict[str, Any]] = []
-    language = config.whisper_language.strip()
+    language = (
+        language_override
+        if language_override is not None
+        else config.whisper_language
+    ).strip()
     language_value = None if not language or language.lower() == "auto" else language
     for model in models:
         transcriber = WhisperTranscriber(
@@ -168,16 +193,36 @@ def _run_asr(video_ids: list[str], config: AppConfig, models: list[str], profile
     return measurements
 
 
-async def _run_llm_async(video_ids: list[str], config: AppConfig, models: list[str]) -> list[dict[str, Any]]:
+async def _run_llm_async(
+    video_ids: list[str],
+    config: AppConfig,
+    models: list[str],
+    *,
+    synthetic_chars: int = 0,
+    enable_thinking: bool | None = None,
+    thinking_budget: int | None = None,
+) -> list[dict[str, Any]]:
     measurements: list[dict[str, Any]] = []
     for model in models:
-        analyzer = LLMAnalyzer(config=_build_config(config, llm_model=model))
+        analyzer = LLMAnalyzer(
+            config=_build_config(
+                config,
+                llm_model=model,
+                enable_thinking=enable_thinking,
+                thinking_budget=thinking_budget,
+            )
+        )
         try:
             for video_id in video_ids:
-                card = load_knowledge_card(video_id, config)
+                card = load_knowledge_card(video_id, config) if not synthetic_chars else None
                 row: dict[str, Any] = {"kind": "llm", "model": model, "video_id": video_id}
-                transcript = (card or {}).get("transcript", "") if card else ""
-                if not card or not transcript:
+                if synthetic_chars:
+                    sentence = "This synthetic benchmark discusses study planning, review, and practice. "
+                    transcript = (sentence * (synthetic_chars // len(sentence) + 1))[:synthetic_chars]
+                    card = {"title": "Synthetic performance sample", "author": "benchmark"}
+                else:
+                    transcript = (card or {}).get("transcript", "") if card else ""
+                if not transcript:
                     row.update(status="missing_transcript", detail="knowledge card transcript unavailable")
                     measurements.append(row)
                     continue
@@ -208,7 +253,11 @@ def main() -> int:
     parser.add_argument("--whisper-model", action="append", help="Whisper model; repeat for comparison")
     parser.add_argument("--llm-model", action="append", help="LLM model ID; repeat for comparison")
     parser.add_argument("--include-candidates", action="store_true", help="Include opt-in LLM candidate IDs")
+    parser.add_argument("--synthetic-chars", type=int, default=0, help="Use generated non-private transcript text")
+    parser.add_argument("--enable-thinking", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--thinking-budget", type=int, default=None)
     parser.add_argument("--whisper-profile", choices=["fast", "quality"], default=None)
+    parser.add_argument("--whisper-language", default=None, help="Override language code or use auto")
     parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
@@ -222,9 +271,28 @@ def main() -> int:
     started_at = _now()
     measurements: list[dict[str, Any]] = []
     if args.stage in ("asr", "all"):
-        measurements.extend(_run_asr(video_ids, config, whisper_models, profile))
+        measurements.extend(
+            _run_asr(
+                video_ids,
+                config,
+                whisper_models,
+                profile,
+                language_override=args.whisper_language,
+            )
+        )
     if args.stage in ("llm", "all"):
-        measurements.extend(asyncio.run(_run_llm_async(video_ids, config, llm_models)))
+        measurements.extend(
+            asyncio.run(
+                _run_llm_async(
+                    video_ids,
+                    config,
+                    llm_models,
+                    synthetic_chars=max(0, args.synthetic_chars),
+                    enable_thinking=args.enable_thinking,
+                    thinking_budget=args.thinking_budget,
+                )
+            )
+        )
     results = {
         "started_at": started_at,
         "stage": args.stage,

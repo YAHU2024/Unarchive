@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.analyzer.llm_analyzer import LLMAnalyzer
+from src.analyzer.llm_analyzer import LLMAnalyzer, _CHUNK_SUMMARY_MAX_TOKENS
 
 
 def test_split_transcript_uses_overlap_and_covers_boundaries():
@@ -34,6 +34,10 @@ async def test_long_transcript_chunk_summary_keeps_all_chunk_results():
     assert "facts-1" in result
     assert "facts-2" in result
     assert analyzer._call_llm.await_count == 2
+    assert all(
+        call.kwargs["max_tokens"] == _CHUNK_SUMMARY_MAX_TOKENS
+        for call in analyzer._call_llm.await_args_list
+    )
 
 
 @pytest.mark.asyncio
@@ -46,8 +50,7 @@ async def test_analysis_records_whether_transcript_was_chunked(
 ):
     analyzer = object.__new__(LLMAnalyzer)
     analyzer._summarize_long_transcript = AsyncMock(return_value="chunk facts")
-    analyzer._analyze_structure = AsyncMock(return_value={})
-    analyzer._summarize = AsyncMock(return_value={})
+    analyzer._analyze_combined = AsyncMock(return_value={})
 
     result = await analyzer.analyze_video("Title", "Author", transcript)
 
@@ -56,3 +59,4 @@ async def test_analysis_records_whether_transcript_was_chunked(
         analyzer._summarize_long_transcript.assert_awaited_once()
     else:
         analyzer._summarize_long_transcript.assert_not_awaited()
+    analyzer._analyze_combined.assert_awaited_once()

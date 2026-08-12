@@ -24,6 +24,9 @@ class AppConfig(BaseModel):
     llm_api_key: str = Field(default="", description="LLM API Key")
     llm_base_url: str = Field(default="https://api.deepseek.com", description="LLM API Base URL")
     llm_model: str = Field(default="deepseek-chat", description="LLM 模型名称")
+    llm_enable_thinking: bool = Field(default=False, description="Qwen3/SiliconFlow 是否启用思考模式")
+    llm_thinking_budget: int = Field(default=0, description="思考模式 token 预算，0 表示由服务端决定")
+    llm_max_tokens: int = Field(default=2048, description="单次 LLM 输出 token 上限")
 
     # 飞书相关
     feishu_app_id: str = Field(default="", description="飞书 App ID")
@@ -66,6 +69,10 @@ class AppConfig(BaseModel):
             llm_api_key=os.getenv("LLM_API_KEY", ""),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
             llm_model=os.getenv("LLM_MODEL", "deepseek-chat"),
+            llm_enable_thinking=os.getenv("LLM_ENABLE_THINKING", "false").strip().lower()
+            in ("1", "true", "yes", "on"),
+            llm_thinking_budget=max(0, int(os.getenv("LLM_THINKING_BUDGET", "0"))),
+            llm_max_tokens=max(256, int(os.getenv("LLM_MAX_TOKENS", "2048"))),
             feishu_app_id=os.getenv("FEISHU_APP_ID", ""),
             feishu_app_secret=os.getenv("FEISHU_APP_SECRET", ""),
             ima_client_id=os.getenv("IMA_CLIENT_ID", ""),
