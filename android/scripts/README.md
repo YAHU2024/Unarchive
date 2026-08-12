@@ -26,7 +26,7 @@ authorized device and run:
 ```powershell
 .\android\scripts\device_acceptance.ps1 `
     -ModelDirectory "D:\path\to\sensevoice-model" `
-    -AudioFile "D:\path\to\sample-16k-mono.wav"
+    -AudioFile "D:\path\to\sample.m4a"
 ```
 
 The script installs the debug APK and imports the ignored model files into the

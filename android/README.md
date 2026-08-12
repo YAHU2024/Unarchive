@@ -25,7 +25,10 @@ audio selection, progress, cancellation, and result rendering. After running
 `model.int8.onnx` and `tokens.txt` are present in the app's private
 `files/models/sensevoice-2024-07-17-int8/` directory.
 
-The first native path accepts 16 kHz mono PCM WAV input. Cancellation is checked
+The native path keeps the verified 16 kHz mono PCM WAV reader and uses Android's
+platform codecs for other audio containers, normalizing PCM16/float output to
+16 kHz mono before ASR. Codec decoding is temporarily limited to 5 minutes until
+segmented ASR is available. Cancellation is checked
 before and after sherpa's blocking native decode; it cannot interrupt a decode
-already in progress. Media decoding, VAD segmentation, and finer progress are
-later benchmark milestones.
+already in progress. VAD segmentation and finer progress remain later benchmark
+milestones for long audio.

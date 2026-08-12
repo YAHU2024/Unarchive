@@ -40,10 +40,12 @@ if ($LASTEXITCODE -ne 0) { throw "Could not import tokens into private app stora
 
 if ($AudioFile -ne "") {
     if (-not (Test-Path $AudioFile)) { throw "Audio file not found: $AudioFile" }
-    & $adb push $AudioFile "/sdcard/Download/unarchive-asr-sample.wav"
+    $audioExtension = [System.IO.Path]::GetExtension($AudioFile)
+    if ([string]::IsNullOrWhiteSpace($audioExtension)) { $audioExtension = ".audio" }
+    & $adb push $AudioFile "/sdcard/Download/unarchive-asr-sample$audioExtension"
     if ($LASTEXITCODE -ne 0) { throw "Audio deployment failed." }
 }
 
 & $adb shell am start -n "$packageName/.MainActivity"
 if ($LASTEXITCODE -ne 0) { throw "App launch failed." }
-Write-Host "App installed and model deployed. Select a 16 kHz mono PCM WAV, run SenseVoice, then record RTF, memory, temperature, battery delta, accuracy, and cancellation behavior."
+Write-Host "App installed and model deployed. Select a supported audio file, run SenseVoice, then record RTF, memory, temperature, battery delta, accuracy, and cancellation behavior."

@@ -8,6 +8,8 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import com.k2fsa.sherpa.onnx.WaveReader
+import com.unarchive.android.audio.AndroidAudioDecoder
+import com.unarchive.android.audio.DecodedAudio
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngine
 import com.unarchive.android.asr.AsrEngineKind
@@ -44,43 +46,44 @@ class SenseVoiceAsrEngine(
         coroutineContext.ensureActive()
         progressListener.onProgress(0.05f)
 
-        val inputFile = copyToCache(Uri.parse(source.uri), source.displayName)
-        try {
-            val wave = WaveReader.readWave(inputFile.absolutePath)
-            require(wave.sampleRate == EXPECTED_SAMPLE_RATE) {
-                "Expected 16 kHz PCM WAV, found ${wave.sampleRate} Hz"
-            }
-            coroutineContext.ensureActive()
-            progressListener.onProgress(0.15f)
+        val sourceUri = Uri.parse(source.uri)
+        val audio = if (source.displayName.endsWith(".wav", ignoreCase = true)) {
+            readWave(sourceUri, progressListener)
+        } else {
+            AndroidAudioDecoder(context).decode(
+                uri = sourceUri,
+                targetSampleRate = EXPECTED_SAMPLE_RATE,
+                progressListener = progressListener,
+            )
+        }
+        coroutineContext.ensureActive()
+        progressListener.onProgress(0.55f)
 
-            val recognizer = createRecognizer(modelFiles, config)
+        val recognizer = createRecognizer(modelFiles, config)
+        try {
+            val stream = recognizer.createStream()
             try {
-                val stream = recognizer.createStream()
-                try {
-                    stream.acceptWaveform(wave.samples, wave.sampleRate)
-                    recognizer.decode(stream)
-                    coroutineContext.ensureActive()
-                    val result = recognizer.getResult(stream)
-                    progressListener.onProgress(1f)
-                    val durationMs = wave.samples.size * 1_000L / wave.sampleRate
-                    AsrOutput(
-                        segments = listOf(
-                            TranscriptSegment(
-                                startMs = 0,
-                                endMs = durationMs,
-                                text = result.text.trim(),
-                            ),
+                stream.acceptWaveform(audio.samples, audio.sampleRate)
+                recognizer.decode(stream)
+                coroutineContext.ensureActive()
+                val result = recognizer.getResult(stream)
+                progressListener.onProgress(1f)
+                val durationMs = audio.samples.size * 1_000L / audio.sampleRate
+                AsrOutput(
+                    segments = listOf(
+                        TranscriptSegment(
+                            startMs = 0,
+                            endMs = durationMs,
+                            text = result.text.trim(),
                         ),
-                        audioDurationMs = durationMs,
-                    )
-                } finally {
-                    stream.release()
-                }
+                    ),
+                    audioDurationMs = durationMs,
+                )
             } finally {
-                recognizer.release()
+                stream.release()
             }
         } finally {
-            inputFile.delete()
+            recognizer.release()
         }
     }
 
@@ -103,19 +106,21 @@ class SenseVoiceAsrEngine(
         ),
     )
 
-    private fun copyToCache(uri: Uri, displayName: String): File {
-        val extension = displayName.substringAfterLast('.', "wav").lowercase()
-        require(extension == "wav") { "Phase 0 currently supports PCM WAV files only" }
+    private fun readWave(uri: Uri, progressListener: AsrProgressListener): DecodedAudio {
         val destination = File.createTempFile("asr-input-", ".wav", context.cacheDir)
         try {
             context.contentResolver.openInputStream(uri).use { input ->
                 requireNotNull(input) { "Cannot open selected audio" }
                 destination.outputStream().use(input::copyTo)
             }
-            return destination
-        } catch (error: Throwable) {
+            val wave = WaveReader.readWave(destination.absolutePath)
+            require(wave.sampleRate == EXPECTED_SAMPLE_RATE) {
+                "WAV input must be 16 kHz mono PCM, found ${wave.sampleRate} Hz"
+            }
+            progressListener.onProgress(0.5f)
+            return DecodedAudio(wave.samples, wave.sampleRate)
+        } finally {
             destination.delete()
-            throw error
         }
     }
 
