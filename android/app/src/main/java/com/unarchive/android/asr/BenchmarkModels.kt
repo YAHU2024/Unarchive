@@ -21,7 +21,7 @@ fun interface MonotonicClock {
 }
 
 class BenchmarkRunner(
-    private val engineProvider: (AsrEngineKind) -> AsrEngine,
+    private val engineProvider: AsrEngineProvider,
     private val clock: MonotonicClock,
 ) {
     suspend fun run(
@@ -29,7 +29,7 @@ class BenchmarkRunner(
         config: AsrConfig,
         progressListener: AsrProgressListener,
     ): BenchmarkResult {
-        val engine = engineProvider(config.engine)
+        val engine = engineProvider.create(config.engine)
         require(engine.kind == config.engine) {
             "Engine provider returned ${engine.kind} for ${config.engine}"
         }

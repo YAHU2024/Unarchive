@@ -37,11 +37,11 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrProgressListener
+import com.unarchive.android.asr.AndroidAsrEngineProvider
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
 import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.MonotonicClock
-import com.unarchive.android.asr.PreviewAsrEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -63,9 +63,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AsrBenchmarkScreen() {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val runner = remember {
         BenchmarkRunner(
-            engineProvider = ::PreviewAsrEngine,
+            engineProvider = AndroidAsrEngineProvider(context),
             clock = MonotonicClock(SystemClock::elapsedRealtime),
         )
     }
@@ -144,6 +145,10 @@ private fun AsrBenchmarkScreen() {
                             status = "Harness complete. Native ASR is not connected yet."
                         } catch (_: CancellationException) {
                             status = "Benchmark cancelled."
+                        } catch (error: IllegalArgumentException) {
+                            status = error.message ?: "Invalid benchmark input."
+                        } catch (error: IllegalStateException) {
+                            status = error.message ?: "ASR engine is unavailable."
                         } finally {
                             runningJob = null
                         }

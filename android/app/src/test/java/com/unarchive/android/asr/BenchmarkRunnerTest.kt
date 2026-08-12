@@ -11,7 +11,7 @@ class BenchmarkRunnerTest {
     fun calculatesRealTimeFactorFromMonotonicElapsedTime() = runTest {
         val clock = SequenceClock(1_000, 3_500)
         val runner = BenchmarkRunner(
-            engineProvider = { FakeEngine(it, audioDurationMs = 5_000) },
+            engineProvider = AsrEngineProvider { FakeEngine(it, audioDurationMs = 5_000) },
             clock = clock,
         )
 
@@ -28,7 +28,7 @@ class BenchmarkRunnerTest {
     @Test
     fun leavesRealTimeFactorUnknownForZeroLengthAudio() = runTest {
         val runner = BenchmarkRunner(
-            engineProvider = { FakeEngine(it, audioDurationMs = 0) },
+            engineProvider = AsrEngineProvider { FakeEngine(it, audioDurationMs = 0) },
             clock = SequenceClock(10, 20),
         )
 
@@ -44,7 +44,7 @@ class BenchmarkRunnerTest {
     @Test
     fun rejectsMismatchedEngineProvider() {
         val runner = BenchmarkRunner(
-            engineProvider = { FakeEngine(AsrEngineKind.WHISPER_CPP, 1_000) },
+            engineProvider = AsrEngineProvider { FakeEngine(AsrEngineKind.WHISPER_CPP, 1_000) },
             clock = SequenceClock(0, 1),
         )
 

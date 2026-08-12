@@ -53,6 +53,10 @@ interface AsrEngine {
     ): AsrOutput
 }
 
+fun interface AsrEngineProvider {
+    fun create(kind: AsrEngineKind): AsrEngine
+}
+
 data class AudioSource(
     val displayName: String,
     val uri: String,

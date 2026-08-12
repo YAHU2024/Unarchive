@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val sherpaAar = file("libs/sherpa_onnx-release.aar")
+val sherpaEnabled = sherpaAar.isFile
+
 android {
     namespace = "com.unarchive.android"
     compileSdk = 35
@@ -41,6 +44,16 @@ android {
         compose = true
         buildConfig = true
     }
+
+    defaultConfig {
+        buildConfigField("boolean", "SHERPA_ENABLED", sherpaEnabled.toString())
+    }
+
+    sourceSets {
+        if (sherpaEnabled) {
+            getByName("main").java.srcDir("src/sherpa/java")
+        }
+    }
 }
 
 dependencies {
@@ -55,6 +68,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    if (sherpaEnabled) {
+        implementation(files(sherpaAar))
+    }
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

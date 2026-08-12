@@ -19,7 +19,13 @@ cd android
 .\gradlew.bat testDebugUnitTest assembleDebug
 ```
 
-The current UI uses `PreviewAsrEngine` to validate audio selection, engine
-selection, progress, cancellation, and result rendering. It does not perform
-speech recognition. Native SenseVoice and Whisper adapters will be added as
-separate milestones after their dependencies and model licenses are recorded.
+Without the ignored local sherpa AAR, the UI uses `PreviewAsrEngine` to validate
+audio selection, progress, cancellation, and result rendering. After running
+`scripts/prepare_sherpa.ps1`, SenseVoice uses the real CPU recognizer when its
+`model.int8.onnx` and `tokens.txt` are present in the app's external
+`files/models/sensevoice-2024-07-17-int8/` directory.
+
+The first native path accepts 16 kHz mono PCM WAV input. Cancellation is checked
+before and after sherpa's blocking native decode; it cannot interrupt a decode
+already in progress. Media decoding, VAD segmentation, and finer progress are
+later benchmark milestones.
