@@ -95,6 +95,9 @@ async def cmd_process(args):
     scraper = _create_scraper(args.platform)
     analyzer = LLMAnalyzer(config=config)
     whisper = None
+    succeeded = 0
+    failed = 0
+    skipped = 0
     if not args.no_whisper:
         profile = getattr(args, "whisper_profile", None) or getattr(
             config, "whisper_profile", "fast"
@@ -118,7 +121,7 @@ async def cmd_process(args):
             videos = [video for video in videos if video.video_id == requested_video_id]
             if not videos:
                 print(f"未在收藏夹 {args.folder_id} 中找到视频 {requested_video_id}")
-                return
+                return 1
         if args.max_videos > 0:
             videos = videos[:args.max_videos]
         print(f"获取到 {len(videos)} 个视频")
@@ -141,15 +144,18 @@ async def cmd_process(args):
                     print("  ↳ 检测到部分知识卡片，跳过转录并恢复 LLM 分析")
                 else:
                     print(f"  ↳ 已存在，跳过")
+                    skipped += 1
                     continue
 
             if not resume_llm:
                 availability = await scraper.check_video_available(video.video_id)
                 if availability == VideoAvailability.UNAVAILABLE:
                     print("  ↳ 视频不可用（已删除/下架/私密），永久跳过")
+                    skipped += 1
                     continue
                 if availability == VideoAvailability.TEMPORARY_ERROR:
                     print("  ↳ 视频可用性检查临时失败，跳过本次并保留重试机会")
+                    failed += 1
                     continue
 
                 # 获取逐字稿
@@ -164,6 +170,7 @@ async def cmd_process(args):
                     print(f"  ↳ 逐字稿: {source}, {len(segments)} 条片段")
                 except Exception as e:
                     print(f"  ✗ 逐字稿失败: {e}")
+                    failed += 1
                     continue
 
                 real_author = video.author
@@ -195,6 +202,7 @@ async def cmd_process(args):
                     save_knowledge_card(video.video_id, partial, config)
                     print(f"  ✗ LLM 配额耗尽，已保存部分卡片: {e}")
                 print("  ↳ 停止处理后续视频")
+                failed += 1
                 break
             except Exception as e:
                 if preserve_complete_card:
@@ -213,6 +221,7 @@ async def cmd_process(args):
                     }
                     save_knowledge_card(video.video_id, partial, config)
                     print(f"  ✗ LLM 分析失败，已保存部分卡片: {e}")
+                failed += 1
                 continue
 
             # 保存
@@ -226,8 +235,12 @@ async def cmd_process(args):
             }
             save_knowledge_card(video.video_id, card, config)
             print(f"  ✅ 已保存")
+            succeeded += 1
 
-        print(f"\n完成！")
+        print(
+            f"\n完成！成功 {succeeded}，失败 {failed}，跳过 {skipped}"
+        )
+        return 1 if failed else 0
     finally:
         await analyzer.close()
         if whisper:
@@ -631,7 +644,9 @@ def main():
         "sync": cmd_sync,
         "ima-kbs": cmd_ima_kbs,
     }
-    asyncio.run(cmd_map[args.command](args))
+    result = asyncio.run(cmd_map[args.command](args))
+    if isinstance(result, int):
+        raise SystemExit(result)
 
 
 if __name__ == "__main__":

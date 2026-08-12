@@ -115,7 +115,7 @@ async def test_partial_card_resumes_without_retranscribing(tmp_path, monkeypatch
     monkeypatch.setattr("src.transcript.get_transcript", unexpected_transcript)
     monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
 
-    await cli.cmd_process(_args())
+    result = await cli.cmd_process(_args())
 
     saved = json.loads((card_dir / "v1.json").read_text(encoding="utf-8"))
     assert saved["summary"] == "done"
@@ -123,6 +123,7 @@ async def test_partial_card_resumes_without_retranscribing(tmp_path, monkeypatch
     assert saved["transcript_segments"][0]["start"] == 1.0
     assert scraper.availability_calls == 0
     assert FakeAnalyzer.calls == [("Partial", "Saved Author", "saved transcript")]
+    assert result == 0
 
 
 @pytest.mark.asyncio
@@ -145,7 +146,7 @@ async def test_quota_saves_partial_card_and_stops_batch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.transcript.get_transcript", fake_transcript)
     monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
 
-    await cli.cmd_process(_args())
+    result = await cli.cmd_process(_args())
 
     first = json.loads(
         (Path(config.knowledge_base_dir) / "v1.json").read_text(encoding="utf-8")
@@ -157,6 +158,7 @@ async def test_quota_saves_partial_card_and_stops_batch(tmp_path, monkeypatch):
     ]
     assert not (Path(config.knowledge_base_dir) / "v2.json").exists()
     assert transcript_calls == ["v1"]
+    assert result == 1
 
 
 @pytest.mark.asyncio
@@ -175,10 +177,11 @@ async def test_temporary_availability_error_does_not_create_card(tmp_path, monke
     monkeypatch.setattr("src.transcript.get_transcript", unexpected_transcript)
     monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
 
-    await cli.cmd_process(_args())
+    result = await cli.cmd_process(_args())
 
     assert not (Path(config.knowledge_base_dir) / "v1.json").exists()
     assert FakeAnalyzer.calls == []
+    assert result == 1
 
 
 @pytest.mark.asyncio
@@ -198,11 +201,12 @@ async def test_video_id_filter_processes_only_requested_video(tmp_path, monkeypa
     monkeypatch.setattr("src.transcript.get_transcript", fake_transcript)
     monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
 
-    await cli.cmd_process(_args(video_id="v2"))
+    result = await cli.cmd_process(_args(video_id="v2"))
 
     assert FakeAnalyzer.calls == [("Second", "Verified Author", "v2")]
     assert not (Path(config.knowledge_base_dir) / "v1.json").exists()
     assert (Path(config.knowledge_base_dir) / "v2.json").exists()
+    assert result == 0
 
 
 @pytest.mark.asyncio
@@ -224,6 +228,21 @@ async def test_force_failure_preserves_existing_complete_card(tmp_path, monkeypa
     monkeypatch.setattr("src.transcript.get_transcript", fake_transcript)
     monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
 
-    await cli.cmd_process(_args(force=True))
+    result = await cli.cmd_process(_args(force=True))
 
     assert json.loads(card_path.read_text(encoding="utf-8")) == original
+    assert result == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_requested_video_returns_failure(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    scraper = FakeScraper([VideoInfo("v1", "First", "https://example/v1")])
+
+    monkeypatch.setattr(cli, "get_config", lambda: config)
+    monkeypatch.setattr(cli, "_create_scraper", lambda platform: scraper)
+    monkeypatch.setattr("src.analyzer.llm_analyzer.LLMAnalyzer", FakeAnalyzer)
+
+    result = await cli.cmd_process(_args(video_id="missing"))
+
+    assert result == 1
