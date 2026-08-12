@@ -173,7 +173,7 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
                             status = error.message ?: "Invalid benchmark input."
                         } catch (error: IllegalStateException) {
                             status = error.message ?: "ASR engine is unavailable."
-                        } catch (error: RuntimeException) {
+                        } catch (error: Exception) {
                             status = error.message ?: "ASR benchmark failed."
                         } finally {
                             runningJob = null

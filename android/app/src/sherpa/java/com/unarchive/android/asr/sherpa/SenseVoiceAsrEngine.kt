@@ -7,9 +7,9 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
-import com.k2fsa.sherpa.onnx.WaveReader
 import com.unarchive.android.audio.AndroidAudioDecoder
 import com.unarchive.android.audio.DecodedAudio
+import com.unarchive.android.audio.Pcm16WaveDecoder
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngine
 import com.unarchive.android.asr.AsrEngineKind
@@ -107,21 +107,12 @@ class SenseVoiceAsrEngine(
     )
 
     private fun readWave(uri: Uri, progressListener: AsrProgressListener): DecodedAudio {
-        val destination = File.createTempFile("asr-input-", ".wav", context.cacheDir)
-        try {
-            context.contentResolver.openInputStream(uri).use { input ->
-                requireNotNull(input) { "Cannot open selected audio" }
-                destination.outputStream().use(input::copyTo)
-            }
-            val wave = WaveReader.readWave(destination.absolutePath)
-            require(wave.sampleRate == EXPECTED_SAMPLE_RATE) {
-                "WAV input must be 16 kHz mono PCM, found ${wave.sampleRate} Hz"
-            }
-            progressListener.onProgress(0.5f)
-            return DecodedAudio(wave.samples, wave.sampleRate)
-        } finally {
-            destination.delete()
+        val audio = context.contentResolver.openInputStream(uri).use { input ->
+            requireNotNull(input) { "Cannot open selected audio" }
+            Pcm16WaveDecoder.decode(input, EXPECTED_SAMPLE_RATE)
         }
+        progressListener.onProgress(0.5f)
+        return audio
     }
 
     companion object {
