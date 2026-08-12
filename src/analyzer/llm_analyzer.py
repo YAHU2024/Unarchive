@@ -52,6 +52,9 @@ class LLMAnalyzer:
         self.enable_thinking = bool(self.config.llm_enable_thinking)
         self.thinking_budget = max(0, int(self.config.llm_thinking_budget))
         self.max_tokens = max(256, int(self.config.llm_max_tokens))
+        self.structured_max_tokens = max(
+            1024, int(getattr(self.config, "llm_structured_max_tokens", 3072))
+        )
 
         # httpx 异步客户端，设置合理超时
         self._client = httpx.AsyncClient(
@@ -77,9 +80,14 @@ class LLMAnalyzer:
         Returns:
             结构化分析结果字典，包含 summary, keywords, topics, key_points 等字段
         """
-        logger.info("开始分析视频: %s (作者: %s)", title, author)
-
         analysis_chunked = len(transcript) > _LONG_TRANSCRIPT_LIMIT
+        model_name = getattr(self, "model", "unknown")
+        logger.info(
+            "开始 LLM 分析: model=%s transcript_chars=%d chunked=%s",
+            model_name,
+            len(transcript),
+            analysis_chunked,
+        )
         analysis_transcript = transcript
         if analysis_chunked:
             analysis_transcript = await self._summarize_long_transcript(
@@ -119,7 +127,7 @@ class LLMAnalyzer:
             }),
         }
 
-        logger.info("视频分析完成: %s", title)
+        logger.info("LLM 分析完成: model=%s chunked=%s", model_name, analysis_chunked)
         return merged
 
     async def _analyze_combined(self, title: str, author: str, transcript: str) -> dict:
@@ -129,11 +137,78 @@ class LLMAnalyzer:
             author=author,
             transcript=transcript,
         )
+        system_prompt = "你是专业的视频知识整理助手。只依据输入内容，并始终返回合法 JSON。"
         response = await self._call_llm(
-            prompt,
-            "你是专业的视频知识整理助手。只依据输入内容，并始终返回合法 JSON。",
+            prompt, system_prompt, max_tokens=self.structured_max_tokens
         )
-        return self._parse_llm_json(response)
+        try:
+            return self._normalize_combined_result(self._parse_llm_json(response))
+        except ValueError:
+            logger.warning(
+                "LLM 结构化输出未通过质量门槛，使用紧凑 JSON 要求重试一次 (chars=%d)",
+                len(response),
+            )
+            retry_prompt = (
+                f"{prompt}\n\n上次输出不是完整 JSON。请缩短各字段，严格只输出完整合法 JSON，"
+                "不得包含 Markdown 或说明。summary 必须为 200-300 字；keywords 和 knowledge_tags"
+                "各 3-8 项；topics 1-3 项；key_points 3-5 项；action_items 1-3 项。"
+            )
+            retry_response = await self._call_llm(
+                retry_prompt,
+                system_prompt,
+                max_tokens=self.structured_max_tokens,
+            )
+            return self._normalize_combined_result(self._parse_llm_json(retry_response))
+
+    @staticmethod
+    def _normalize_combined_result(result: dict) -> dict:
+        """Normalize bounded lists and reject unusable knowledge-card output."""
+        normalized = dict(result)
+        required_text = ("summary", "one_line_summary", "target_audience")
+        required_lists = {
+            "keywords": (3, 8),
+            "topics": (1, 3),
+            "key_points": (3, 5),
+            "knowledge_tags": (3, 8),
+            "action_items": (1, 3),
+        }
+        invalid_fields: list[str] = []
+        for field in required_text:
+            if not isinstance(normalized.get(field), str) or not normalized[field].strip():
+                invalid_fields.append(field)
+        for field, (minimum, maximum) in required_lists.items():
+            value = normalized.get(field)
+            if not isinstance(value, list) or len(value) < minimum:
+                invalid_fields.append(field)
+            elif len(value) > maximum:
+                normalized[field] = value[:maximum]
+        key_points = normalized.get("key_points", [])
+        if isinstance(key_points, list) and any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("point"), str)
+            or not item["point"].strip()
+            or not isinstance(item.get("detail"), str)
+            or not item["detail"].strip()
+            for item in key_points
+        ):
+            invalid_fields.append("key_points_content")
+        if not isinstance(normalized.get("mindmap_structure"), dict):
+            invalid_fields.append("mindmap_structure")
+        elif not normalized["mindmap_structure"].get("branches"):
+            invalid_fields.append("mindmap_structure.branches")
+        elif any(
+            not isinstance(branch, dict)
+            or not isinstance(branch.get("topic"), str)
+            or not branch["topic"].strip()
+            or not isinstance(branch.get("subtopics"), list)
+            for branch in normalized["mindmap_structure"]["branches"]
+        ):
+            invalid_fields.append("mindmap_structure.branches")
+        if invalid_fields:
+            raise ValueError(
+                "结构化分析字段不符合约束: " + ", ".join(invalid_fields)
+            )
+        return normalized
 
     @staticmethod
     def _split_transcript(transcript: str) -> list[str]:
@@ -266,7 +341,7 @@ class LLMAnalyzer:
                 payload["thinking_budget"] = self.thinking_budget
 
         last_error = None
-        last_response_body = None  # 用于记录 API 响应体，辅助诊断
+        last_response_body = None  # 仅用于本地错误分类，不得写入日志或异常。
         quota_exhausted = False   # 标记是否已检测到配额耗尽
         for attempt in range(1, self._max_retries + 1):
             try:
@@ -283,13 +358,13 @@ class LLMAnalyzer:
                 if response.status_code != 200:
                     last_response_body = response.text[:500]
                     logger.warning(
-                        "LLM API 返回异常状态 %d (第 %d 次): %s",
-                        response.status_code, attempt, last_response_body,
+                        "LLM API 返回异常状态 %d (第 %d 次, 响应长度=%d)",
+                        response.status_code, attempt, len(last_response_body),
                     )
                     if self._is_quota_error(response.status_code, last_response_body):
                         quota_exhausted = True
                         raise LLMQuotaExceededError(
-                            f"LLM 配额/余额耗尽 (HTTP {response.status_code}): {last_response_body[:200]}"
+                            f"LLM 配额/余额耗尽 (HTTP {response.status_code})"
                         )
                     response.raise_for_status()
 
@@ -305,10 +380,9 @@ class LLMAnalyzer:
 
             except httpx.HTTPStatusError as e:
                 last_error = e
-                body = last_response_body or ""
                 logger.warning(
-                    "LLM API HTTP 错误 (第 %d 次): status=%d, body=%s",
-                    attempt, e.response.status_code, body,
+                    "LLM API HTTP 错误 (第 %d 次): status=%d",
+                    attempt, e.response.status_code,
                 )
                 if attempt < self._max_retries:
                     import asyncio
@@ -316,14 +390,9 @@ class LLMAnalyzer:
 
             except KeyError as e:
                 last_error = e
-                # 记录实际收到的响应，便于排查格式问题
-                try:
-                    raw = json.dumps(data, ensure_ascii=False)[:500]
-                except Exception:
-                    raw = repr(data)[:500] if 'data' in dir() else "N/A"
                 logger.warning(
-                    "LLM 响应格式异常 (第 %d 次): 缺少字段 %r, 响应内容: %s",
-                    attempt, e.args[0] if e.args else "?", raw,
+                    "LLM 响应格式异常 (第 %d 次): 缺少字段 %r",
+                    attempt, e.args[0] if e.args else "?",
                 )
                 if attempt < self._max_retries:
                     import asyncio
@@ -338,9 +407,8 @@ class LLMAnalyzer:
 
         # All retries exhausted — if it was a quota pattern, raise accordingly
         if quota_exhausted:
-            body_snippet = (last_response_body or "")[:200]
             raise LLMQuotaExceededError(
-                f"LLM API 调用在 {self._max_retries} 次重试后仍报告配额耗尽: {body_snippet}"
+                f"LLM API 调用在 {self._max_retries} 次重试后仍报告配额耗尽"
             )
         # 用 repr 兜底，确保错误信息不为空
         error_detail = str(last_error) or repr(last_error)
@@ -530,8 +598,8 @@ class LLMAnalyzer:
             except json.JSONDecodeError:
                 pass
 
-        logger.error("无法从 LLM 响应中解析 JSON，原始响应:\n%s", text[:500])
-        raise ValueError(f"无法从 LLM 响应中提取有效 JSON。响应前 200 字符: {text[:200]}")
+        logger.error("无法从 LLM 响应中解析 JSON (chars=%d)", len(text))
+        raise ValueError(f"无法从 LLM 响应中提取有效 JSON (chars={len(text)})")
 
     async def close(self):
         """关闭 httpx 客户端"""

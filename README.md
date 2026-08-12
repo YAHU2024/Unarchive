@@ -68,7 +68,7 @@ graph LR
 - 抖音代码后真实复测可枚举 45 个收藏夹，两个固定收藏夹分别稳定返回 4/4 和 13/14 个可访问视频；httpx 媒体主路径、缓存和签名 URL 日志保护已通过真实样本。
 - 飞书与 ima 的单视频两轮幂等已通过真实 API；四卡飞书外部写入和 ima 目标文件夹切换仍需要明确的数据/目标授权。
 - 固定四视频 ASR 基准中 `small/fast` 合计约 254 秒；`base` 虽快约 62%，但中文关键实体退化，因此默认仍保留 `small`，`base` 仅作为速度候选。
-- Qwen3 默认关闭思考，摘要与结构分析已合并为一次流式请求，长稿完整分块且不再静默截断；固定四视频 LLM 实测合计约 681 秒，与 `small/fast` ASR 相加已超过 12 分钟目标，下一步需对照更稳定的备选模型。
+- 摘要与结构分析已合并为一次请求，长稿完整分块且不再静默截断；生产默认使用 `deepseek-v4-flash`，固定四视频 LLM 复测合计约 49 秒，较 Qwen3-8B 快约 14 倍，搭配 `small/fast` ASR 可保留充足的 12 分钟目标余量。
 - 小红书目前只有未实现的适配器桩，不属于已支持平台。
 
 后续优先级和验收门槛见 [项目路线图](PLAN.md)。
@@ -117,7 +117,7 @@ python app.py          # 访问 http://127.0.0.1:7860
 |------|------|--------|
 | `LLM_API_KEY` | 大模型 API Key | *必填* |
 | `LLM_BASE_URL` | API 地址 | `https://api.deepseek.com` |
-| `LLM_MODEL` | 模型名称 | `deepseek-chat` |
+| `LLM_MODEL` | 模型名称 | `deepseek-v4-flash` |
 | `FEISHU_APP_ID` | 飞书 App ID | *可选，同步飞书时填写* |
 | `FEISHU_APP_SECRET` | 飞书 App Secret | *可选，同步飞书时填写* |
 | `IMA_CLIENT_ID` | ima OpenAPI Client ID | *可选，同步 ima 时填写* |
@@ -216,7 +216,7 @@ python app.py          # Visit http://127.0.0.1:7860
 |------|------|--------|
 | `LLM_API_KEY` | LLM API Key | *Required* |
 | `LLM_BASE_URL` | API Base URL | `https://api.deepseek.com` |
-| `LLM_MODEL` | Model name | `deepseek-chat` |
+| `LLM_MODEL` | Model name | `deepseek-v4-flash` |
 | `FEISHU_APP_ID` | Feishu App ID | *Optional, for Feishu sync* |
 | `FEISHU_APP_SECRET` | Feishu App Secret | *Optional, for Feishu sync* |
 | `IMA_CLIENT_ID` | ima OpenAPI Client ID | *Optional, for ima sync* |

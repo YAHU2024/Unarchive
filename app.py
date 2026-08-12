@@ -976,6 +976,7 @@ async def do_process(
         llm_enable_thinking=base_config.llm_enable_thinking,
         llm_thinking_budget=base_config.llm_thinking_budget,
         llm_max_tokens=base_config.llm_max_tokens,
+        llm_structured_max_tokens=base_config.llm_structured_max_tokens,
         feishu_app_id=feishu_app_id,
         feishu_app_secret=feishu_app_secret,
         whisper_device=base_config.whisper_device,

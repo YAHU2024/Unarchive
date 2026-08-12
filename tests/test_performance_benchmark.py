@@ -5,7 +5,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from config import AppConfig
-from tests.performance_benchmark import _build_config, _parse_ids, _transcript_metrics
+from tests.performance_benchmark import (
+    _analysis_metrics,
+    _build_config,
+    _parse_ids,
+    _transcript_metrics,
+)
 
 
 def test_parse_ids_preserves_order_and_deduplicates():
@@ -49,3 +54,31 @@ def test_build_config_overrides_benchmark_only_fields():
     assert candidate.llm_enable_thinking is True
     assert candidate.llm_thinking_budget == 512
     assert base.llm_model == "current"
+
+
+def test_analysis_metrics_excludes_model_content():
+    metrics = _analysis_metrics(
+        {
+            "summary": "A concise summary",
+            "keywords": ["one", "two"],
+            "one_line_summary": "One line",
+            "topics": ["topic"],
+            "key_points": [{"point": "p", "detail": "d"}],
+            "knowledge_tags": ["tag"],
+            "target_audience": "reader",
+            "action_items": ["act"],
+            "mindmap_structure": {"branches": [{"topic": "topic", "subtopics": []}]},
+        }
+    )
+
+    assert metrics == {
+        "populated_fields": 9,
+        "required_fields": 9,
+        "summary_chars": 17,
+        "keywords": 2,
+        "topics": 1,
+        "key_points": 1,
+        "knowledge_tags": 1,
+        "action_items": 1,
+        "mindmap_branches": 1,
+    }

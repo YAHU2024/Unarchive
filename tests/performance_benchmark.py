@@ -140,6 +140,34 @@ def _write_results(output_dir: Path, results: dict[str, Any]) -> tuple[Path, Pat
     return json_path, md_path
 
 
+def _analysis_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Record non-sensitive structure signals without writing model content."""
+    required_fields = (
+        "summary",
+        "keywords",
+        "one_line_summary",
+        "topics",
+        "key_points",
+        "knowledge_tags",
+        "target_audience",
+        "action_items",
+        "mindmap_structure",
+    )
+    return {
+        "populated_fields": sum(bool(analysis.get(field)) for field in required_fields),
+        "required_fields": len(required_fields),
+        "summary_chars": len(str(analysis.get("summary", "")).strip()),
+        "keywords": len(analysis.get("keywords", [])),
+        "topics": len(analysis.get("topics", [])),
+        "key_points": len(analysis.get("key_points", [])),
+        "knowledge_tags": len(analysis.get("knowledge_tags", [])),
+        "action_items": len(analysis.get("action_items", [])),
+        "mindmap_branches": len(
+            analysis.get("mindmap_structure", {}).get("branches", [])
+        ),
+    }
+
+
 def _run_asr(
     video_ids: list[str],
     config: AppConfig,
@@ -237,10 +265,17 @@ async def _run_llm_async(
                         status="ok",
                         elapsed_seconds=round(time.perf_counter() - started, 1),
                         detail=f"chars={len(transcript)} chunked={analysis.get('analysis_chunked', False)}",
+                        metrics=_analysis_metrics(analysis),
                     )
                 except Exception as exc:
                     row.update(status="error", elapsed_seconds=round(time.perf_counter() - started, 1), detail=type(exc).__name__)
                 measurements.append(row)
+                logger.info(
+                    "LLM benchmark %s: %s in %ss",
+                    video_id,
+                    row["status"],
+                    row.get("elapsed_seconds", "n/a"),
+                )
         finally:
             await analyzer.close()
     return measurements
