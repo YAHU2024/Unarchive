@@ -28,7 +28,9 @@ audio selection, progress, cancellation, and result rendering. After running
 The native path reads PCM16 WAV across common sample rates and channel counts,
 and uses Android's platform codecs for other audio containers. Both paths
 normalize output to 16 kHz mono before ASR. Decoding is temporarily limited to 5 minutes until
-segmented ASR is available. Cancellation is checked
+the long-audio streaming decoder is available. Optional Silero VAD detects
+speech, adds up to 500 ms context, and bounds SenseVoice inputs to 30 seconds.
+Cancellation is checked between decoding, VAD windows, and ASR segments, and
 before and after sherpa's blocking native decode; it cannot interrupt a decode
-already in progress. VAD segmentation and finer progress remain later benchmark
+already in progress. Streaming media decode and durable checkpoints remain later
 milestones for long audio.

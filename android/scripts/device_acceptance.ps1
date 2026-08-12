@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$ModelDirectory,
+    [string]$VadModel = "",
     [string]$AudioFile = ""
 )
 
@@ -11,8 +12,12 @@ $apk = Join-Path $androidRoot "app\build\outputs\apk\debug\app-debug.apk"
 $packageName = "com.unarchive.android"
 $deviceStagingDirectory = "/data/local/tmp/unarchive-sensevoice"
 $deviceModelDirectory = "files/models/sensevoice-2024-07-17-int8"
+$deviceVadDirectory = "files/models/silero-vad"
+if ($VadModel -eq "") {
+    $VadModel = Join-Path $androidRoot "models\silero-vad\silero_vad.onnx"
+}
 
-foreach ($path in @($adb, $apk, (Join-Path $ModelDirectory "model.int8.onnx"), (Join-Path $ModelDirectory "tokens.txt"))) {
+foreach ($path in @($adb, $apk, (Join-Path $ModelDirectory "model.int8.onnx"), (Join-Path $ModelDirectory "tokens.txt"), $VadModel)) {
     if (-not (Test-Path $path)) { throw "Required file not found: $path" }
 }
 
@@ -30,12 +35,18 @@ if ($LASTEXITCODE -ne 0) { throw "Could not create the temporary model directory
 if ($LASTEXITCODE -ne 0) { throw "Model deployment failed." }
 & $adb push (Join-Path $ModelDirectory "tokens.txt") "$deviceStagingDirectory/tokens.txt"
 if ($LASTEXITCODE -ne 0) { throw "Token deployment failed." }
+& $adb push $VadModel "$deviceStagingDirectory/silero_vad.onnx"
+if ($LASTEXITCODE -ne 0) { throw "VAD model deployment failed." }
 & $adb shell run-as $packageName mkdir -p $deviceModelDirectory
 if ($LASTEXITCODE -ne 0) { throw "Could not create the private app model directory." }
 & $adb shell run-as $packageName cp "$deviceStagingDirectory/model.int8.onnx" "$deviceModelDirectory/model.int8.onnx"
 if ($LASTEXITCODE -ne 0) { throw "Could not import the model into private app storage." }
 & $adb shell run-as $packageName cp "$deviceStagingDirectory/tokens.txt" "$deviceModelDirectory/tokens.txt"
 if ($LASTEXITCODE -ne 0) { throw "Could not import tokens into private app storage." }
+& $adb shell run-as $packageName mkdir -p $deviceVadDirectory
+if ($LASTEXITCODE -ne 0) { throw "Could not create the private VAD model directory." }
+& $adb shell run-as $packageName cp "$deviceStagingDirectory/silero_vad.onnx" "$deviceVadDirectory/silero_vad.onnx"
+if ($LASTEXITCODE -ne 0) { throw "Could not import the VAD model into private app storage." }
 & $adb shell rm -rf $deviceStagingDirectory
 
 if ($AudioFile -ne "") {

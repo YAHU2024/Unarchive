@@ -20,12 +20,19 @@ their own model license, and placed under the ignored `android/models/` path.
 The current multilingual package is about 1.05 GB compressed, so model download
 is an explicit benchmark setup step rather than a normal Gradle dependency.
 
+Silero VAD uses the upstream `silero_vad.onnx` model from the sherpa-onnx
+`asr-models` release. Store it at the ignored
+`android/models/silero-vad/silero_vad.onnx` path. The currently verified file is
+643854 bytes with SHA-256
+`9E2449E1087496D8D4CABA907F23E0BD3F78D91FA552479BB9C23AC09CBB1FD6`.
+
 After preparing the AAR, building the APK, and extracting the model, connect one
 authorized device and run:
 
 ```powershell
 .\android\scripts\device_acceptance.ps1 `
     -ModelDirectory "D:\path\to\sensevoice-model" `
+    -VadModel "D:\path\to\silero_vad.onnx" `
     -AudioFile "D:\path\to\sample.m4a"
 ```
 
