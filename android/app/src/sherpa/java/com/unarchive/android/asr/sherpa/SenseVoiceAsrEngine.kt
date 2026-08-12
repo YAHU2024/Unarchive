@@ -36,7 +36,7 @@ class SenseVoiceAsrEngine(
             "SenseVoice benchmark currently requires 16 kHz audio"
         }
         val modelDirectory = File(
-            context.getExternalFilesDir("models"),
+            File(context.filesDir, "models"),
             SenseVoiceModelFiles.DIRECTORY_NAME,
         )
         val modelFiles = SenseVoiceModelFiles.inDirectory(modelDirectory)

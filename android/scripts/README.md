@@ -19,3 +19,17 @@ must be obtained from the upstream sherpa-onnx model release, reviewed for
 their own model license, and placed under the ignored `android/models/` path.
 The current multilingual package is about 1.05 GB compressed, so model download
 is an explicit benchmark setup step rather than a normal Gradle dependency.
+
+After preparing the AAR, building the APK, and extracting the model, connect one
+authorized device and run:
+
+```powershell
+.\android\scripts\device_acceptance.ps1 `
+    -ModelDirectory "D:\path\to\sensevoice-model" `
+    -AudioFile "D:\path\to\sample-16k-mono.wav"
+```
+
+The script installs the debug APK and imports the ignored model files into the
+app's private storage with `run-as`. It does not
+claim acceptance: RTF, memory, thermal behavior, battery delta, transcript
+accuracy, and cancellation must still be recorded from the physical device.

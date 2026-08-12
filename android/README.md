@@ -22,7 +22,7 @@ cd android
 Without the ignored local sherpa AAR, the UI uses `PreviewAsrEngine` to validate
 audio selection, progress, cancellation, and result rendering. After running
 `scripts/prepare_sherpa.ps1`, SenseVoice uses the real CPU recognizer when its
-`model.int8.onnx` and `tokens.txt` are present in the app's external
+`model.int8.onnx` and `tokens.txt` are present in the app's private
 `files/models/sensevoice-2024-07-17-int8/` directory.
 
 The first native path accepts 16 kHz mono PCM WAV input. Cancellation is checked

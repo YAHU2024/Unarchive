@@ -1,8 +1,10 @@
 package com.unarchive.android
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -48,20 +50,29 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    private val sharedAudio = mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        sharedAudio.value = intent.audioUri()
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AsrBenchmarkScreen()
+                    AsrBenchmarkScreen(initialAudio = sharedAudio.value)
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        sharedAudio.value = intent.audioUri()
+    }
 }
 
 @Composable
-private fun AsrBenchmarkScreen() {
+private fun AsrBenchmarkScreen(initialAudio: Uri?) {
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val runner = remember {
@@ -70,14 +81,20 @@ private fun AsrBenchmarkScreen() {
             clock = MonotonicClock(SystemClock::elapsedRealtime),
         )
     }
-    var selectedAudio by remember { mutableStateOf<Uri?>(null) }
+    var selectedAudio by remember(initialAudio) { mutableStateOf(initialAudio) }
+    var selectedAudioName by remember(initialAudio) {
+        mutableStateOf(initialAudio?.let { context.displayName(it) })
+    }
     var selectedEngine by remember { mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA) }
     var progress by remember { mutableFloatStateOf(0f) }
     var result by remember { mutableStateOf<BenchmarkResult?>(null) }
-    var status by remember { mutableStateOf("Select an audio file to begin.") }
+    var status by remember(initialAudio) {
+        mutableStateOf(if (initialAudio == null) "Select an audio file to begin." else "Shared audio ready.")
+    }
     var runningJob by remember { mutableStateOf<Job?>(null) }
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedAudio = uri
+        selectedAudioName = uri?.let { context.displayName(it) }
         result = null
         progress = 0f
         status = if (uri == null) "No audio selected." else "Audio selected. Ready to benchmark."
@@ -99,7 +116,7 @@ private fun AsrBenchmarkScreen() {
         OutlinedButton(onClick = { audioPicker.launch("audio/*") }) {
             Text(if (selectedAudio == null) "Select audio" else "Change audio")
         }
-        Text(selectedAudio?.lastPathSegment ?: "No file selected")
+        Text(selectedAudioName ?: "No file selected")
 
         Text("Engine", style = MaterialTheme.typography.titleMedium)
         AsrEngineKind.entries.forEach { engine ->
@@ -136,19 +153,28 @@ private fun AsrBenchmarkScreen() {
                         try {
                             result = runner.run(
                                 source = AudioSource(
-                                    displayName = uri.lastPathSegment ?: "audio",
+                                    displayName = selectedAudioName ?: "audio.wav",
                                     uri = uri.toString(),
                                 ),
                                 config = AsrConfig(engine = selectedEngine),
                                 progressListener = AsrProgressListener { progress = it.coerceIn(0f, 1f) },
                             )
-                            status = "Harness complete. Native ASR is not connected yet."
+                            status = if (
+                                selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
+                                BuildConfig.SHERPA_ENABLED
+                            ) {
+                                "Recognition complete."
+                            } else {
+                                "Harness complete. Native ASR is not connected for this engine."
+                            }
                         } catch (_: CancellationException) {
                             status = "Benchmark cancelled."
                         } catch (error: IllegalArgumentException) {
                             status = error.message ?: "Invalid benchmark input."
                         } catch (error: IllegalStateException) {
                             status = error.message ?: "ASR engine is unavailable."
+                        } catch (error: RuntimeException) {
+                            status = error.message ?: "ASR benchmark failed."
                         } finally {
                             runningJob = null
                         }
@@ -177,4 +203,25 @@ private fun AsrBenchmarkScreen() {
             Text(benchmark.segments.joinToString(separator = "\n") { it.text })
         }
     }
+}
+
+private fun android.content.Context.displayName(uri: Uri): String {
+    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (column >= 0) return cursor.getString(column)
+        }
+    }
+    return uri.lastPathSegment ?: "audio.wav"
+}
+
+internal fun Intent.audioUri(): Uri? = when (action) {
+    Intent.ACTION_VIEW -> data
+    Intent.ACTION_SEND -> if (android.os.Build.VERSION.SDK_INT >= 33) {
+        getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        getParcelableExtra(Intent.EXTRA_STREAM)
+    }
+    else -> null
 }
