@@ -7,7 +7,7 @@
 import time
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import List, Dict
 
 import httpx
 
@@ -47,9 +47,9 @@ class FeishuSync(SyncBase):
         """
         self.app_id = app_id
         self.app_secret = app_secret
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._token_expire_at: float = 0
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------
     # 连接与认证
@@ -151,7 +151,52 @@ class FeishuSync(SyncBase):
         logger.info("获取根文件夹 token: %s", token)
         return token
 
-    async def create_folder(self, name: str, parent_id: str = None) -> str:
+    async def find_folder(self, name: str, parent_id: str | None = None) -> str | None:
+        """Find an exact-name child folder under the given parent."""
+        if not parent_id:
+            parent_id = await self.get_root_folder_token()
+
+        page_token = ""
+        while True:
+            params: dict = {
+                "folder_token": parent_id,
+                "page_size": 200,
+                "order_by": "CreatedTime",
+                "direction": "ASC",
+            }
+            if page_token:
+                params["page_token"] = page_token
+
+            data = await self._request("GET", "/drive/v1/files", params=params)
+            for item in data.get("files", []) or []:
+                if item.get("type") == "folder" and item.get("name") == name:
+                    token = item.get("token", "")
+                    if token:
+                        logger.info("发现已有飞书文件夹: %s -> %s", name, token)
+                        return token
+
+            if not data.get("has_more"):
+                break
+            page_token = data.get("next_page_token", "") or data.get("page_token", "")
+            if not page_token:
+                break
+
+        return None
+
+    async def get_or_create_folder(
+        self, name: str, parent_id: str | None = None
+    ) -> tuple[str, bool]:
+        """Return ``(folder_token, created)`` for an exact-name child folder."""
+        if not parent_id:
+            parent_id = await self.get_root_folder_token()
+
+        existing = await self.find_folder(name, parent_id)
+        if existing:
+            return existing, False
+
+        return await self.create_folder(name, parent_id), True
+
+    async def create_folder(self, name: str, parent_id: str | None = None) -> str:
         """创建飞书文件夹
 
         POST /open-apis/drive/v1/files/create_folder
@@ -173,7 +218,7 @@ class FeishuSync(SyncBase):
     # 文档操作
     # ------------------------------------------------------------------
 
-    async def create_document(self, title: str, content: dict, folder_id: str = None) -> str:
+    async def create_document(self, title: str, content: dict, folder_id: str | None = None) -> str:
         """创建飞书文档并写入内容
 
         1. 创建空文档
@@ -251,7 +296,7 @@ class FeishuSync(SyncBase):
         logger.info("更新文档成功: %s", document_id)
         return True
 
-    async def check_document_exists(self, video_id: str, folder_token: str = None) -> Optional[str]:
+    async def check_document_exists(self, video_id: str, folder_token: str | None = None) -> str | None:
         """检查文档是否已存在
 
         通过文件夹内文件列表查找匹配 video_id 的文档。
@@ -280,7 +325,7 @@ class FeishuSync(SyncBase):
             # 翻页
             if not data.get("has_more"):
                 break
-            page_token = data.get("page_token", "")
+            page_token = data.get("next_page_token", "") or data.get("page_token", "")
             if not page_token:
                 break
 
@@ -308,7 +353,7 @@ class FeishuSync(SyncBase):
             }
         }
 
-    def _make_block(self, block_type: int, text_content: str = "", elements: list = None) -> dict:
+    def _make_block(self, block_type: int, text_content: str = "", elements: list | None = None) -> dict:
         """构建飞书文档 Block
 
         Args:

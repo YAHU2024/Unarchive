@@ -8,7 +8,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Optional
+
+
+class VideoAvailability(Enum):
+    """视频可用性检查结果（三态）"""
+    AVAILABLE = auto()            # 可正常访问
+    UNAVAILABLE = auto()          # 明确不可用（删除/下架/私密），应永久跳过
+    TEMPORARY_ERROR = auto()      # 临时错误（网络/风控/Cookie 失效），应重试或报告失败
 
 
 @dataclass
@@ -134,9 +142,15 @@ class ScraperBase(ABC):
         """清理浏览器资源（默认空操作）"""
         return
 
-    async def check_video_available(self, video_id: str) -> bool:
-        """检查视频是否可访问（默认返回 True）"""
-        return True
+    async def check_video_available(self, video_id: str) -> VideoAvailability:
+        """检查视频是否可访问
+
+        返回 VideoAvailability 枚举值：
+        - AVAILABLE: 可正常访问
+        - UNAVAILABLE: 明确不可用（删除/下架/私密），应永久跳过
+        - TEMPORARY_ERROR: 临时错误（网络/风控等），应重试或报告失败
+        """
+        return VideoAvailability.AVAILABLE
 
     async def get_video_owner(self, video_id: str) -> str:
         """获取视频的真实作者名（默认返回空字符串）"""

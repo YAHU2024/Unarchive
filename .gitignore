@@ -37,9 +37,20 @@ Thumbs.db
 # Claude
 .claude/
 
-# Plan files
+# CodeBuddy (project data, not source)
+.codebuddy/
+
+# Personal development documents
 .plan.md
 PLAN.md
+AGENTS.md
+CLAUDE.md
+
+# CodeBuddy guidance (project-local, not source)
+CODEBUDDY.md
 
 # Misc
 1.0.0
+
+# Internal documentation
+docs/internal/

@@ -5,6 +5,7 @@ LLM 内容分析模块
 使用 OpenAI 兼容接口格式，支持多种国产大模型。
 """
 
+import asyncio
 import json
 import re
 import logging
@@ -20,6 +21,14 @@ logger = logging.getLogger(__name__)
 # 项目根目录（src/analyzer -> 上两级）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PROMPTS_DIR = _PROJECT_ROOT / "prompts"
+_LONG_TRANSCRIPT_LIMIT = 12000
+_TRANSCRIPT_CHUNK_SIZE = 9000
+_TRANSCRIPT_CHUNK_OVERLAP = 300
+_CHUNK_SUMMARY_MAX_TOKENS = 768
+
+
+class LLMQuotaExceededError(RuntimeError):
+    """LLM API 配额/余额耗尽，不可重试，调用方应停止管道并持久化部分结果。"""
 
 
 class LLMAnalyzer:
@@ -40,6 +49,12 @@ class LLMAnalyzer:
         self.base_url = self.config.llm_base_url.rstrip("/")
         self.model = self.config.llm_model
         self.provider = self.config.llm_provider
+        self.enable_thinking = bool(self.config.llm_enable_thinking)
+        self.thinking_budget = max(0, int(self.config.llm_thinking_budget))
+        self.max_tokens = max(256, int(self.config.llm_max_tokens))
+        self.structured_max_tokens = max(
+            1024, int(getattr(self.config, "llm_structured_max_tokens", 3072))
+        )
 
         # httpx 异步客户端，设置合理超时
         self._client = httpx.AsyncClient(
@@ -65,17 +80,29 @@ class LLMAnalyzer:
         Returns:
             结构化分析结果字典，包含 summary, keywords, topics, key_points 等字段
         """
-        logger.info("开始分析视频: %s (作者: %s)", title, author)
+        analysis_chunked = len(transcript) > _LONG_TRANSCRIPT_LIMIT
+        model_name = getattr(self, "model", "unknown")
+        logger.info(
+            "开始 LLM 分析: model=%s transcript_chars=%d chunked=%s",
+            model_name,
+            len(transcript),
+            analysis_chunked,
+        )
+        analysis_transcript = transcript
+        if analysis_chunked:
+            analysis_transcript = await self._summarize_long_transcript(
+                title, author, transcript
+            )
+            logger.info(
+                "逐字稿分块分析完成: %d -> %d 字符，原文未截断",
+                len(transcript),
+                len(analysis_transcript),
+            )
 
-        # 截断过长的逐字稿
-        truncated = self._truncate_transcript(transcript)
-
-        # 并行执行结构分析和内容总结
+        # 一次请求同时生成摘要和结构化字段，减少重复输入、排队与重试。
         try:
-            import asyncio
-            structure_result, summary_result = await asyncio.gather(
-                self._analyze_structure(title, author, truncated),
-                self._summarize(title, author, truncated),
+            combined_result = await self._analyze_combined(
+                title, author, analysis_transcript
             )
         except Exception as e:
             logger.error("LLM 分析调用失败: %s", e)
@@ -85,29 +112,200 @@ class LLMAnalyzer:
         merged = {
             "title": title,
             "author": author,
-            # 来自 summary
-            "summary": summary_result.get("summary", ""),
-            "keywords": summary_result.get("keywords", []),
-            "one_line_summary": summary_result.get("one_line_summary", ""),
-            # 来自 structure
-            "topics": structure_result.get("topics", []),
-            "key_points": structure_result.get("key_points", []),
-            "knowledge_tags": structure_result.get("knowledge_tags", []),
-            "target_audience": structure_result.get("target_audience", ""),
-            "action_items": structure_result.get("action_items", []),
-            "mindmap_structure": structure_result.get("mindmap_structure", {
+            "summary": combined_result.get("summary", ""),
+            "keywords": combined_result.get("keywords", []),
+            "one_line_summary": combined_result.get("one_line_summary", ""),
+            "topics": combined_result.get("topics", []),
+            "key_points": combined_result.get("key_points", []),
+            "knowledge_tags": combined_result.get("knowledge_tags", []),
+            "target_audience": combined_result.get("target_audience", ""),
+            "action_items": combined_result.get("action_items", []),
+            "analysis_chunked": analysis_chunked,
+            "mindmap_structure": combined_result.get("mindmap_structure", {
                 "center": title,
                 "branches": [],
             }),
         }
 
-        logger.info("视频分析完成: %s", title)
+        logger.info("LLM 分析完成: model=%s chunked=%s", model_name, analysis_chunked)
         return merged
 
-    async def _call_llm(self, prompt: str, system_prompt: str = None) -> str:
+    async def _analyze_combined(self, title: str, author: str, transcript: str) -> dict:
+        prompt = self._load_prompt(
+            "analyze_combined.txt",
+            title=title,
+            author=author,
+            transcript=transcript,
+        )
+        system_prompt = "你是专业的视频知识整理助手。只依据输入内容，并始终返回合法 JSON。"
+        response = await self._call_llm(
+            prompt, system_prompt, max_tokens=self.structured_max_tokens
+        )
+        try:
+            return self._normalize_combined_result(self._parse_llm_json(response))
+        except ValueError:
+            logger.warning(
+                "LLM 结构化输出未通过质量门槛，使用紧凑 JSON 要求重试一次 (chars=%d)",
+                len(response),
+            )
+            retry_prompt = (
+                f"{prompt}\n\n上次输出不是完整 JSON。请缩短各字段，严格只输出完整合法 JSON，"
+                "不得包含 Markdown 或说明。summary 必须为 200-300 字；keywords 和 knowledge_tags"
+                "各 3-8 项；topics 1-3 项；key_points 3-5 项；action_items 1-3 项。"
+            )
+            retry_response = await self._call_llm(
+                retry_prompt,
+                system_prompt,
+                max_tokens=self.structured_max_tokens,
+            )
+            return self._normalize_combined_result(self._parse_llm_json(retry_response))
+
+    @staticmethod
+    def _normalize_combined_result(result: dict) -> dict:
+        """Normalize bounded lists and reject unusable knowledge-card output."""
+        normalized = dict(result)
+        required_text = ("summary", "one_line_summary", "target_audience")
+        required_lists = {
+            "keywords": (3, 8),
+            "topics": (1, 3),
+            "key_points": (3, 5),
+            "knowledge_tags": (3, 8),
+            "action_items": (1, 3),
+        }
+        invalid_fields: list[str] = []
+        for field in required_text:
+            if not isinstance(normalized.get(field), str) or not normalized[field].strip():
+                invalid_fields.append(field)
+        for field, (minimum, maximum) in required_lists.items():
+            value = normalized.get(field)
+            if not isinstance(value, list) or len(value) < minimum:
+                invalid_fields.append(field)
+            elif len(value) > maximum:
+                normalized[field] = value[:maximum]
+        key_points = normalized.get("key_points", [])
+        if isinstance(key_points, list) and any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("point"), str)
+            or not item["point"].strip()
+            or not isinstance(item.get("detail"), str)
+            or not item["detail"].strip()
+            for item in key_points
+        ):
+            invalid_fields.append("key_points_content")
+        if not isinstance(normalized.get("mindmap_structure"), dict):
+            invalid_fields.append("mindmap_structure")
+        elif not normalized["mindmap_structure"].get("branches"):
+            invalid_fields.append("mindmap_structure.branches")
+        elif any(
+            not isinstance(branch, dict)
+            or not isinstance(branch.get("topic"), str)
+            or not branch["topic"].strip()
+            or not isinstance(branch.get("subtopics"), list)
+            for branch in normalized["mindmap_structure"]["branches"]
+        ):
+            invalid_fields.append("mindmap_structure.branches")
+        if invalid_fields:
+            raise ValueError(
+                "结构化分析字段不符合约束: " + ", ".join(invalid_fields)
+            )
+        return normalized
+
+    @staticmethod
+    def _split_transcript(transcript: str) -> list[str]:
+        """Split with overlap so every source character reaches a chunk."""
+        chunks: list[str] = []
+        step = _TRANSCRIPT_CHUNK_SIZE - _TRANSCRIPT_CHUNK_OVERLAP
+        start = 0
+        while start < len(transcript):
+            end = min(len(transcript), start + _TRANSCRIPT_CHUNK_SIZE)
+            chunks.append(transcript[start:end])
+            if end >= len(transcript):
+                break
+            start += step
+        return chunks
+
+    async def _summarize_long_transcript(
+        self, title: str, author: str, transcript: str
+    ) -> str:
+        chunks = self._split_transcript(transcript)
+
+        async def summarize(index: int, chunk: str) -> str:
+            prompt = self._load_prompt(
+                "chunk_summarize.txt",
+                title=title,
+                author=author,
+                chunk_index=index + 1,
+                chunk_total=len(chunks),
+                transcript=chunk,
+            )
+            return await self._call_llm(
+                prompt,
+                "你是视频逐字稿事实提取器。只保留原文明确表达的事实、步骤、数字和结论，"
+                "不要补充原文没有的信息。",
+                max_tokens=_CHUNK_SUMMARY_MAX_TOKENS,
+            )
+
+        summaries = await asyncio.gather(
+            *(summarize(index, chunk) for index, chunk in enumerate(chunks))
+        )
+        return "\n\n".join(
+            f"[原文分段 {index + 1}/{len(summaries)}]\n{summary.strip()}"
+            for index, summary in enumerate(summaries)
+            if summary.strip()
+        )
+
+    @staticmethod
+    def _chat_completions_url(base_url: str) -> str:
+        """Build an OpenAI-compatible chat endpoint without duplicating ``/v1``."""
+        normalized = base_url.rstrip("/")
+        if normalized.endswith("/chat/completions"):
+            return normalized
+        if normalized.endswith("/v1"):
+            return f"{normalized}/chat/completions"
+        return f"{normalized}/v1/chat/completions"
+
+    @staticmethod
+    def _is_quota_error(status_code: int, body: str) -> bool:
+        """Detect LLM quota/balance exhaustion from HTTP status + response body.
+
+        Criteria (any match = quota exhausted, no retry):
+        - HTTP 402 (Payment Required) — always quota
+        - Error code in JSON body: insufficient_quota, insufficient_balance, quota_exceeded
+        - Error message contains: quota, insufficient, balance, exceeded (case-insensitive)
+        """
+        if status_code == 402:
+            return True
+        body_lower = body.lower()
+        quota_keywords = ["insufficient_quota", "quota_exceeded",
+                          "insufficient_balance", "balance insufficient",
+                          "quota exceeded", "exceeded your quota",
+                          "exceeded your current quota"]
+        if any(kw in body_lower for kw in quota_keywords):
+            return True
+        # Try parsing OpenAI-compatible error JSON
+        try:
+            error_data = json.loads(body)
+            error_code = (error_data.get("error", {}).get("code", "") or "").lower()
+            if error_code in ("insufficient_quota", "insufficient_balance", "quota_exceeded"):
+                return True
+            error_type = (error_data.get("error", {}).get("type", "") or "").lower()
+            if error_type == "insufficient_quota":
+                return True
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return False
+
+    async def _call_llm(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        *,
+        max_tokens: int | None = None,
+    ) -> str:
         """调用 LLM API（OpenAI 兼容接口格式）
 
         自动重试最多 _max_retries 次，支持 DeepSeek 和通义千问。
+        检测到配额/余额耗尽时立即抛出 LLMQuotaExceededError，不重试。
 
         Args:
             prompt: 用户提示词
@@ -117,10 +315,11 @@ class LLMAnalyzer:
             LLM 响应的文本内容
 
         Raises:
-            httpx.HTTPStatusError: API 返回非 200 状态码
+            LLMQuotaExceededError: 配额/余额耗尽，不可重试
+            httpx.HTTPStatusError: API 返回非 200 状态码（非配额）
             RuntimeError: 所有重试均失败
         """
-        url = f"{self.base_url}/v1/chat/completions"
+        url = self._chat_completions_url(self.base_url)
 
         messages = []
         if system_prompt:
@@ -131,38 +330,59 @@ class LLMAnalyzer:
             "model": self.model,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens or self.max_tokens,
         }
+        use_stream = "siliconflow" in self.base_url.lower()
+        if use_stream:
+            payload["stream"] = True
+        if self._supports_thinking_controls():
+            payload["enable_thinking"] = self.enable_thinking
+            if self.enable_thinking and self.thinking_budget > 0:
+                payload["thinking_budget"] = self.thinking_budget
 
         last_error = None
-        last_response_body = None  # 用于记录 API 响应体，辅助诊断
+        last_response_body = None  # 仅用于本地错误分类，不得写入日志或异常。
+        quota_exhausted = False   # 标记是否已检测到配额耗尽
         for attempt in range(1, self._max_retries + 1):
             try:
                 logger.debug("LLM API 调用 (第 %d/%d 次), provider=%s, model=%s",
                              attempt, self._max_retries, self.provider, self.model)
 
-                response = await self._client.post(url, json=payload)
+                if use_stream:
+                    response, content = await self._stream_completion(url, payload)
+                else:
+                    response = await self._client.post(url, json=payload)
+                    content = None
 
-                # 非 200 时主动读取响应体，再抛出异常
+                # 非 200 时主动读取响应体，检查是否配额耗尽
                 if response.status_code != 200:
                     last_response_body = response.text[:500]
                     logger.warning(
-                        "LLM API 返回异常状态 %d (第 %d 次): %s",
-                        response.status_code, attempt, last_response_body,
+                        "LLM API 返回异常状态 %d (第 %d 次, 响应长度=%d)",
+                        response.status_code, attempt, len(last_response_body),
                     )
+                    if self._is_quota_error(response.status_code, last_response_body):
+                        quota_exhausted = True
+                        raise LLMQuotaExceededError(
+                            f"LLM 配额/余额耗尽 (HTTP {response.status_code})"
+                        )
                     response.raise_for_status()
 
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                if content is None:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
                 logger.debug("LLM 响应长度: %d 字符", len(content))
                 return content
 
+            except LLMQuotaExceededError:
+                # Propagate immediately — quota errors are never retried
+                raise
+
             except httpx.HTTPStatusError as e:
                 last_error = e
-                body = last_response_body or ""
                 logger.warning(
-                    "LLM API HTTP 错误 (第 %d 次): status=%d, body=%s",
-                    attempt, e.response.status_code, body,
+                    "LLM API HTTP 错误 (第 %d 次): status=%d",
+                    attempt, e.response.status_code,
                 )
                 if attempt < self._max_retries:
                     import asyncio
@@ -170,14 +390,9 @@ class LLMAnalyzer:
 
             except KeyError as e:
                 last_error = e
-                # 记录实际收到的响应，便于排查格式问题
-                try:
-                    raw = json.dumps(data, ensure_ascii=False)[:500]
-                except Exception:
-                    raw = repr(data)[:500] if 'data' in dir() else "N/A"
                 logger.warning(
-                    "LLM 响应格式异常 (第 %d 次): 缺少字段 %r, 响应内容: %s",
-                    attempt, e.args[0] if e.args else "?", raw,
+                    "LLM 响应格式异常 (第 %d 次): 缺少字段 %r",
+                    attempt, e.args[0] if e.args else "?",
                 )
                 if attempt < self._max_retries:
                     import asyncio
@@ -190,9 +405,42 @@ class LLMAnalyzer:
                     import asyncio
                     await asyncio.sleep(2 ** attempt)
 
+        # All retries exhausted — if it was a quota pattern, raise accordingly
+        if quota_exhausted:
+            raise LLMQuotaExceededError(
+                f"LLM API 调用在 {self._max_retries} 次重试后仍报告配额耗尽"
+            )
         # 用 repr 兜底，确保错误信息不为空
         error_detail = str(last_error) or repr(last_error)
         raise RuntimeError(f"LLM API 调用在 {self._max_retries} 次重试后仍失败: {error_detail}")
+
+    def _supports_thinking_controls(self) -> bool:
+        """Only send SiliconFlow/Qwen3-specific fields to compatible endpoints."""
+        return "siliconflow" in self.base_url.lower() and "qwen3" in self.model.lower()
+
+    async def _stream_completion(self, url: str, payload: dict) -> tuple[httpx.Response, str]:
+        """Read SiliconFlow SSE content so long outputs keep the connection active."""
+        content_parts: list[str] = []
+        async with self._client.stream("POST", url, json=payload) as response:
+            if response.status_code != 200:
+                await response.aread()
+                return response, ""
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                chunk = json.loads(raw)
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                part = choices[0].get("delta", {}).get("content", "")
+                if part:
+                    content_parts.append(part)
+        if not content_parts:
+            raise KeyError("stream content")
+        return response, "".join(content_parts)
 
     async def _analyze_structure(self, title: str, author: str, transcript: str) -> dict:
         """结构分析 - 使用 prompts/analyze.txt 模板
@@ -350,8 +598,8 @@ class LLMAnalyzer:
             except json.JSONDecodeError:
                 pass
 
-        logger.error("无法从 LLM 响应中解析 JSON，原始响应:\n%s", text[:500])
-        raise ValueError(f"无法从 LLM 响应中提取有效 JSON。响应前 200 字符: {text[:200]}")
+        logger.error("无法从 LLM 响应中解析 JSON (chars=%d)", len(text))
+        raise ValueError(f"无法从 LLM 响应中提取有效 JSON (chars={len(text)})")
 
     async def close(self):
         """关闭 httpx 客户端"""

@@ -10,71 +10,149 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 import json
 import logging
+import os
 import time
+from datetime import datetime as _dt
 from pathlib import Path
 from typing import Optional
 
 import gradio as gr
 
 from config import AppConfig, get_config
+from src.scraper.base import VideoAvailability
 from src.scraper.bilibili import BilibiliScraper
 from src.scraper.douyin import DouyinScraper
-from src.transcript import SubtitleParser, WhisperTranscriber, get_transcript
-from src.analyzer.llm_analyzer import LLMAnalyzer
+from src.transcript import (
+    SubtitleParser,
+    WhisperTranscriber,
+    get_transcript,
+    prefetch_transcript_media,
+)
+from src.analyzer.llm_analyzer import LLMAnalyzer, LLMQuotaExceededError
+from src.knowledge_store import (
+    get_knowledge_base_dir,
+    list_knowledge_cards,
+    load_knowledge_card,
+    save_knowledge_card,
+)
 from src.sync.feishu import FeishuSync
+from src.sync.ima import ImaSync, ImaQuotaExceededError
+from src.sync.ima_state import (
+    STATE_KEY_SEP as _IMA_STATE_KEY_SEP,
+    get_ima_state_path,
+    kb_state_decision as _kb_state_decision,
+    load_ima_sync_state as _load_ima_sync_state_impl,
+    parse_state_key as _parse_state_key,
+    save_ima_sync_state as _save_ima_sync_state_impl,
+    state_key as _state_key,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 全局常量
 # ---------------------------------------------------------------------------
-KNOWLEDGE_BASE_DIR = Path("data/knowledge_base")
-KNOWLEDGE_BASE_DIR.mkdir(parents=True, exist_ok=True)
-
 PLATFORM_CHOICES = ["Bilibili", "抖音"]
-WHISPER_MODEL_CHOICES = ["tiny", "base", "small", "medium", "large"]
+WHISPER_MODEL_CHOICES = [
+    "tiny", "base", "small", "medium",
+    "large-v1", "large-v2", "large-v3",
+    "tiny.en", "base.en", "small.en", "medium.en", "large-v3.en",
+    "distil-small.en", "distil-medium.en",
+    "distil-large-v2", "distil-large-v3",
+]
+
+# Backward-compat alias: tests monkeypatch ``app._IMA_SYNC_STATE_FILE`` to
+# redirect the GUI loader to a tmp file. When unset, the loader derives the
+# path from ``AppConfig.data_dir`` (see ``_get_ima_state_file``) so a custom
+# ``DATA_DIR`` keeps the state colocated with the knowledge cards.
+_IMA_SYNC_STATE_FILE: Optional[Path] = None
+
+
+def _get_ima_state_file() -> Path:
+    """Resolve the on-disk ima sync state file for the GUI.
+
+    Honors a module-level ``_IMA_SYNC_STATE_FILE`` override (set by tests
+    via ``monkeypatch.setattr``); otherwise derives the path from
+    ``AppConfig.data_dir`` so the GUI/CLI/state file all follow the same
+    data root. See ``src/sync/ima_state.py`` for the helper.
+    """
+    if _IMA_SYNC_STATE_FILE is not None:
+        return _IMA_SYNC_STATE_FILE
+    return get_ima_state_path(get_config())
+
+
+def _load_ima_sync_state() -> dict:
+    """Load per-(video, kb) ima sync state for the GUI.
+
+    Thin wrapper over the shared ``load_ima_sync_state`` so the GUI/CLI
+    agree on the on-disk format and the legacy migration.
+    """
+    return _load_ima_sync_state_impl(_get_ima_state_file())
+
+
+def _save_ima_sync_state(state: dict) -> None:
+    """Persist per-video ima sync state for the GUI (atomic write)."""
+    _save_ima_sync_state_impl(_get_ima_state_file(), state)
 
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
 
+def _kb_dir() -> Path:
+    """获取知识库目录（从 AppConfig 读取，确保 GUI/CLI 共用同一目录）"""
+    return get_knowledge_base_dir()
+
+
 def _save_knowledge_card(video_id: str, data: dict) -> Path:
     """保存知识卡片为 JSON 文件"""
-    path = KNOWLEDGE_BASE_DIR / f"{video_id}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return path
+    return save_knowledge_card(video_id, data)
 
 
 def _load_knowledge_card(video_id: str) -> Optional[dict]:
     """加载知识卡片 JSON"""
-    path = KNOWLEDGE_BASE_DIR / f"{video_id}.json"
-    if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
+    return load_knowledge_card(video_id)
 
 
 def _list_knowledge_cards() -> list[dict]:
     """列出所有已保存的知识卡片"""
-    cards = []
-    for fp in KNOWLEDGE_BASE_DIR.glob("*.json"):
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                cards.append(json.load(f))
-        except Exception:
-            continue
-    return cards
+    return list_knowledge_cards()
+
+
+def _resolve_sync_video_ids(video_ids_text: str, state: dict) -> list[str]:
+    """Resolve an explicit list or the most recent processing batch.
+
+    An empty text box must not silently expand to every historical local card.
+    Preserve input order while removing empty and duplicate IDs.
+    """
+    if video_ids_text:
+        candidates = video_ids_text.split(",")
+    else:
+        candidates = state.get("last_processed_video_ids", []) or []
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        video_id = str(value).strip()
+        if video_id and video_id not in seen:
+            seen.add(video_id)
+            resolved.append(video_id)
+    return resolved
 
 
 def _create_scraper(platform: str) -> object:
-    """根据平台名称创建 Scraper 实例"""
+    """根据平台名称创建 Scraper 实例（路径从 AppConfig 派生）"""
+    config = get_config()
     if platform == "Bilibili":
-        return BilibiliScraper(cookie_path="data/cookies/bilibili.json")
+        return BilibiliScraper(cookie_path=str(Path(config.cookies_dir) / "bilibili.json"))
     elif platform == "抖音":
-        return DouyinScraper()
+        return DouyinScraper(
+            cookie_path=str(Path(config.cookies_dir) / "douyin.json"),
+            chrome_profile_dir=config.chrome_profile_dir,
+        )
     else:
         raise ValueError(f"不支持的平台: {platform}")
 
@@ -84,6 +162,19 @@ def _format_log(msg: str) -> str:
     from datetime import datetime
     ts = datetime.now().strftime("%H:%M:%S")
     return f"[{ts}] {msg}\n"
+
+
+def _choice_value(v):
+    """从下拉选项的返回值中取出真正的 value。
+
+    Gradio 6.0 在 allow_custom_value=True + 字典 choices 下，.change 事件回传的是
+    整个 choice dict（{"label":..., "value":...}）而非 value 字段。这里统一归一化：
+    dict → 取其 value；其余原样返回（None/"" 保持空）。
+    """
+    if isinstance(v, dict):
+        val = v.get("value", "")
+        return val if val is not None else ""
+    return v or ""
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +188,7 @@ async def process_videos(
     whisper_model: str,
     max_videos: int,
     config: AppConfig,
+    whisper_profile: str = "fast",
 ):
     """处理选中收藏夹中的视频"""
     logs = ""
@@ -104,7 +196,10 @@ async def process_videos(
     total_processed = 0
     analyzer = None
     whisper_transcriber = None
+    scraper = None
     current = "等待开始..."
+    media_prefetch_task: asyncio.Task | None = None
+    prefetched_video_id = ""
 
     # 统计
     stats = {"skipped": 0, "transcript_fail": 0, "llm_fail": 0, "unavailable": 0}
@@ -164,7 +259,15 @@ async def process_videos(
             logs += _format_log(f"初始化 Whisper 模型: {whisper_model}")
             current = f"正在加载 Whisper 模型: {whisper_model}"
             yield results, logs, current, gr.update()
-            whisper_transcriber = WhisperTranscriber(model_name=whisper_model)
+            profile = "quality" if whisper_profile in ("quality", "质量") else "fast"
+            language = config.whisper_language.strip()
+            whisper_transcriber = WhisperTranscriber(
+                model_name=whisper_model,
+                device=config.whisper_device,
+                compute_type=config.whisper_compute_type,
+                beam_size=5 if profile == "quality" else 1,
+                language=None if not language or language.lower() == "auto" else language,
+            )
             logs += _format_log(f"Whisper 模型 {whisper_model} 加载完成 (耗时 {time.time() - t0:.1f}s)")
             yield results, logs, current, gr.update()
 
@@ -180,58 +283,104 @@ async def process_videos(
 
         # 6. 处理每个视频
         for idx, video in enumerate(all_videos):
+            if media_prefetch_task and prefetched_video_id == video.video_id:
+                try:
+                    prefetched_path = await media_prefetch_task
+                    if prefetched_path:
+                        logs += _format_log(
+                            f"  ↳ 已预取当前视频媒体: {prefetched_path.name}"
+                        )
+                except Exception as e:
+                    logger.info(
+                        "视频 %s 媒体预取失败，将按普通路径重试: %s",
+                        video.video_id,
+                        e,
+                    )
+                finally:
+                    media_prefetch_task = None
+                    prefetched_video_id = ""
             t_video_start = time.time()
             current = f"[{idx+1}/{total}] {video.title}"
             logs += _format_log(f"[{idx+1}/{total}] 正在处理: {video.title}")
             yield results, logs, current, gr.update(value=idx, maximum=total, label=f"进度 {idx}/{total}")
 
             existing = _load_knowledge_card(video.video_id)
+            resume_llm = False  # 是否从部分卡片恢复（跳过转录，仅重跑 LLM）
+
             if existing:
-                logs += _format_log(f"  ↳ 已存在知识卡片，跳过")
-                results.append(existing)
-                total_processed += 1
-                stats["skipped"] += 1
-                yield results, logs, current, gr.update()
-                continue
+                if existing.get("_partial"):
+                    # Partial card: transcript is saved, LLM analysis was missing.
+                    # Resume from LLM step without re-fetching the transcript.
+                    resume_llm = True
+                    transcript_text = existing.get("transcript", "")
+                    transcript_source = existing.get("transcript_source", "unknown")
+                    transcript_segments = existing.get("transcript_segments", [])
+                    real_author = existing.get("author", video.author)
+                    logs += _format_log(
+                        f"  ↳ 检测到部分知识卡片（缺少 LLM 分析），"
+                        f"跳过转录，直接重新分析..."
+                    )
+                else:
+                    logs += _format_log(f"  ↳ 已存在知识卡片，跳过")
+                    results.append(existing)
+                    total_processed += 1
+                    stats["skipped"] += 1
+                    yield results, logs, current, gr.update()
+                    continue
 
-            available = await scraper.check_video_available(video.video_id)
-            if not available:
-                logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），跳过")
-                stats["unavailable"] += 1
-                yield results, logs, current, gr.update()
-                continue
+            if not resume_llm:
+                availability = await scraper.check_video_available(video.video_id)
+                if availability == VideoAvailability.UNAVAILABLE:
+                    logs += _format_log(f"  ↳ 视频不可用（已删除/下架/私密），永久跳过")
+                    stats["unavailable"] += 1
+                    yield results, logs, current, gr.update()
+                    continue
+                elif availability == VideoAvailability.TEMPORARY_ERROR:
+                    logs += _format_log(f"  ↳ 视频可用性检查临时失败（网络/风控等），跳过本次，下次重试")
+                    stats["temp_error"] = stats.get("temp_error", 0) + 1
+                    yield results, logs, current, gr.update()
+                    continue
 
-            # a. 逐字稿
-            transcript_text = ""
-            transcript_source = "unknown"
+                # a. 逐字稿
+                transcript_text = ""
+                transcript_source = "unknown"
+                try:
+                    t0 = time.time()
+                    segments, source = await get_transcript(
+                        video.video_id, scraper, whisper_transcriber,
+                        download_headers=download_headers,
+                    )
+                    transcript_text = SubtitleParser.segments_to_text(segments)
+                    transcript_source = source
+                    transcript_segments = SubtitleParser.segments_to_records(segments)
+                    logs += _format_log(
+                        f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段, "
+                        f"耗时 {time.time() - t0:.1f}s)"
+                    )
+                except RuntimeError as e:
+                    logs += _format_log(f"  ↳ 逐字稿获取失败: {e}")
+                    stats["transcript_fail"] += 1
+                    yield results, logs, current, gr.update()
+                    continue
+
+                # b. 作者修正
+                real_author = video.author
+                owner = await scraper.get_video_owner(video.video_id)
+                if owner:
+                    if owner != video.author:
+                        logs += _format_log(f"  ↳ 作者修正: {video.author!r} → {owner!r}")
+                    real_author = owner
+
+            # c. LLM 分析（新卡片和恢复卡片共用）
             try:
-                t0 = time.time()
-                segments, source = await get_transcript(
-                    video.video_id, scraper, whisper_transcriber,
-                    download_headers=download_headers,
-                )
-                transcript_text = SubtitleParser.segments_to_text(segments)
-                transcript_source = source
-                logs += _format_log(
-                    f"  ↳ 逐字稿获取成功 (来源: {source}, {len(segments)} 条片段, "
-                    f"耗时 {time.time() - t0:.1f}s)"
-                )
-            except RuntimeError as e:
-                logs += _format_log(f"  ↳ 逐字稿获取失败: {e}")
-                stats["transcript_fail"] += 1
-                yield results, logs, current, gr.update()
-                continue
-
-            # b. 作者修正
-            real_author = video.author
-            owner = await scraper.get_video_owner(video.video_id)
-            if owner:
-                if owner != video.author:
-                    logs += _format_log(f"  ↳ 作者修正: {video.author!r} → {owner!r}")
-                real_author = owner
-
-            # c. LLM 分析
-            try:
+                if whisper_transcriber and idx + 1 < total and media_prefetch_task is None:
+                    next_video = all_videos[idx + 1]
+                    next_existing = _load_knowledge_card(next_video.video_id)
+                    if not next_existing:
+                        prefetched_video_id = next_video.video_id
+                        media_prefetch_task = asyncio.create_task(
+                            prefetch_transcript_media(next_video.video_id, scraper)
+                        )
                 t0 = time.time()
                 logs += _format_log(f"  ↳ 正在调用 LLM 分析...")
                 current = f"[{idx+1}/{total}] LLM 分析中: {video.title}"
@@ -242,9 +391,44 @@ async def process_videos(
                     transcript=transcript_text,
                 )
                 logs += _format_log(f"  ↳ LLM 分析完成 (耗时 {time.time() - t0:.1f}s)")
+            except LLMQuotaExceededError as e:
+                logs += _format_log(f"  ↳ LLM 配额耗尽: {e}")
+                stats["llm_fail"] += 1
+                # Save partial card with transcript so next run can resume
+                partial = {
+                    "video_id": video.video_id,
+                    "title": video.title,
+                    "author": real_author,
+                    "source_url": video.url,
+                    "platform": platform,
+                    "transcript_source": transcript_source,
+                    "transcript": transcript_text,
+                    "transcript_segments": transcript_segments,
+                    "_partial": True,
+                }
+                _save_knowledge_card(video.video_id, partial)
+                logs += _format_log(
+                    f"  ↳ 部分卡片已保存（含转录稿，下次运行将自动恢复），停止处理后续视频"
+                )
+                yield results, logs, current, gr.update()
+                break
             except Exception as e:
                 logs += _format_log(f"  ↳ LLM 分析失败: {e}")
                 stats["llm_fail"] += 1
+                # Save partial card so transcript work is not wasted on re-run
+                partial = {
+                    "video_id": video.video_id,
+                    "title": video.title,
+                    "author": real_author,
+                    "source_url": video.url,
+                    "platform": platform,
+                    "transcript_source": transcript_source,
+                    "transcript": transcript_text,
+                    "transcript_segments": transcript_segments,
+                    "_partial": True,
+                }
+                _save_knowledge_card(video.video_id, partial)
+                logs += _format_log(f"  ↳ 部分卡片已保存（含转录稿，下次运行将自动恢复）")
                 yield results, logs, current, gr.update()
                 continue
 
@@ -257,6 +441,7 @@ async def process_videos(
                 "platform": platform,
                 "transcript_source": transcript_source,
                 "transcript": transcript_text,
+                "transcript_segments": transcript_segments,
                 **analysis,
             }
             _save_knowledge_card(video.video_id, card)
@@ -269,11 +454,18 @@ async def process_videos(
 
         # 汇总
         elapsed = time.time() - t_start
+        temp_error_count = stats.get("temp_error", 0)
+        partial_count = stats.get("llm_fail", 0)
         logs += _format_log(
             f"全部完成！处理 {total_processed}/{total} 个 (跳过 {stats['skipped']}、"
-            f"不可用 {stats['unavailable']}、转录失败 {stats['transcript_fail']}、"
-            f"LLM失败 {stats['llm_fail']})，总耗时 {elapsed:.0f}s"
+            f"不可用 {stats['unavailable']}、临时错误 {temp_error_count}、"
+            f"转录失败 {stats['transcript_fail']}、LLM失败 {partial_count})，"
+            f"总耗时 {elapsed:.0f}s"
         )
+        if partial_count:
+            logs += _format_log(
+                f"注意: {partial_count} 个视频仅保存了部分卡片（含转录稿），下次运行将自动恢复 LLM 分析"
+            )
         current = f"全部完成！共处理 {total_processed}/{total} 个视频"
         yield results, logs, current, gr.update(value=total, maximum=total, label=f"进度 {total}/{total}")
 
@@ -283,6 +475,10 @@ async def process_videos(
         current = f"处理出错: {e}"
         yield results, logs, current, gr.update()
     finally:
+        if media_prefetch_task and not media_prefetch_task.done():
+            media_prefetch_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await media_prefetch_task
         if analyzer:
             try:
                 await analyzer.close()
@@ -291,6 +487,11 @@ async def process_videos(
         if whisper_transcriber:
             try:
                 whisper_transcriber.cleanup()
+            except Exception:
+                pass
+        if scraper:
+            try:
+                await scraper.close()
             except Exception:
                 pass
 
@@ -329,10 +530,11 @@ async def sync_to_feishu(
 
         # 创建/获取知识库文件夹
         if not folder_token:
-            logs += _format_log("正在创建知识库文件夹...")
+            logs += _format_log("正在查找知识库文件夹...")
             yield logs, gr.update()
-            folder_token = await feishu_sync.create_folder("视频知识库")
-            logs += _format_log(f"文件夹已创建: {folder_token}")
+            folder_token, created = await feishu_sync.get_or_create_folder("视频知识库")
+            action = "创建" if created else "复用"
+            logs += _format_log(f"文件夹已{action}: {folder_token}")
 
         total = len(video_ids)
         for idx, vid in enumerate(video_ids):
@@ -389,6 +591,320 @@ async def sync_to_feishu(
                 pass
 
 
+async def sync_to_ima(
+    video_ids: list[str],
+    knowledge_base_id: str,
+    kb_folder_id: str,
+    kb_folder_name: str,
+    config: AppConfig,
+    progress=gr.Progress(),
+):
+    """同步知识卡片到腾讯 ima（建笔记 + 可选加入知识库指定文件夹）
+
+    流程：
+    1. 初始化 ImaSync 并验证凭证
+    2. 解析/创建目标笔记本
+    3. 按知识库 ID + 文件夹 ID/名称解析目标文件夹
+    4. 遍历视频，建笔记（去重跳过），可选加入知识库对应文件夹
+    5. 返回同步日志
+    """
+    logs = ""
+    synced = 0
+    kb_added = 0      # 知识库关联成功数
+    kb_failed = 0     # 知识库关联失败数
+    kb_retried = 0    # 知识库关联恢复重试数
+    ima_sync = None
+
+    # Load per-video local sync state for kb-association recovery
+    ima_sync_state = _load_ima_sync_state()
+
+    try:
+        progress(0, desc="正在连接 ima...")
+        logs += _format_log("正在连接 ima...")
+        yield logs, gr.update()
+
+        ima_sync = ImaSync(
+            client_id=config.ima_client_id,
+            api_key=config.ima_api_key,
+            knowledge_base_id=knowledge_base_id or "",
+        )
+        logger.info(
+            "sync_to_ima: 启动 video_ids=%d knowledge_base_id=%r kb_folder_id=%r kb_folder_name=%r",
+            len(video_ids), knowledge_base_id, kb_folder_id, kb_folder_name,
+        )
+        connected = await ima_sync.connect()
+        if not connected:
+            logs += _format_log("ima 连接失败，请检查 Client ID 和 API Key")
+            logger.warning("sync_to_ima: ima 连接失败")
+            yield logs, gr.update()
+            return
+
+        logs += _format_log("ima 连接成功")
+        logger.info("sync_to_ima: ima 连接成功")
+
+        # 解析/创建目标笔记本（笔记存放的笔记本，与知识库文件夹是两套体系）
+        folder_id = await ima_sync.create_folder("视频知识库")
+        if folder_id:
+            logs += _format_log(f"目标笔记本: {folder_id}")
+            logger.info("sync_to_ima: 目标笔记本=%s", folder_id)
+
+        # 解析知识库目标文件夹：优先 folder_id，否则按名称，都没有则根目录
+        resolved_folder_id = ""
+        if knowledge_base_id:
+            logs += _format_log(f"知识库: {knowledge_base_id}")
+            logger.info("sync_to_ima: 解析知识库目标文件夹 kb_id=%s folder_id=%r name=%r", knowledge_base_id, kb_folder_id, kb_folder_name)
+            resolved_folder_id = await ima_sync.resolve_kb_folder(
+                knowledge_base_id, kb_folder_id, kb_folder_name
+            )
+            if resolved_folder_id:
+                logs += _format_log(f"知识库目标文件夹: {resolved_folder_id}")
+                logger.info("sync_to_ima: 解析到文件夹=%s", resolved_folder_id)
+            else:
+                logs += _format_log("知识库目标文件夹: 根目录（留空）")
+                logger.info("sync_to_ima: 使用知识库根目录")
+        else:
+            logs += _format_log("未选择知识库，仅建笔记")
+
+        def _store_ima_state(
+            state_key: str,
+            note_id: str,
+            *,
+            kb_added_value: bool,
+            error: str = "",
+        ) -> None:
+            ima_sync_state[state_key] = {
+                "note_id": note_id,
+                "knowledge_base_id": knowledge_base_id or "",
+                "kb_added": kb_added_value,
+                "kb_error": error,
+                "kb_folder_id": resolved_folder_id,
+                "synced_at": _dt.now().isoformat(),
+            }
+            _save_ima_sync_state(ima_sync_state)
+
+        async def _associate_known_note(
+            vid: str,
+            card: dict,
+            note_id: str,
+            state_key: str,
+            decision: str,
+        ) -> None:
+            nonlocal logs, synced, kb_added, kb_failed, kb_retried
+
+            if decision == "attempt_kb":
+                logs += _format_log(
+                    f"  ↳ 笔记已存在 ({note_id})，未关联过该知识库，尝试关联..."
+                )
+            elif decision == "retry_folder":
+                previous = ima_sync_state.get(state_key, {}).get("kb_folder_id", "") or ""
+                logs += _format_log(
+                    f"  ↳ 笔记已存在 ({note_id})，目标文件夹不同"
+                    f"（{previous or '根'} → {resolved_folder_id or '根'}），重新关联..."
+                )
+            else:
+                logs += _format_log(
+                    f"  ↳ 笔记已存在 ({note_id})，知识库关联未完成，正在重试..."
+                )
+
+            try:
+                await ima_sync.add_to_knowledge_base(
+                    note_id,
+                    f"[{vid}] {card.get('title', '未知')}",
+                    resolved_folder_id,
+                )
+                kb_added += 1
+                kb_retried += 1
+                synced += 1
+                logs += _format_log(f"  ↳ 知识库关联成功: {note_id}")
+                _store_ima_state(state_key, note_id, kb_added_value=True)
+            except ImaQuotaExceededError as e:
+                kb_failed += 1
+                _store_ima_state(
+                    state_key,
+                    note_id,
+                    kb_added_value=False,
+                    error=f"ImaQuotaExceededError: {e}",
+                )
+                raise
+            except Exception as e:
+                kb_failed += 1
+                logs += _format_log(f"  ↳ 知识库关联失败: {e}")
+                logger.warning("sync_to_ima: kb 关联失败 vid=%s: %s", vid, e)
+                _store_ima_state(
+                    state_key,
+                    note_id,
+                    kb_added_value=False,
+                    error=str(e),
+                )
+
+        total = len(video_ids)
+        for idx, vid in enumerate(video_ids):
+            progress((idx, total), desc=f"同步中: {vid}")
+            logs += _format_log(f"[{idx+1}/{total}] 同步视频: {vid}")
+            yield logs, gr.update()
+
+            card = _load_knowledge_card(vid)
+            if not card:
+                logs += _format_log(f"  ↳ 未找到知识卡片，跳过")
+                continue
+
+            kb_active = bool(knowledge_base_id) and bool(ima_sync.knowledge_base_id)
+            state_key = _state_key(vid, knowledge_base_id or "")
+            local_state = ima_sync_state.get(state_key, {})
+            local_note_id = str(local_state.get("note_id", "") or "")
+            decision = _kb_state_decision(
+                ima_sync_state, vid, knowledge_base_id or "", resolved_folder_id
+            )
+
+            # A target-specific local note_id is authoritative for the normal
+            # retry path. Avoid a remote title search on every sync round.
+            if local_note_id:
+                if decision == "skip" or not kb_active:
+                    logs += _format_log(
+                        f"  ↳ 本地同步状态已完成 ({local_note_id})，跳过远端查重"
+                    )
+                    synced += 1
+                    continue
+                try:
+                    await _associate_known_note(
+                        vid, card, local_note_id, state_key, decision
+                    )
+                except ImaQuotaExceededError as e:
+                    logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
+                    logger.warning("sync_to_ima: 配额耗尽于 kb 关联，提前结束")
+                    break
+                continue
+
+            # 检查是否已存在
+            try:
+                existing_note = await ima_sync.check_document_exists(vid)
+            except ImaQuotaExceededError as e:
+                logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
+                logger.warning("sync_to_ima: ima 配额耗尽，提前结束")
+                break
+            except Exception as e:
+                logs += _format_log(f"  ↳ 查重失败，跳过: {e}")
+                continue
+
+            if existing_note:
+                if decision == "skip" or not kb_active:
+                    logs += _format_log(f"  ↳ 笔记已存在 ({existing_note})，跳过")
+                    synced += 1
+                    _store_ima_state(
+                        state_key,
+                        existing_note,
+                        kb_added_value=bool(knowledge_base_id),
+                    )
+                    continue
+                try:
+                    await _associate_known_note(
+                        vid, card, existing_note, state_key, decision
+                    )
+                except ImaQuotaExceededError as e:
+                    logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
+                    logger.warning("sync_to_ima: 配额耗尽于 kb 关联，提前结束")
+                    break
+                continue
+
+            # 创建 ima 笔记（两步语义：先 import_doc，再按需 add_to_knowledge_base）
+            try:
+                note_id = await ima_sync.create_document(
+                    title=f"[{vid}] {card.get('title', '未知')}",
+                    content=card,
+                    folder_id=folder_id,
+                )
+            except ImaQuotaExceededError as e:
+                # import_doc 阶段就已耗尽：没有笔记被创建，无需持久化部分成功状态。
+                logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
+                logger.warning("sync_to_ima: ima 配额耗尽，提前结束")
+                break
+            except Exception as e:
+                logs += _format_log(f"  ↳ 笔记创建失败: {e}")
+                logger.warning("sync_to_ima: 笔记创建失败 vid=%s: %s", vid, e)
+                continue
+
+            synced += 1
+            # 笔记创建成功。立刻把 note_id + kb_added=False 写入状态，确保后续
+            # KB 关联失败（任何原因：网络、配额耗尽、进程被中断）都不会让这条
+            # 笔记"孤立无主"——下次同步会通过 check_document_exists 找到它，
+            # 并通过 add_to_knowledge_base 单独恢复 KB 关联。
+            _store_ima_state(state_key, note_id, kb_added_value=False)
+
+            # 第二步：可选加入知识库
+            if knowledge_base_id and ima_sync.knowledge_base_id:
+                try:
+                    await ima_sync.add_to_knowledge_base(
+                        note_id,
+                        f"[{vid}] {card.get('title', '未知')}",
+                        resolved_folder_id,
+                    )
+                    kb_added += 1
+                    _store_ima_state(state_key, note_id, kb_added_value=True)
+                    logs += _format_log(f"  ↳ 笔记 + 知识库 创建成功: {note_id}")
+                except ImaQuotaExceededError as e:
+                    # 配额耗尽：note_id 已在 ima_sync_state 里持久化（kb_added=False），
+                    # 下次运行通过 check_document_exists + add_to_knowledge_base 恢复。
+                    logs += _format_log(f"  ↳ ima 配额已耗尽，停止同步: {e}")
+                    logger.warning("sync_to_ima: 配额耗尽于 kb 关联，提前结束")
+                    _store_ima_state(
+                        state_key,
+                        note_id,
+                        kb_added_value=False,
+                        error=f"ImaQuotaExceededError: {e}",
+                    )
+                    logs += _format_log(
+                        f"  ↳ 笔记 {note_id} 已创建但未关联知识库，"
+                        f"状态已保存，下次运行恢复"
+                    )
+                    logger.info(
+                        "sync_to_ima: 配额耗尽时已保存部分成功状态 vid=%s note_id=%s",
+                        vid, note_id,
+                    )
+                    break
+                except Exception as e:
+                    # 笔记已建成功，KB 关联失败仅记录，不中断整体同步。
+                    kb_failed += 1
+                    logs += _format_log(
+                        f"  ↳ 笔记创建成功 ({note_id})，但知识库关联失败: {e}"
+                    )
+                    logger.warning("sync_to_ima: kb 关联失败 vid=%s: %s", vid, e)
+                    _store_ima_state(
+                        state_key,
+                        note_id,
+                        kb_added_value=False,
+                        error=str(e),
+                    )
+            else:
+                logs += _format_log(f"  ↳ 笔记创建成功: {note_id}")
+
+            yield logs, gr.update()
+
+        progress(1.0, desc="同步完成")
+        if knowledge_base_id:
+            retry_part = f"，恢复 {kb_retried}" if kb_retried else ""
+            kb_summary = (
+                f"（笔记 {synced}/{total}，知识库关联成功 {kb_added}"
+                + retry_part
+                + (f"，失败 {kb_failed}" if kb_failed else "")
+                + "）"
+            )
+            logs += _format_log(f"同步完成！{kb_summary}")
+        else:
+            logs += _format_log(f"同步完成！成功 {synced}/{total} 个笔记")
+        yield logs, gr.update()
+
+    except Exception as e:
+        logs += _format_log(f"同步出错: {e}")
+        logger.exception("ima 同步异常")
+        yield logs, gr.update()
+    finally:
+        if ima_sync:
+            try:
+                await ima_sync.close()
+            except Exception:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Gradio 事件处理函数（Gradio 原生支持 async，所有 handler 运行在同一事件循环上）
 # ---------------------------------------------------------------------------
@@ -423,7 +939,7 @@ async def do_get_favorites(state: dict):
 
 
 async def do_process(
-    platform, selected_folders, whisper_enabled, whisper_model, max_videos,
+    platform, selected_folders, whisper_enabled, whisper_model, whisper_profile, max_videos,
     llm_api_key, llm_base_url, llm_model,
     feishu_app_id, feishu_app_secret,
     state: dict,
@@ -448,13 +964,24 @@ async def do_process(
         yield "未选择有效的收藏夹", "", "等待开始...", gr.update(), state
         return
 
-    # 构建临时配置
+    state = dict(state)
+    state["last_processed_video_ids"] = []
+
+    # 构建临时配置；运行参数覆盖表单字段，设备/语言沿用环境配置。
+    base_config = get_config()
     config = AppConfig(
         llm_api_key=llm_api_key,
         llm_base_url=llm_base_url,
         llm_model=llm_model,
+        llm_enable_thinking=base_config.llm_enable_thinking,
+        llm_thinking_budget=base_config.llm_thinking_budget,
+        llm_max_tokens=base_config.llm_max_tokens,
+        llm_structured_max_tokens=base_config.llm_structured_max_tokens,
         feishu_app_id=feishu_app_id,
         feishu_app_secret=feishu_app_secret,
+        whisper_device=base_config.whisper_device,
+        whisper_compute_type=base_config.whisper_compute_type,
+        whisper_language=base_config.whisper_language,
     )
 
     # 运行异步处理管道（async for 迭代 async generator）
@@ -467,6 +994,7 @@ async def do_process(
         whisper_model=whisper_model,
         max_videos=int(max_videos),
         config=config,
+        whisper_profile=whisper_profile,
     ):
         results = r
         logs = l
@@ -481,6 +1009,11 @@ async def do_process(
                 preview += f"**关键词**: {', '.join(kw)}\n"
             preview += "---\n"
         state["process_results"] = results
+        state["last_processed_video_ids"] = [
+            card.get("video_id", "")
+            for card in results
+            if card.get("video_id") and not card.get("_partial")
+        ]
         yield preview, logs, cur, p, state
 
 
@@ -496,9 +1029,198 @@ async def do_test_feishu(feishu_app_id, feishu_app_secret):
         return f"❌ 连接失败: {e}"
 
 
+async def do_test_ima(ima_client_id, ima_api_key):
+    """测试 ima 连接"""
+    if not ima_client_id or not ima_api_key:
+        return "❌ 请先配置 ima Client ID 和 API Key"
+    try:
+        ima = ImaSync(client_id=ima_client_id, api_key=ima_api_key)
+        ok = await ima.connect()
+        if ok:
+            return "✅ ima 连接成功"
+        return "❌ ima 连接失败"
+    except Exception as e:
+        return f"❌ 连接失败: {e}"
+
+
+async def do_load_kbs(ima_client_id, ima_api_key, search, state: dict):
+    """加载可添加内容的知识库列表（对应 python cli.py ima-kbs）
+
+    返回 (下拉更新, 状态文本, state)。state 缓存 id→name 映射，供选择时回显名称。
+    """
+    if not ima_client_id or not ima_api_key:
+        logger.warning("do_load_kbs: 缺少 ima Client ID 或 API Key，无法加载知识库")
+        return (
+            gr.update(choices=[], value=None),
+            "请先配置 ima Client ID 和 API Key",
+            state,
+        )
+    try:
+        logger.info(
+            "do_load_kbs: 开始加载知识库 search=%r client_id=%s... api_key_set=%s",
+            search, (ima_client_id[:4] + "****" if ima_client_id else ""), bool(ima_api_key),
+        )
+        ima = ImaSync(client_id=ima_client_id, api_key=ima_api_key)
+        kbs = await ima.list_addable_knowledge_bases(search=search or "")
+        await ima.close()
+        state = dict(state)
+        state["kb_map"] = {kb["id"]: kb.get("name", "") for kb in kbs}
+        logger.info(
+            "do_load_kbs: 成功，得到 %d 个知识库: %s",
+            len(kbs), [(kb["id"], kb.get("name", "")) for kb in kbs],
+        )
+        if not kbs:
+            # ima 不能创建知识库，给出明确引导，避免用户困惑
+            return (
+                gr.update(choices=[], value=None),
+                "未发现知识库，请先在 ima 客户端新建一个，再点加载",
+                state,
+            )
+        tuple_choices = [
+            {
+                "label": f"{kb['name']} — {kb['description']}" if kb.get("description") else kb["name"],
+                "value": kb["id"],
+            }
+            for kb in kbs
+        ]
+        return (
+            gr.update(choices=tuple_choices, value=None),
+            f"已加载 {len(kbs)} 个知识库",
+            state,
+        )
+    except Exception as e:
+        logger.exception("do_load_kbs: 加载知识库异常")
+        return gr.update(choices=[], value=None), f"加载知识库失败: {e}", state
+
+
+async def on_kb_change(kb_id, state: dict):
+    """知识库选择变化：写入 state 并重置文件夹选择（防旧 KB 的 folder_id 串用）"""
+    try:
+        # Gradio 6.0 回传的可能是整个 choice dict，需归一化为 value
+        kb_id = _choice_value(kb_id)
+        logger.info("on_kb_change: 选择变化 kb_id=%r", kb_id)
+        logger.debug("on_kb_change: 当前 kb_map 内容=%s", state.get("kb_map", {}))
+        state = dict(state)
+        state["kb_id"] = kb_id or ""
+        # 从 kb_map 查名称；若 loaded KBs 尚未加载，用 raw ID 作为可读回退
+        state["kb_name"] = state.get("kb_map", {}).get(kb_id or "", kb_id or "")
+        # 重置文件夹选择：因为文件夹是 KB 绑定的，旧 KB 的 folder_id 在新 KB 无效
+        state["kb_folder_value"] = ""
+        kb_label = state["kb_name"] or "未选择"
+        logger.info("on_kb_change: 切换至知识库=%s (id=%s)，已重置文件夹选择", kb_label, kb_id)
+        # 输出：state + 重置 Tab5 文件夹下拉 + 状态提示 + Tab5 当前知识库回显
+        return (
+            state,
+            gr.update(choices=[], value=None),
+            f"已切换知识库: {kb_label}，请在「同步管理」重新加载文件夹",
+            kb_label,
+        )
+    except Exception as e:
+        logger.exception("on_kb_change: 异常")
+        state = dict(state)
+        state["kb_id"] = ""
+        state["kb_name"] = ""
+        state["kb_folder_value"] = ""
+        return (
+            state,
+            gr.update(choices=[], value=None),
+            f"切换知识库出错: {e}",
+            "出错",
+        )
+
+
+async def do_load_folders(ima_client_id, ima_api_key, state: dict, progress=gr.Progress()):
+    """加载当前知识库下的文件夹树（对应 python cli.py ima-kbs --folders）"""
+    kb_id = state.get("kb_id", "")
+    if not ima_client_id or not ima_api_key:
+        logger.warning("do_load_folders: 缺少 ima 凭证")
+        return gr.update(choices=[], value=None), "请先配置 ima Client ID 和 API Key"
+    if not kb_id:
+        logger.warning("do_load_folders: 尚未选择知识库 (state.kb_id 为空)")
+        return gr.update(choices=[], value=None), "请先在「登录与配置」选择一个知识库"
+    try:
+        logger.info("do_load_folders: 开始加载 kb_id=%s", kb_id)
+        progress(0, desc="正在加载文件夹...")
+        ima = ImaSync(client_id=ima_client_id, api_key=ima_api_key, knowledge_base_id=kb_id)
+        folders = await ima.list_folders(kb_id)
+        await ima.close()
+        choices = [{"label": "📁 根目录（留空）", "value": ""}]
+        for f in folders:
+            indent = "    " * f.get("depth", 0)
+            label = f"{indent}📂 {f.get('name', '')}"
+            choices.append({"label": label, "value": f.get("folder_id", "")})
+        progress(1.0, desc="加载完成")
+        logger.info("do_load_folders: 完成，%d 个文件夹", len(folders))
+        return gr.update(choices=choices, value=""), f"已加载 {len(folders)} 个文件夹"
+    except Exception as e:
+        logger.exception("do_load_folders: 加载文件夹异常")
+        return gr.update(choices=[], value=None), f"加载文件夹失败: {e}"
+
+
+async def on_folder_change(folder_value, state: dict):
+    """文件夹选择变化：记录到 state（folder_ 前缀视为 ID，否则视为名称）"""
+    try:
+        state = dict(state)
+        fv = _choice_value(folder_value)
+        state["kb_folder_value"] = fv
+        logger.info(
+            "on_folder_change: folder_value=%r 视为 %s",
+            fv, "folder_id(前缀folder_)" if fv.startswith("folder_") else "文件夹名称",
+        )
+        return state
+    except Exception as e:
+        logger.exception("on_folder_change: 异常")
+        return dict(state)
+
+
+async def do_sync_ima(
+    video_ids_text,
+    ima_client_id, ima_api_key,
+    state: dict,
+    progress=gr.Progress()
+):
+    """启动 ima 同步（async generator）。知识库与文件夹从 state 读取。"""
+    if not ima_client_id or not ima_api_key:
+        yield "请先配置 ima Client ID 和 API Key", gr.update()
+        return
+
+    kb_id = state.get("kb_id", "")
+    fv = state.get("kb_folder_value", "")
+    # 自定义值或下拉值：folder_ 前缀视为 ID，否则当作文件夹名称
+    if fv and fv.startswith("folder_"):
+        kb_folder_id, kb_folder_name = fv, ""
+    else:
+        kb_folder_id, kb_folder_name = "", fv
+
+    vid_list = _resolve_sync_video_ids(video_ids_text, state)
+
+    if not vid_list:
+        yield "没有本次处理结果，请显式填写要同步的视频 ID", gr.update()
+        return
+
+    logger.info("do_sync_ima: 已解析 %d 个同步目标", len(vid_list))
+
+    config = AppConfig(
+        ima_client_id=ima_client_id,
+        ima_api_key=ima_api_key,
+        ima_knowledge_base_id=kb_id,
+    )
+
+    async for logs, upd in sync_to_ima(
+        video_ids=vid_list,
+        knowledge_base_id=kb_id,
+        kb_folder_id=kb_folder_id,
+        kb_folder_name=kb_folder_name,
+        config=config,
+        progress=progress,
+    ):
+        yield logs, upd
+
+
 async def do_sync(
     video_ids_text, folder_token,
     feishu_app_id, feishu_app_secret,
+    state: dict,
     progress=gr.Progress()
 ):
     """启动飞书同步（async generator）"""
@@ -506,17 +1228,13 @@ async def do_sync(
         yield "请先配置飞书 App ID 和 App Secret", gr.update()
         return
 
-    # 解析视频 ID 列表
-    if video_ids_text:
-        vid_list = [v.strip() for v in video_ids_text.split(",") if v.strip()]
-    else:
-        # 默认同步所有知识库中的视频
-        cards = _list_knowledge_cards()
-        vid_list = [c.get("video_id", "") for c in cards if c.get("video_id")]
+    vid_list = _resolve_sync_video_ids(video_ids_text, state)
 
     if not vid_list:
-        yield "没有可同步的视频", gr.update()
+        yield "没有本次处理结果，请显式填写要同步的视频 ID", gr.update()
         return
+
+    logger.info("do_sync: 已解析 %d 个同步目标", len(vid_list))
 
     config = AppConfig(feishu_app_id=feishu_app_id, feishu_app_secret=feishu_app_secret)
 
@@ -529,21 +1247,75 @@ async def do_sync(
         yield logs, upd
 
 
-def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_app_secret):
-    """保存配置到 .env 文件"""
+def do_save_config(llm_api_key, llm_base_url, llm_model, feishu_app_id, feishu_app_secret,
+                   ima_client_id, ima_api_key, ima_knowledge_base_id, state: dict):
+    """保存配置到 .env 文件（含 ima 知识库与文件夹选择）
+
+    读取现有 .env 文件，仅更新表单编辑的字段，保留 LLM_PROVIDER、Whisper、
+    数据目录、CDP 等未在表单中的配置不变。对换行和等号做安全序列化。
+    """
     try:
-        lines = [
-            f"LLM_API_KEY={llm_api_key}",
-            f"LLM_BASE_URL={llm_base_url}",
-            f"LLM_MODEL={llm_model}",
-            f"FEISHU_APP_ID={feishu_app_id}",
-            f"FEISHU_APP_SECRET={feishu_app_secret}",
-        ]
-        with open(".env", "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        return "✅ 配置已保存到 .env 文件"
+        # 下拉框回传可能是 choice dict，归一化为 value 再处理
+        kb_id = _choice_value(ima_knowledge_base_id) or state.get("kb_id", "")
+        fv = state.get("kb_folder_value", "")
+        if fv and fv.startswith("folder_"):
+            kb_folder_id, kb_folder_name = fv, ""
+        else:
+            kb_folder_id, kb_folder_name = "", fv
+
+        # 构建本次要更新的字段映射（key -> value）
+        # 对含换行/等号的值做安全处理
+        updates = {
+            "LLM_API_KEY": (llm_api_key or "").replace("\n", "").replace("\r", ""),
+            "LLM_BASE_URL": (llm_base_url or "").replace("\n", "").replace("\r", ""),
+            "LLM_MODEL": (llm_model or "").replace("\n", "").replace("\r", ""),
+            "FEISHU_APP_ID": (feishu_app_id or "").replace("\n", "").replace("\r", ""),
+            "FEISHU_APP_SECRET": (feishu_app_secret or "").replace("\n", "").replace("\r", ""),
+            "IMA_CLIENT_ID": (ima_client_id or "").replace("\n", "").replace("\r", ""),
+            "IMA_API_KEY": (ima_api_key or "").replace("\n", "").replace("\r", ""),
+            "IMA_KNOWLEDGE_BASE_ID": (kb_id or "").replace("\n", "").replace("\r", ""),
+            "IMA_KNOWLEDGE_BASE_FOLDER_ID": (kb_folder_id or "").replace("\n", "").replace("\r", ""),
+            "IMA_KNOWLEDGE_BASE_FOLDER_NAME": (kb_folder_name or "").replace("\n", "").replace("\r", ""),
+        }
+
+        # 读取现有 .env 行（如果存在），逐行更新匹配的 key
+        existing_lines: list[str] = []
+        updated_keys: set = set()
+        env_path = ".env"
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    stripped = line.rstrip("\n\r")
+                    if not stripped or stripped.startswith("#"):
+                        existing_lines.append(stripped)
+                        continue
+                    # 解析 KEY=VALUE 行（允许等号出现在值中）
+                    if "=" in stripped:
+                        key = stripped.split("=", 1)[0].strip()
+                        if key in updates:
+                            existing_lines.append(f"{key}={updates[key]}")
+                            updated_keys.add(key)
+                        else:
+                            existing_lines.append(stripped)
+                    else:
+                        existing_lines.append(stripped)
+
+        # 追加尚未在 .env 中出现的新字段
+        for key, val in updates.items():
+            if key not in updated_keys:
+                existing_lines.append(f"{key}={val}")
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(existing_lines) + "\n")
+
+        logger.info(
+            "do_save_config: 已保存 %d 个字段, 保留 %d 行现有配置",
+            len(updates), len(existing_lines) - len(updates),
+        )
+        return "配置已保存到 .env 文件"
     except Exception as e:
-        return f"❌ 保存失败: {e}"
+        logger.exception("do_save_config 失败")
+        return f"保存失败: {e}"
 
 
 def do_load_knowledge(search_query):
@@ -659,11 +1431,17 @@ def build_ui():
 
     with gr.Blocks(
         title="视频收藏夹同步工具",
-        theme=gr.themes.Soft(),
     ) as app:
 
-        # 全局状态
-        state = gr.State({})
+        # 全局状态（state 字典统一管理跨 Tab 的 ima 选择；初始带入 .env 已存值）
+        # kb_name 初始化为 kb_id（如已配置），待加载知识库后再从 kb_map 补全真实名称。
+        state = gr.State({
+            "kb_id": config.ima_knowledge_base_id,
+            "kb_name": config.ima_knowledge_base_id or "",
+            "kb_folder_value": config.ima_knowledge_base_folder_id
+            or config.ima_knowledge_base_folder_name,
+            "kb_map": {},
+        })
         all_cards_state = gr.State([])
 
         gr.Markdown("# 📚 视频收藏夹同步工具")
@@ -711,6 +1489,35 @@ def build_ui():
                             value=config.feishu_app_secret,
                             type="password",
                         )
+                    with gr.Row():
+                        ima_client_id_input = gr.Textbox(
+                            label="ima Client ID",
+                            value=config.ima_client_id,
+                        )
+                        ima_api_key_input = gr.Textbox(
+                            label="ima API Key",
+                            value=config.ima_api_key,
+                            type="password",
+                        )
+                    with gr.Row():
+                        ima_kb_search = gr.Textbox(
+                            label="知识库搜索（可选）",
+                            value="",
+                            placeholder="按名称搜索知识库",
+                            scale=3,
+                        )
+                        ima_load_kb_btn = gr.Button(
+                            "📥 加载知识库", variant="secondary", scale=1
+                        )
+                    ima_kb_dropdown = gr.Dropdown(
+                        label="ima 知识库（选择后同步将笔记加入该库；留空仅建笔记）",
+                        choices=[],
+                        value=config.ima_knowledge_base_id or None,
+                        allow_custom_value=True,
+                    )
+                    ima_kb_status = gr.Textbox(
+                        label="知识库状态", value="", interactive=False
+                    )
                     save_config_btn = gr.Button("💾 保存配置", variant="secondary")
                     save_config_status = gr.Textbox(
                         label="保存状态", value="", interactive=False
@@ -734,11 +1541,21 @@ def build_ui():
                     whisper_model_select = gr.Dropdown(
                         choices=WHISPER_MODEL_CHOICES,
                         value=config.whisper_model,
-                        label="Whisper 模型",
+                        label="Whisper 模型 (faster-whisper)",
+                        info="仅支持 faster-whisper 引擎；中文语音建议选 multilingual 模型（如 small/medium），en 系列仅适用于英文",
                     )
                     whisper_enabled_check = gr.Checkbox(
                         value=True,
                         label="启用 Whisper（无字幕时使用）",
+                    )
+                    whisper_profile_select = gr.Radio(
+                        choices=["快速", "质量"],
+                        value=(
+                            "质量"
+                            if getattr(config, "whisper_profile", "fast") == "quality"
+                            else "快速"
+                        ),
+                        label="Whisper 模式",
                     )
                     max_videos_input = gr.Slider(
                         minimum=0, maximum=200, value=20, step=1,
@@ -809,19 +1626,50 @@ def build_ui():
         with gr.Tab("🔄 同步管理"):
             with gr.Row():
                 with gr.Column(scale=1):
+                    gr.Markdown("### 同步到飞书")
                     feishu_status = gr.Textbox(
                         label="飞书连接状态", value="未连接", interactive=False
                     )
                     test_feishu_btn = gr.Button("🔗 测试连接", variant="secondary")
                     feishu_folder_input = gr.Textbox(
-                        label="飞书目标文件夹 Token（留空则自动创建）",
+                        label="飞书目标文件夹 Token（留空则自动查找或创建）",
                         value="",
                     )
                     sync_video_ids = gr.Textbox(
-                        label="同步视频 ID（逗号分隔，留空=全部）",
+                        label="同步视频 ID（逗号分隔，留空=本次处理结果）",
                         value="",
                     )
                     sync_btn = gr.Button("📤 一键同步到飞书", variant="primary")
+
+                with gr.Column(scale=1):
+                    gr.Markdown("### 同步到 ima")
+                    ima_status = gr.Textbox(
+                        label="ima 连接状态", value="未连接", interactive=False
+                    )
+                    test_ima_btn = gr.Button("🔗 测试 ima 连接", variant="secondary")
+                    ima_current_kb = gr.Textbox(
+                        label="当前知识库（在「登录与配置」选择）",
+                        value=(f"已配置: {config.ima_knowledge_base_id}" if config.ima_knowledge_base_id else "未选择"),
+                        interactive=False,
+                    )
+                    with gr.Row():
+                        ima_load_folder_btn = gr.Button(
+                            "📂 加载文件夹", variant="secondary", scale=1
+                        )
+                        ima_folder_status = gr.Textbox(
+                            label="文件夹状态", value="", interactive=False, scale=3
+                        )
+                    ima_folder_dropdown = gr.Dropdown(
+                        label="知识库目标文件夹（留空=根目录）",
+                        choices=[{"label": "📁 根目录（留空）", "value": ""}],
+                        value="",
+                        allow_custom_value=True,
+                    )
+                    ima_video_ids = gr.Textbox(
+                        label="同步视频 ID（逗号分隔，留空=本次处理结果）",
+                        value="",
+                    )
+                    sync_ima_btn = gr.Button("📤 一键同步到 ima", variant="primary")
 
                 with gr.Column(scale=2):
                     sync_log = gr.Textbox(
@@ -846,8 +1694,23 @@ def build_ui():
             inputs=[
                 llm_api_key_input, llm_base_url_input, llm_model_input,
                 feishu_app_id_input, feishu_app_secret_input,
+                ima_client_id_input, ima_api_key_input, ima_kb_dropdown, state,
             ],
             outputs=[save_config_status],
+        )
+
+        # Tab 1: 加载知识库列表
+        ima_load_kb_btn.click(
+            fn=do_load_kbs,
+            inputs=[ima_client_id_input, ima_api_key_input, ima_kb_search, state],
+            outputs=[ima_kb_dropdown, ima_kb_status, state],
+        )
+
+        # Tab 1: 切换知识库 → 同步 state + 重置 Tab5 文件夹选择
+        ima_kb_dropdown.change(
+            fn=on_kb_change,
+            inputs=[ima_kb_dropdown, state],
+            outputs=[state, ima_folder_dropdown, ima_kb_status, ima_current_kb],
         )
 
         # Tab 2: 获取收藏夹
@@ -862,7 +1725,8 @@ def build_ui():
             fn=do_process,
             inputs=[
                 platform_dropdown, favorites_display,
-                whisper_enabled_check, whisper_model_select, max_videos_input,
+                whisper_enabled_check, whisper_model_select, whisper_profile_select,
+                max_videos_input,
                 llm_api_key_input, llm_base_url_input, llm_model_input,
                 feishu_app_id_input, feishu_app_secret_input,
                 state,
@@ -883,6 +1747,38 @@ def build_ui():
             inputs=[
                 sync_video_ids, feishu_folder_input,
                 feishu_app_id_input, feishu_app_secret_input,
+                state,
+            ],
+            outputs=[sync_log, progress_bar],
+        )
+
+        # Tab 5: 测试 ima 连接
+        test_ima_btn.click(
+            fn=do_test_ima,
+            inputs=[ima_client_id_input, ima_api_key_input],
+            outputs=[ima_status],
+        )
+
+        # Tab 5: 加载知识库文件夹树
+        ima_load_folder_btn.click(
+            fn=do_load_folders,
+            inputs=[ima_client_id_input, ima_api_key_input, state],
+            outputs=[ima_folder_dropdown, ima_folder_status],
+        )
+
+        # Tab 5: 文件夹选择变化 → 写入 state
+        ima_folder_dropdown.change(
+            fn=on_folder_change,
+            inputs=[ima_folder_dropdown, state],
+            outputs=[state],
+        )
+
+        # Tab 5: 同步到 ima
+        sync_ima_btn.click(
+            fn=do_sync_ima,
+            inputs=[
+                ima_video_ids,
+                ima_client_id_input, ima_api_key_input, state,
             ],
             outputs=[sync_log, progress_bar],
         )
@@ -894,9 +1790,12 @@ def main():
     """启动 Gradio 应用"""
     import os
 
+    # 确保数据目录存在
+    config = get_config()
+    config.ensure_dirs()
+
     # 日志配置：控制台 INFO + 文件 DEBUG（持久化用于排查问题）
-    log_dir = Path("data/logs")
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(config.logs_dir)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
@@ -908,8 +1807,14 @@ def main():
     )
     # 降低第三方库日志噪音
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("playwright").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    # 针对新开发的 ima 知识库功能开启 DEBUG，输出详细诊断日志（控制台 + 文件）
+    logging.getLogger("src.sync.ima").setLevel(logging.DEBUG)
+    logging.getLogger(__name__).setLevel(logging.DEBUG)
+    logger.info("已开启 ima / app 模块 DEBUG 诊断日志")
 
     logger.info("=" * 50)
     logger.info("Unarchive 启动")
@@ -919,15 +1824,14 @@ def main():
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         os.environ.pop(key, None)
 
-    # 确保数据目录存在
-    config = get_config()
-    config.ensure_dirs()
-
     app = build_ui()
     app.launch(
         server_name="127.0.0.1",
-        server_port=7860,
+        # Let Gradio search from 7860 when the preferred port is occupied.
+        # GRADIO_SERVER_PORT can still override the starting port.
+        server_port=None,
         share=False,
+        theme=gr.themes.Soft(),
     )
 
 

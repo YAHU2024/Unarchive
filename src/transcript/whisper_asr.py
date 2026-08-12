@@ -1,7 +1,7 @@
 """
 Whisper 语音转文字模块
 
-使用 OpenAI Whisper 模型将音频转换为文字。
+使用 faster-whisper（CTranslate2 后端）将音频转换为文字。
 作为字幕不可用时的兜底方案。
 """
 
@@ -13,7 +13,9 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+import time
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,27 +30,41 @@ class WhisperTranscriber:
 
     使用 faster-whisper（CTranslate2 后端），相比原版 openai-whisper 速度提升约 4x。
     支持延迟加载模型，首次调用时才加载，避免启动时占用内存。
+    仅依赖 faster-whisper，不引入 torch / openai-whisper。
     """
 
-    def __init__(self, model_name: str = "medium", device: str = "auto",
-                 compute_type: str = "auto"):
+    def __init__(
+        self,
+        model_name: str = "medium",
+        device: str = "auto",
+        compute_type: str = "auto",
+        beam_size: int = 1,
+        language: str | None = None,
+    ):
         self.model_name = model_name
         self.device = self._resolve_device(device)
         self.compute_type = self._resolve_compute_type(compute_type)
+        self.beam_size = max(1, int(beam_size))
+        self.language = language or None
         self._model = None
-        self._engine = None  # "faster_whisper" 或 "openai_whisper"
         logger.info(
-            f"WhisperTranscriber 初始化: model={model_name}, device={self.device}"
+            "WhisperTranscriber 初始化: model=%s, device=%s, compute=%s, "
+            "beam=%d, language=%s",
+            model_name,
+            self.device,
+            self.compute_type,
+            self.beam_size,
+            self.language or "auto",
         )
 
     @staticmethod
     def _resolve_device(device: str) -> str:
         if device == "auto":
             try:
-                import torch
-                return "cuda" if torch.cuda.is_available() else "cpu"
-            except ImportError:
-                logger.warning("未安装 torch，无法自动检测设备，回退到 CPU")
+                import ctranslate2
+                return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            except Exception:
+                logger.info("未检测到 CUDA 设备，回退到 CPU")
                 return "cpu"
         return device
 
@@ -58,32 +74,24 @@ class WhisperTranscriber:
         return "float16" if self.device == "cuda" else "int8"
 
     def _load_model(self):
-        """加载 Whisper 模型（faster-whisper 优先，openai-whisper 回退）"""
+        """加载 faster-whisper 模型（唯一引擎，加载失败直接报错）"""
         if self._model is not None:
             return
 
-        # 尝试 faster-whisper（4x 速度提升）
         try:
             from faster_whisper import WhisperModel
             self._model = WhisperModel(
                 self.model_name, device=self.device, compute_type=self.compute_type,
             )
-            self._engine = "faster_whisper"
             logger.info("faster-whisper 模型 %s 加载成功", self.model_name)
-            return
-        except ImportError:
-            logger.info("faster-whisper 未安装，回退到 openai-whisper")
+        except ImportError as e:
+            raise RuntimeError(
+                "未安装 faster-whisper，请执行: pip install faster-whisper"
+            ) from e
         except Exception as e:
-            logger.warning("faster-whisper 加载失败 (%s)，回退到 openai-whisper", e)
-
-        # 回退到 openai-whisper
-        try:
-            import whisper
-            self._model = whisper.load_model(self.model_name, device=self.device)
-            self._engine = "openai_whisper"
-            logger.info("openai-whisper 模型 %s 加载成功", self.model_name)
-        except Exception as e:
-            raise RuntimeError(f"Whisper 模型加载失败: {e}") from e
+            raise RuntimeError(
+                f"faster-whisper 模型 {self.model_name} 加载失败: {e}"
+            ) from e
 
     async def transcribe_audio_url(
         self, audio_url: str, output_path: Optional[str] = None,
@@ -112,11 +120,14 @@ class WhisperTranscriber:
             url_hash = hashlib.sha256(audio_url.encode()).hexdigest()[:8]
             output_path = str(cache_dir / f"audio_{url_hash}.mp4")
 
-        # 下载音频
-        loop = asyncio.get_event_loop()
-        local_path = await loop.run_in_executor(
-            None, self._download_audio, audio_url, output_path, download_headers
-        )
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            local_path = output_path
+            logger.info("复用媒体缓存: %s", local_path)
+        else:
+            loop = asyncio.get_event_loop()
+            local_path = await loop.run_in_executor(
+                None, self._download_audio, audio_url, output_path, download_headers
+            )
 
         try:
             # 使用 Whisper 转写
@@ -172,7 +183,6 @@ class WhisperTranscriber:
             本地文件路径
         """
         # 从 URL 推断平台 Referer（避免硬编码导致跨平台 CDN 403）
-        from urllib.parse import urlparse
         url_domain = urlparse(url).netloc.lower()
         if "douyin" in url_domain:
             default_referer = "https://www.douyin.com"
@@ -192,22 +202,37 @@ class WhisperTranscriber:
         if extra_headers:
             headers.update(extra_headers)
 
+        destination = Path(output_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_suffix(destination.suffix + ".part")
+        parsed = urlparse(url)
+        safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
         # 优先尝试 httpx 直接下载
         try:
-            logger.info(f"使用 httpx 下载音频: {url[:120]}")
+            logger.info("使用 httpx 下载音频: %s", safe_url)
             with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-                resp = client.get(url, headers=headers)
-                resp.raise_for_status()
-                with open(output_path, "wb") as f:
-                    f.write(resp.content)
-            logger.info(f"音频下载成功: {output_path}")
-            return output_path
+                with client.stream("GET", url, headers=headers) as response:
+                    response.raise_for_status()
+                    with partial.open("wb") as stream:
+                        for chunk in response.iter_bytes(64 * 1024):
+                            stream.write(chunk)
+            if not partial.exists() or partial.stat().st_size == 0:
+                raise RuntimeError("下载结果为空")
+            partial.replace(destination)
+            logger.info("音频下载成功: %s", destination)
+            return str(destination)
         except Exception as e:
-            logger.warning(f"httpx 下载失败: {e}，尝试 yt-dlp 回退...")
+            partial.unlink(missing_ok=True)
+            logger.warning(
+                "httpx 下载失败，尝试 yt-dlp 回退: %s (%s)",
+                safe_url,
+                type(e).__name__,
+            )
 
         # 回退到 yt-dlp
         try:
-            logger.info(f"使用 yt-dlp 下载音频: {url}")
+            logger.info("使用 yt-dlp 下载音频: %s", safe_url)
             import subprocess
 
             yt_dlp_cmd = [
@@ -243,22 +268,23 @@ class WhisperTranscriber:
             raise RuntimeError(f"音频下载失败: {e}") from e
 
     def _run_whisper(self, file_path: str) -> list[SubtitleSegment]:
-        """运行 Whisper 推理（自动选择引擎）"""
+        """运行 faster-whisper 推理"""
         self._load_model()
-
-        if self._engine == "faster_whisper":
-            return self._run_faster_whisper(file_path)
-        else:
-            return self._run_openai_whisper(file_path)
+        return self._run_faster_whisper(file_path)
 
     def _run_faster_whisper(self, file_path: str) -> list[SubtitleSegment]:
         """faster-whisper 推理（生成器模式，vad_filter 加速）"""
         logger.info("faster-whisper 开始转写: %s", file_path)
         try:
-            segments_gen, info = self._model.transcribe(
-                file_path, language="zh", task="transcribe",
-                beam_size=5, vad_filter=True,
-            )
+            options = {
+                "task": "transcribe",
+                "beam_size": self.beam_size,
+                "vad_filter": True,
+            }
+            if self.language:
+                options["language"] = self.language
+            started = time.perf_counter()
+            segments_gen, info = self._model.transcribe(file_path, **options)
         except FileNotFoundError:
             raise RuntimeError("Whisper 转写失败: 系统未找到 ffmpeg，请先安装 ffmpeg 并加入 PATH")
         except Exception as e:
@@ -270,49 +296,63 @@ class WhisperTranscriber:
             if text:
                 segments.append(SubtitleSegment(start=seg.start, end=seg.end, text=text))
 
-        logger.info("faster-whisper 转写完成: %d 条片段, 时长=%.1fs", len(segments), info.duration)
+        logger.info(
+            "faster-whisper 转写完成: %d 条片段, 媒体时长=%.1fs, 耗时=%.1fs",
+            len(segments),
+            info.duration,
+            time.perf_counter() - started,
+        )
         return segments
 
-    def _run_openai_whisper(self, file_path: str) -> list[SubtitleSegment]:
-        """openai-whisper 推理（字典模式）"""
-        logger.info("openai-whisper 开始转写: %s", file_path)
-        try:
-            result = self._model.transcribe(file_path, language="zh", task="transcribe")
-        except FileNotFoundError:
-            raise RuntimeError("Whisper 转写失败: 系统未找到 ffmpeg，请先安装 ffmpeg 并加入 PATH")
-        except Exception as e:
-            raise RuntimeError(f"Whisper 转写失败: {e}") from e
 
-        segments = []
-        for seg in result.get("segments", []):
-            text = seg.get("text", "").strip()
-            if text:
-                segments.append(SubtitleSegment(
-                    start=float(seg.get("start", 0)), end=float(seg.get("end", 0)), text=text,
-                ))
 
-        logger.info("openai-whisper 转写完成: %d 条片段", len(segments))
-        return segments
+    @staticmethod
+    def prune_audio_cache(
+        cache_dir: Path,
+        *,
+        max_age_days: int = 7,
+        max_bytes: int = 2 * 1024 * 1024 * 1024,
+    ) -> int:
+        """Remove stale/oversized media cache entries and return the count."""
+        if not cache_dir.exists():
+            return 0
+
+        removed = 0
+        now = time.time()
+        files = [path for path in cache_dir.iterdir() if path.is_file()]
+        kept: list[Path] = []
+        for path in files:
+            age_seconds = now - path.stat().st_mtime
+            if path.suffix == ".part" or age_seconds > max_age_days * 86400:
+                path.unlink(missing_ok=True)
+                removed += 1
+            else:
+                kept.append(path)
+
+        total_size = sum(path.stat().st_size for path in kept if path.exists())
+        for path in sorted(kept, key=lambda item: item.stat().st_mtime):
+            if total_size <= max_bytes:
+                break
+            size = path.stat().st_size
+            path.unlink(missing_ok=True)
+            total_size -= size
+            removed += 1
+        return removed
 
     def cleanup(self):
-        """释放模型内存并清理临时文件"""
+        """Release model memory and prune, rather than erase, media cache."""
         if self._model is not None:
             logger.info("释放 faster-whisper 模型内存...")
             self._model = None
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except (ImportError, RuntimeError):
-                pass
 
-        # 清理音频缓存目录中的临时文件
         try:
             config = get_config()
             cache_dir = Path(config.audio_cache_dir)
-            if cache_dir.exists():
-                for f in cache_dir.iterdir():
-                    if f.is_file():
-                        f.unlink()
-                logger.info("音频缓存已清理")
+            removed = self.prune_audio_cache(
+                cache_dir,
+                max_age_days=config.audio_cache_max_age_days,
+                max_bytes=config.audio_cache_max_bytes,
+            )
+            logger.info("媒体缓存修剪完成: 删除 %d 个文件", removed)
         except Exception as e:
-            logger.warning(f"清理音频缓存失败: {e}")
+            logger.warning(f"修剪音频缓存失败: {e}")

@@ -1,0 +1,39 @@
+你是一个专业的视频内容分析师。请根据以下视频转写文本，一次完成内容摘要和结构化知识提取。
+
+## 输入
+视频标题：{title}
+视频作者：{author}
+转写文本：
+{transcript}
+
+## 要求
+1. summary：生成一段 200-300 字的内容摘要。
+2. keywords：提取 3-8 个用于检索的关键词。
+3. one_line_summary：用不超过 50 字的一句话概括核心价值。
+4. topics：总结 1-3 个核心主题。
+5. key_points：提取 3-5 个关键要点，每项包含 point 和 detail。
+6. knowledge_tags：提取 3-8 个知识标签。
+7. target_audience：说明目标受众。
+8. action_items：给出 1-3 条基于原文的可执行建议。
+9. mindmap_structure：包含 center 和 branches；每个 branch 包含 topic 和 subtopics。
+
+仅依据输入内容，不补充原文没有的事实。请严格返回下面结构的合法 JSON，不要包含 Markdown 代码块或其他说明：
+
+{{
+  "summary": "内容摘要",
+  "keywords": ["关键词1", "关键词2"],
+  "one_line_summary": "一句话总结",
+  "topics": ["主题1", "主题2"],
+  "key_points": [
+    {{"point": "要点简述", "detail": "详细说明"}}
+  ],
+  "knowledge_tags": ["标签1", "标签2"],
+  "target_audience": "目标受众描述",
+  "action_items": ["行动建议1"],
+  "mindmap_structure": {{
+    "center": "中心主题",
+    "branches": [
+      {{"topic": "分支主题", "subtopics": ["子话题1", "子话题2"]}}
+    ]
+  }}
+}}
