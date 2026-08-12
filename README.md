@@ -66,7 +66,7 @@ graph LR
 ### 📍 当前状态
 
 - 抖音代码后真实复测可枚举 45 个收藏夹，两个固定收藏夹分别稳定返回 4/4 和 13/14 个可访问视频；httpx 媒体主路径、缓存和签名 URL 日志保护已通过真实样本。
-- 飞书与 ima 的单视频两轮幂等已通过真实 API；四卡飞书外部写入和 ima 目标文件夹切换仍需要明确的数据/目标授权。
+- 飞书与 ima 的固定四卡两轮幂等已通过真实 API：飞书每轮 4/4 远端查重跳过，ima 当前知识库根目录每轮 4/4 本地状态跳过，均未产生重复写入。
 - 固定四视频 ASR 基准中 `small/fast` 合计约 254 秒；`base` 虽快约 62%，但中文关键实体退化，因此默认仍保留 `small`，`base` 仅作为速度候选。
 - 摘要与结构分析已合并为一次请求，长稿完整分块且不再静默截断；生产默认使用 `deepseek-v4-flash`，固定收藏夹四视频真实重处理 4/4 成功落卡，总耗时约 313 秒，已通过 12 分钟目标。
 - 小红书目前只有未实现的适配器桩，不属于已支持平台。
@@ -165,9 +165,9 @@ graph LR
 
 ### 📍 Current Status
 
-- Real Bilibili and Douyin processing, local-card recovery, and two-round Feishu deduplication have passed acceptance checks.
-- ima has automated and historical live-API evidence, but the current credentials are invalid and require a new single-video, two-round validation.
-- The faster-whisper path works for short and medium samples; long-video CPU performance is not production-accepted.
+- Live Douyin checks enumerate 45 favorite folders, with two fixed folders consistently returning 4/4 and 13/14 accessible videos without cross-folder contamination.
+- The fixed four-video pipeline completed 4/4 local cards in about 313 seconds with `small/fast` Whisper and `deepseek-v4-flash`, including complete chunked analysis for the long transcript.
+- Two-round live API checks passed for all four cards: Feishu deduplicated 4/4 documents per round, while ima skipped 4/4 entries per round from target-specific local state without duplicate writes.
 - Xiaohongshu is only an unimplemented adapter stub and is not a supported platform.
 
 See the [project roadmap](PLAN.md) for priorities and acceptance gates.
