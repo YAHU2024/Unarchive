@@ -58,8 +58,11 @@ docs/internal/
 
 # Android local toolchains, build output, models, and secrets
 android/.android-sdk/
+android/.deps/
 android/.gradle/
 android/**/build/
 android/local.properties
+android/app/libs/*.aar
+android/app/src/main/assets/
 android/models/
 android/benchmark-results/
