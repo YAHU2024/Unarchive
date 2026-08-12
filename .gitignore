@@ -43,6 +43,7 @@ Thumbs.db
 # Personal development documents
 .plan.md
 PLAN.md
+ANDROID_MVP_PLAN.md
 AGENTS.md
 CLAUDE.md
 
@@ -54,3 +55,11 @@ CODEBUDDY.md
 
 # Internal documentation
 docs/internal/
+
+# Android local toolchains, build output, models, and secrets
+android/.android-sdk/
+android/.gradle/
+android/**/build/
+android/local.properties
+android/models/
+android/benchmark-results/
