@@ -9,6 +9,9 @@ import com.unarchive.android.platform.AudioDownloader
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.VideoPlatformAdapter
+import com.unarchive.android.result.StoredVideoResult
+import com.unarchive.android.result.VideoResultKey
+import com.unarchive.android.result.VideoResultRepository
 
 enum class SingleVideoStage {
     RESOLVING_REFERENCE,
@@ -28,6 +31,7 @@ data class SingleVideoResult(
     val metadata: VideoMetadata,
     val benchmark: BenchmarkResult,
     val reusedDownload: Boolean,
+    val storedResult: StoredVideoResult? = null,
 )
 
 fun interface SingleVideoProgressListener {
@@ -38,6 +42,8 @@ class SingleVideoPipeline(
     private val platformAdapter: VideoPlatformAdapter,
     private val audioDownloader: AudioDownloader,
     private val benchmarkRunner: BenchmarkRunner,
+    private val resultRepository: VideoResultRepository? = null,
+    private val wallClockEpochMs: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun run(
         input: String,
@@ -76,8 +82,20 @@ class SingleVideoPipeline(
                 )
             },
         )
+        val pipelineResult = SingleVideoResult(metadata, benchmark, download.reused)
+        val storedResult = resultRepository?.let { repository ->
+            val now = wallClockEpochMs()
+            val key = VideoResultKey(metadata.id.platform, metadata.id.value)
+            repository.save(
+                StoredVideoResult.fromPipeline(
+                    result = pipelineResult,
+                    nowEpochMs = now,
+                    createdAtEpochMs = repository.find(key)?.createdAtEpochMs ?: now,
+                ),
+            )
+        }
         progressListener.update(SingleVideoStage.COMPLETE, 1f)
-        return SingleVideoResult(metadata, benchmark, download.reused)
+        return pipelineResult.copy(storedResult = storedResult)
     }
 
     private fun SingleVideoProgressListener.update(stage: SingleVideoStage, progress: Float) {

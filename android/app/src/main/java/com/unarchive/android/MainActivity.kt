@@ -1,5 +1,8 @@
 package com.unarchive.android
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -52,6 +55,8 @@ import com.unarchive.android.pipeline.SingleVideoResult
 import com.unarchive.android.pipeline.SingleVideoStage
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
+import com.unarchive.android.result.FileVideoResultRepository
+import com.unarchive.android.result.asTimestamp
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
@@ -99,11 +104,15 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             clock = MonotonicClock(SystemClock::elapsedRealtime),
         )
     }
+    val resultRepository = remember {
+        FileVideoResultRepository(File(context.filesDir, "video-results"))
+    }
     val videoPipeline = remember {
         SingleVideoPipeline(
             platformAdapter = BilibiliPlatformAdapter(),
             audioDownloader = BilibiliAudioDownloader(File(context.cacheDir, "bilibili-audio")),
             benchmarkRunner = runner,
+            resultRepository = resultRepository,
         )
     }
     var videoReference by remember(initialVideoReference) {
@@ -117,6 +126,8 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
     var progress by remember { mutableFloatStateOf(0f) }
     var result by remember { mutableStateOf<BenchmarkResult?>(null) }
     var videoResult by remember { mutableStateOf<SingleVideoResult?>(null) }
+    var storedResults by remember { mutableStateOf(resultRepository.list()) }
+    var selectedStoredResult by remember { mutableStateOf(storedResults.firstOrNull()) }
     var status by remember(initialAudio, initialVideoReference) {
         mutableStateOf(
             when {
@@ -132,8 +143,38 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         selectedAudioName = uri?.let { context.displayName(it) }
         result = null
         videoResult = null
+        selectedStoredResult = null
         progress = 0f
         status = if (uri == null) "No audio selected." else "Audio selected. Ready to benchmark."
+    }
+    fun processVideo(reference: String) {
+        result = null
+        videoResult = null
+        selectedStoredResult = null
+        progress = 0f
+        status = "Resolving Bilibili reference..."
+        runningJob = scope.launch {
+            try {
+                videoResult = videoPipeline.run(
+                    input = reference,
+                    config = AsrConfig(engine = selectedEngine),
+                    progressListener = SingleVideoProgressListener { update ->
+                        progress = update.overallProgress
+                        status = update.stage.displayText
+                    },
+                )
+                result = videoResult?.benchmark
+                storedResults = resultRepository.list()
+                selectedStoredResult = videoResult?.storedResult
+                status = "Recognition complete and saved locally."
+            } catch (_: CancellationException) {
+                status = "Video processing cancelled."
+            } catch (error: Exception) {
+                status = error.message ?: "Video processing failed."
+            } finally {
+                runningJob = null
+            }
+        }
     }
 
     Column(
@@ -156,32 +197,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         )
         Button(
             enabled = videoReference.isNotBlank() && runningJob == null,
-            onClick = {
-                result = null
-                videoResult = null
-                progress = 0f
-                status = "Resolving Bilibili reference..."
-                runningJob = scope.launch {
-                    try {
-                        videoResult = videoPipeline.run(
-                            input = videoReference,
-                            config = AsrConfig(engine = selectedEngine),
-                            progressListener = SingleVideoProgressListener { update ->
-                                progress = update.overallProgress
-                                status = update.stage.displayText
-                            },
-                        )
-                        result = videoResult?.benchmark
-                        status = "Recognition complete."
-                    } catch (_: CancellationException) {
-                        status = "Video processing cancelled."
-                    } catch (error: Exception) {
-                        status = error.message ?: "Video processing failed."
-                    } finally {
-                        runningJob = null
-                    }
-                }
-            },
+            onClick = { processVideo(videoReference) },
         ) {
             Text("Process video")
         }
@@ -226,6 +242,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                     val uri = selectedAudio ?: return@Button
                     result = null
                     videoResult = null
+                    selectedStoredResult = null
                     progress = 0f
                     status = "Running benchmark harness..."
                     runningJob = scope.launch {
@@ -266,22 +283,69 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             }
         }
 
-        result?.let { benchmark ->
+        selectedStoredResult?.let { stored ->
             Spacer(Modifier.height(4.dp))
-            Text("Latest result", style = MaterialTheme.typography.titleMedium)
-            videoResult?.let { video ->
-                Text(video.metadata.title, style = MaterialTheme.typography.titleSmall)
-                if (video.metadata.ownerName.isNotBlank()) Text(video.metadata.ownerName)
-                Text(video.metadata.id.value)
-                Text(if (video.reusedDownload) "Audio: cached" else "Audio: downloaded")
+            Text("Saved result", style = MaterialTheme.typography.titleMedium)
+            Text(stored.title, style = MaterialTheme.typography.titleSmall)
+            if (stored.ownerName.isNotBlank()) Text(stored.ownerName)
+            Text("${stored.key.platform} / ${stored.key.videoId}")
+            Text("Engine: ${stored.engine.displayName}")
+            Text("Processing: ${stored.processingDurationMs} ms")
+            Text("Audio: ${stored.audioDurationMs} ms")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    enabled = runningJob == null,
+                    onClick = {
+                        context.copyText(stored.transcript)
+                        status = "Transcript copied."
+                    },
+                ) {
+                    Text("Copy")
+                }
+                OutlinedButton(
+                    enabled = runningJob == null,
+                    onClick = { context.shareText(stored.title, stored.shareText()) },
+                ) {
+                    Text("Share")
+                }
             }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = runningJob == null,
+                onClick = {
+                    videoReference = stored.canonicalUrl
+                    processVideo(stored.canonicalUrl)
+                },
+            ) {
+                Text("Rerun")
+            }
+            stored.segments.forEach { segment ->
+                Text("[${segment.startMs.asTimestamp()} - ${segment.endMs.asTimestamp()}] ${segment.text}")
+            }
+        } ?: result?.let { benchmark ->
+            Spacer(Modifier.height(4.dp))
+            Text("Local audio result", style = MaterialTheme.typography.titleMedium)
             Text("Engine: ${benchmark.engine.displayName}")
             Text("Processing: ${benchmark.processingDurationMs} ms")
             Text("Audio: ${benchmark.audioDurationMs} ms")
-            Text(
-                "RTF: ${benchmark.realTimeFactor?.let { String.format(Locale.US, "%.3f", it) } ?: "n/a"}",
-            )
-            Text(benchmark.segments.joinToString(separator = "\n") { it.text })
+            Text("RTF: ${benchmark.realTimeFactor?.let { String.format(Locale.US, "%.3f", it) } ?: "n/a"}")
+            benchmark.segments.forEach { segment ->
+                Text("[${segment.startMs.asTimestamp()} - ${segment.endMs.asTimestamp()}] ${segment.text}")
+            }
+        }
+
+        if (storedResults.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Saved videos", style = MaterialTheme.typography.titleMedium)
+            storedResults.forEach { stored ->
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = runningJob == null,
+                    onClick = { selectedStoredResult = stored },
+                ) {
+                    Text(stored.title, maxLines = 2)
+                }
+            }
         }
     }
 }
@@ -324,4 +388,17 @@ internal fun Intent.audioUri(): Uri? = when (action) {
 internal fun Intent.videoReferenceText(): String? = when (action) {
     Intent.ACTION_SEND -> if (type == "text/plain") getStringExtra(Intent.EXTRA_TEXT) else null
     else -> null
+}
+
+private fun Context.copyText(text: String) {
+    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Unarchive transcript", text))
+}
+
+private fun Context.shareText(title: String, text: String) {
+    val intent = Intent(Intent.ACTION_SEND)
+        .setType("text/plain")
+        .putExtra(Intent.EXTRA_SUBJECT, title)
+        .putExtra(Intent.EXTRA_TEXT, text)
+    startActivity(Intent.createChooser(intent, "Share transcript"))
 }

@@ -143,7 +143,7 @@ class AndroidAudioDecoder(
     private fun enforceDurationLimit(format: MediaFormat) {
         val durationUs = format.getLongOrDefault(MediaFormat.KEY_DURATION, 0L)
         require(durationUs <= MAX_DURATION_US || durationUs <= 0) {
-            "Phase 0 media decoding is limited to 5 minutes until segmented ASR is available"
+            "Media decoding is limited to 5 minutes until bounded-memory streaming is available"
         }
     }
 

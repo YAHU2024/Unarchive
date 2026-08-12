@@ -18,6 +18,9 @@ import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.VideoPlatformAdapter
 import com.unarchive.android.platform.VideoReference
+import com.unarchive.android.result.StoredVideoResult
+import com.unarchive.android.result.VideoResultKey
+import com.unarchive.android.result.VideoResultRepository
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -74,6 +77,48 @@ class SingleVideoPipelineTest {
         assertEquals(SingleVideoStage.COMPLETE, stages.last())
         assertTrue(stages.indexOf(SingleVideoStage.DOWNLOADING_AUDIO) < stages.indexOf(SingleVideoStage.TRANSCRIBING))
     }
+
+    @Test
+    fun persistsSuccessfulResultAndPreservesOriginalCreationTimeOnRerun() = runTest {
+        val audio = temporaryFolder.newFile("audio.m4a")
+        val repository = InMemoryResultRepository()
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _ -> DownloadedAudio(audio, 0, reused = true) },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ) = AsrOutput(listOf(TranscriptSegment(0, 1_000, "saved")), 1_000)
+                    }
+                },
+                clock = SequenceClock(0, 100, 200, 300),
+            ),
+            resultRepository = repository,
+            wallClockEpochMs = SequenceEpochClock(1_000, 2_000)::next,
+        )
+
+        val first = pipeline.run(
+            "BV1PS42197aM",
+            AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            SingleVideoProgressListener {},
+        )
+        val second = pipeline.run(
+            "BV1PS42197aM",
+            AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            SingleVideoProgressListener {},
+        )
+
+        assertEquals(1_000L, first.storedResult?.createdAtEpochMs)
+        assertEquals(1_000L, second.storedResult?.createdAtEpochMs)
+        assertEquals(2_000L, second.storedResult?.updatedAtEpochMs)
+        assertEquals(1, repository.list().size)
+    }
 }
 
 private class FakePlatformAdapter : VideoPlatformAdapter {
@@ -110,4 +155,23 @@ private class SequenceClock(vararg values: Long) : MonotonicClock {
     private val iterator = values.iterator()
 
     override fun elapsedRealtimeMs() = iterator.next()
+}
+
+private class SequenceEpochClock(vararg values: Long) {
+    private val iterator = values.iterator()
+
+    fun next() = iterator.next()
+}
+
+private class InMemoryResultRepository : VideoResultRepository {
+    private val values = mutableMapOf<VideoResultKey, StoredVideoResult>()
+
+    override fun list() = values.values.toList()
+
+    override fun find(key: VideoResultKey) = values[key]
+
+    override fun save(result: StoredVideoResult): StoredVideoResult {
+        values[result.key] = result
+        return result
+    }
 }

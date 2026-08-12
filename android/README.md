@@ -1,8 +1,9 @@
 # Unarchive Android
 
-This directory contains the independent Android MVP. Phase 0 is an ASR benchmark
-harness used to select the on-device transcription engine before Bilibili and
-analysis workflows are integrated.
+This directory contains the independent Android MVP. The accepted local-first
+flow processes one Bilibili link, downloads its audio, transcribes it on device,
+and persists a timestamped result that can be restored, copied, shared, or rerun.
+The local-audio ASR benchmark remains available for engine and device checks.
 
 ## Local setup
 
@@ -27,10 +28,11 @@ audio selection, progress, cancellation, and result rendering. After running
 
 The native path reads PCM16 WAV across common sample rates and channel counts,
 and uses Android's platform codecs for other audio containers. Both paths
-normalize output to 16 kHz mono before ASR. Decoding is temporarily limited to 5 minutes until
-the long-audio streaming decoder is available. Optional Silero VAD detects
+normalize output to 16 kHz mono before ASR. Decoding is limited to five minutes
+until bounded-memory streaming decode and durable resume are available. Optional Silero VAD detects
 speech, adds up to 500 ms context, and bounds SenseVoice inputs to 30 seconds.
 Cancellation is checked between decoding, VAD windows, and ASR segments, and
 before and after sherpa's blocking native decode; it cannot interrupt a decode
-already in progress. Streaming media decode and durable checkpoints remain later
-milestones for long audio.
+already in progress. Saved video results use private atomic JSON files keyed by
+platform and canonical video ID. Cached Bilibili audio still needs an explicit
+age policy and force-refresh path before it is treated as durable long-term state.
