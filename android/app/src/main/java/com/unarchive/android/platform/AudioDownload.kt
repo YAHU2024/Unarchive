@@ -12,7 +12,7 @@ fun interface DownloadProgressListener {
     fun onProgress(bytesDownloaded: Long, totalBytes: Long?)
 }
 
-interface AudioDownloader {
+fun interface AudioDownloader {
     suspend fun download(
         metadata: VideoMetadata,
         stream: AudioStream,

@@ -27,6 +27,8 @@ class BilibiliAudioDownloaderTest {
             cacheDirectory = temporaryFolder.newFolder("audio"),
             transport = MediaDownloadTransport { request ->
                 requested += request.url
+                assertEquals("https://www.bilibili.com", request.headers["Referer"])
+                assertTrue(request.headers["User-Agent"].orEmpty().contains("Chrome/120"))
                 request.destination.writeBytes(byteArrayOf(1, 2))
                 if (requested.size == 1) throw IOException("primary failed")
                 request.destination.writeBytes(byteArrayOf(3, 4, 5))

@@ -17,15 +17,11 @@ class HttpsRedirectTransport(
             connection.connectTimeout = connectTimeoutMs
             connection.readTimeout = readTimeoutMs
             connection.requestMethod = "GET"
-            connection.setRequestProperty("User-Agent", USER_AGENT)
+            connection.setRequestProperty("User-Agent", BilibiliHeaders.USER_AGENT)
             val statusCode = connection.responseCode
             RedirectResponse(statusCode, connection.getHeaderField("Location"))
         } finally {
             connection.disconnect()
         }
-    }
-
-    private companion object {
-        const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) Unarchive/0.1"
     }
 }

@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,29 +38,40 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.unarchive.android.asr.AndroidAsrEngineProvider
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrProgressListener
-import com.unarchive.android.asr.AndroidAsrEngineProvider
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
 import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.MonotonicClock
+import com.unarchive.android.pipeline.SingleVideoPipeline
+import com.unarchive.android.pipeline.SingleVideoProgressListener
+import com.unarchive.android.pipeline.SingleVideoResult
+import com.unarchive.android.pipeline.SingleVideoStage
+import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
+import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
+import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val sharedAudio = mutableStateOf<Uri?>(null)
+    private val sharedVideoReference = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        sharedAudio.value = intent.audioUri()
+        acceptIntent(intent)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AsrBenchmarkScreen(initialAudio = sharedAudio.value)
+                    UnarchiveScreen(
+                        initialAudio = sharedAudio.value,
+                        initialVideoReference = sharedVideoReference.value,
+                    )
                 }
             }
         }
@@ -67,12 +80,17 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        acceptIntent(intent)
+    }
+
+    private fun acceptIntent(intent: Intent) {
         sharedAudio.value = intent.audioUri()
+        sharedVideoReference.value = intent.videoReferenceText()
     }
 }
 
 @Composable
-private fun AsrBenchmarkScreen(initialAudio: Uri?) {
+private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) {
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val runner = remember {
@@ -81,6 +99,16 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
             clock = MonotonicClock(SystemClock::elapsedRealtime),
         )
     }
+    val videoPipeline = remember {
+        SingleVideoPipeline(
+            platformAdapter = BilibiliPlatformAdapter(),
+            audioDownloader = BilibiliAudioDownloader(File(context.cacheDir, "bilibili-audio")),
+            benchmarkRunner = runner,
+        )
+    }
+    var videoReference by remember(initialVideoReference) {
+        mutableStateOf(initialVideoReference.orEmpty())
+    }
     var selectedAudio by remember(initialAudio) { mutableStateOf(initialAudio) }
     var selectedAudioName by remember(initialAudio) {
         mutableStateOf(initialAudio?.let { context.displayName(it) })
@@ -88,14 +116,22 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
     var selectedEngine by remember { mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA) }
     var progress by remember { mutableFloatStateOf(0f) }
     var result by remember { mutableStateOf<BenchmarkResult?>(null) }
-    var status by remember(initialAudio) {
-        mutableStateOf(if (initialAudio == null) "Select an audio file to begin." else "Shared audio ready.")
+    var videoResult by remember { mutableStateOf<SingleVideoResult?>(null) }
+    var status by remember(initialAudio, initialVideoReference) {
+        mutableStateOf(
+            when {
+                !initialVideoReference.isNullOrBlank() -> "Shared Bilibili link ready."
+                initialAudio != null -> "Shared audio ready."
+                else -> "Enter a Bilibili link or select local audio."
+            },
+        )
     }
     var runningJob by remember { mutableStateOf<Job?>(null) }
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedAudio = uri
         selectedAudioName = uri?.let { context.displayName(it) }
         result = null
+        videoResult = null
         progress = 0f
         status = if (uri == null) "No audio selected." else "Audio selected. Ready to benchmark."
     }
@@ -107,13 +143,55 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
             .padding(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("ASR benchmark", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Phase 0 validates engine speed, accuracy, memory, heat and cancellation before product integration.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        Text("Unarchive", style = MaterialTheme.typography.headlineMedium)
 
-        OutlinedButton(onClick = { audioPicker.launch("audio/*") }) {
+        Text("Bilibili video", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            value = videoReference,
+            onValueChange = { videoReference = it },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = runningJob == null,
+            minLines = 2,
+            label = { Text("BV / av / Bilibili link") },
+        )
+        Button(
+            enabled = videoReference.isNotBlank() && runningJob == null,
+            onClick = {
+                result = null
+                videoResult = null
+                progress = 0f
+                status = "Resolving Bilibili reference..."
+                runningJob = scope.launch {
+                    try {
+                        videoResult = videoPipeline.run(
+                            input = videoReference,
+                            config = AsrConfig(engine = selectedEngine),
+                            progressListener = SingleVideoProgressListener { update ->
+                                progress = update.overallProgress
+                                status = update.stage.displayText
+                            },
+                        )
+                        result = videoResult?.benchmark
+                        status = "Recognition complete."
+                    } catch (_: CancellationException) {
+                        status = "Video processing cancelled."
+                    } catch (error: Exception) {
+                        status = error.message ?: "Video processing failed."
+                    } finally {
+                        runningJob = null
+                    }
+                }
+            },
+        ) {
+            Text("Process video")
+        }
+
+        HorizontalDivider()
+        Text("Local audio benchmark", style = MaterialTheme.typography.titleMedium)
+        OutlinedButton(
+            enabled = runningJob == null,
+            onClick = { audioPicker.launch("audio/*") },
+        ) {
             Text(if (selectedAudio == null) "Select audio" else "Change audio")
         }
         Text(selectedAudioName ?: "No file selected")
@@ -147,6 +225,7 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
                 onClick = {
                     val uri = selectedAudio ?: return@Button
                     result = null
+                    videoResult = null
                     progress = 0f
                     status = "Running benchmark harness..."
                     runningJob = scope.launch {
@@ -169,10 +248,6 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
                             }
                         } catch (_: CancellationException) {
                             status = "Benchmark cancelled."
-                        } catch (error: IllegalArgumentException) {
-                            status = error.message ?: "Invalid benchmark input."
-                        } catch (error: IllegalStateException) {
-                            status = error.message ?: "ASR engine is unavailable."
                         } catch (error: Exception) {
                             status = error.message ?: "ASR benchmark failed."
                         } finally {
@@ -181,7 +256,7 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
                     }
                 },
             ) {
-                Text("Start")
+                Text("Start local audio")
             }
             OutlinedButton(
                 enabled = runningJob != null,
@@ -194,6 +269,12 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
         result?.let { benchmark ->
             Spacer(Modifier.height(4.dp))
             Text("Latest result", style = MaterialTheme.typography.titleMedium)
+            videoResult?.let { video ->
+                Text(video.metadata.title, style = MaterialTheme.typography.titleSmall)
+                if (video.metadata.ownerName.isNotBlank()) Text(video.metadata.ownerName)
+                Text(video.metadata.id.value)
+                Text(if (video.reusedDownload) "Audio: cached" else "Audio: downloaded")
+            }
             Text("Engine: ${benchmark.engine.displayName}")
             Text("Processing: ${benchmark.processingDurationMs} ms")
             Text("Audio: ${benchmark.audioDurationMs} ms")
@@ -204,6 +285,16 @@ private fun AsrBenchmarkScreen(initialAudio: Uri?) {
         }
     }
 }
+
+private val SingleVideoStage.displayText: String
+    get() = when (this) {
+        SingleVideoStage.RESOLVING_REFERENCE -> "Resolving Bilibili reference..."
+        SingleVideoStage.FETCHING_METADATA -> "Fetching video metadata..."
+        SingleVideoStage.RESOLVING_AUDIO -> "Resolving audio stream..."
+        SingleVideoStage.DOWNLOADING_AUDIO -> "Downloading audio..."
+        SingleVideoStage.TRANSCRIBING -> "Transcribing on device..."
+        SingleVideoStage.COMPLETE -> "Recognition complete."
+    }
 
 private fun android.content.Context.displayName(uri: Uri): String {
     contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -217,11 +308,20 @@ private fun android.content.Context.displayName(uri: Uri): String {
 
 internal fun Intent.audioUri(): Uri? = when (action) {
     Intent.ACTION_VIEW -> data
-    Intent.ACTION_SEND -> if (android.os.Build.VERSION.SDK_INT >= 33) {
-        getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    Intent.ACTION_SEND -> if (type?.startsWith("audio/") == true) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(Intent.EXTRA_STREAM)
+        }
     } else {
-        @Suppress("DEPRECATION")
-        getParcelableExtra(Intent.EXTRA_STREAM)
+        null
     }
+    else -> null
+}
+
+internal fun Intent.videoReferenceText(): String? = when (action) {
+    Intent.ACTION_SEND -> if (type == "text/plain") getStringExtra(Intent.EXTRA_TEXT) else null
     else -> null
 }

@@ -43,7 +43,7 @@ class BilibiliApiTest {
         val result = api.resolveAudio(metadata)
 
         assertTrue(requestedUrl.contains("bvid=BV1PS42197aM&cid=123&fnval=16"))
-        assertEquals("https://www.bilibili.com/", requestedHeaders["Referer"])
+        assertEquals("https://www.bilibili.com", requestedHeaders["Referer"])
         assertEquals("https://audio.example/high", result.url)
         assertEquals(128000, result.bandwidth)
         assertEquals(listOf("https://backup.example/high"), result.backupUrls)

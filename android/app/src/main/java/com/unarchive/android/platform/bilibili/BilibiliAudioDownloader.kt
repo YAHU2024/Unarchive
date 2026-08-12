@@ -99,10 +99,7 @@ class BilibiliAudioDownloader(
     private companion object {
         const val PLATFORM = "bilibili"
         val BVID_PATTERN = Regex("BV[0-9A-Za-z]{10}")
-        val DOWNLOAD_HEADERS = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 14) Unarchive/0.1",
-            "Referer" to "https://www.bilibili.com/",
-        )
+        val DOWNLOAD_HEADERS = BilibiliHeaders.media
         const val DEFAULT_MAXIMUM_BYTES = 200L * 1024 * 1024
     }
 }

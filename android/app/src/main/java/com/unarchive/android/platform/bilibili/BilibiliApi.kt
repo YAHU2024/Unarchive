@@ -113,8 +113,7 @@ class BilibiliApi(private val transport: TextTransport) {
         const val PLATFORM = "bilibili"
         const val API_BASE = "https://api.bilibili.com"
         val BVID_PATTERN = Regex("BV[0-9A-Za-z]{10}")
-        val DEFAULT_HEADERS = mapOf("User-Agent" to "Mozilla/5.0 (Linux; Android 14) Unarchive/0.1")
-        val PLAYURL_HEADERS = DEFAULT_HEADERS +
-            ("Referer" to "https://www.bilibili.com/")
+        val DEFAULT_HEADERS = BilibiliHeaders.api
+        val PLAYURL_HEADERS = BilibiliHeaders.media
     }
 }
