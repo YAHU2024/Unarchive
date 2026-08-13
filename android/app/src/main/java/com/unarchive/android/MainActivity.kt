@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -64,7 +65,9 @@ import com.unarchive.android.pipeline.SingleVideoResult
 import com.unarchive.android.pipeline.SingleVideoStage
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
+import com.unarchive.android.card.MarkdownCardRenderer
 import com.unarchive.android.result.FileVideoResultRepository
+import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.result.asTimestamp
 import java.io.File
 import java.security.MessageDigest
@@ -387,6 +390,15 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 ) {
                     Text("Share")
                 }
+                OutlinedButton(
+                    enabled = runningJob == null,
+                    onClick = {
+                        context.exportCard(stored)
+                        status = "知识卡片已导出。"
+                    },
+                ) {
+                    Text("导出卡片")
+                }
             }
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
@@ -525,6 +537,19 @@ private fun Context.shareText(title: String, text: String) {
         .putExtra(Intent.EXTRA_SUBJECT, title)
         .putExtra(Intent.EXTRA_TEXT, text)
     startActivity(Intent.createChooser(intent, "Share transcript"))
+}
+
+private fun Context.exportCard(stored: StoredVideoResult) {
+    val file = File(cacheDir, "export/${MarkdownCardRenderer.fileName(stored)}")
+    file.parentFile?.mkdirs()
+    file.writeText(MarkdownCardRenderer.render(stored))
+    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND)
+        .setType("text/markdown")
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .putExtra(Intent.EXTRA_SUBJECT, stored.title)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    startActivity(Intent.createChooser(intent, "导出知识卡片"))
 }
 
 internal fun videoCompletionStatus(

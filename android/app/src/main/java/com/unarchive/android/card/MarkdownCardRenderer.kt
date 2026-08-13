@@ -1,0 +1,65 @@
+package com.unarchive.android.card
+
+import com.unarchive.android.result.StoredVideoResult
+import com.unarchive.android.result.asTimestamp
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+/**
+ * Renders a [StoredVideoResult] into an Obsidian-friendly Markdown knowledge card.
+ *
+ * First version renders only the base layer: YAML frontmatter + title + the full
+ * transcript with clickable Bilibili `?t=` timestamp links. Summary and story line
+ * are added later by the LLM enhancement layer.
+ */
+object MarkdownCardRenderer {
+    private const val MAX_FILE_NAME_LENGTH = 80
+    private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\\\/:*?\"<>|]")
+
+    fun render(result: StoredVideoResult): String = buildString {
+        appendLine("---")
+        appendLine("title: ${yamlString(result.title)}")
+        appendLine("author: ${yamlString(result.ownerName)}")
+        appendLine("source: ${result.canonicalUrl}")
+        appendLine("transcribed: ${formatDate(result.updatedAtEpochMs)}")
+        appendLine("---")
+        appendLine()
+        appendLine("# ${result.title}")
+        appendLine()
+        appendLine("## 转录全文")
+        result.segments.forEach { segment ->
+            appendLine("${timestampLink(result.canonicalUrl, segment.startMs)} ${segment.text}")
+        }
+    }.trimEnd()
+
+    /** Returns a safe `.md` file name derived from the video title. */
+    fun fileName(result: StoredVideoResult): String = "${safeFileName(result.title)}.md"
+
+    private fun timestampLink(canonicalUrl: String, startMs: Long): String =
+        "[${startMs.asTimestamp()}](${timestampUrl(canonicalUrl, startMs)})"
+
+    private fun timestampUrl(canonicalUrl: String, startMs: Long): String {
+        val seconds = (startMs / 1_000).coerceAtLeast(0)
+        val separator = if (canonicalUrl.contains('?')) "&" else "?"
+        return "$canonicalUrl${separator}t=$seconds"
+    }
+
+    private fun yamlString(value: String): String =
+        "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+    private fun formatDate(epochMs: Long): String =
+        Instant.ofEpochMilli(epochMs)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+            .format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+    private fun safeFileName(title: String): String {
+        val sanitized = title
+            .replace(ILLEGAL_FILE_NAME_CHARS, " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(MAX_FILE_NAME_LENGTH)
+        return sanitized.ifBlank { "untitled" }
+    }
+}
