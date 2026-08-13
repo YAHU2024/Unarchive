@@ -8,9 +8,7 @@ import android.media.MediaFormat
 import android.net.Uri
 import com.unarchive.android.asr.AsrProgressListener
 import kotlinx.coroutines.ensureActive
-import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlin.coroutines.coroutineContext
 
 class AndroidAudioDecoder(
@@ -41,10 +39,11 @@ class AndroidAudioDecoder(
     ): DecodedAudio {
         val mime = requireNotNull(inputFormat.getString(MediaFormat.KEY_MIME))
         val codec = MediaCodec.createDecoderByType(mime)
-        val output = ByteArrayOutputStream()
         var outputSampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var outputChannels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
+        val output = MediaCodecPcmAccumulator(targetSampleRate, MAX_DURATION_SECONDS)
+        output.updateFormat(outputFormat(outputSampleRate, outputChannels, pcmEncoding))
         var inputEnded = false
         var outputEnded = false
         val info = MediaCodec.BufferInfo()
@@ -92,6 +91,7 @@ class AndroidAudioDecoder(
                             MediaFormat.KEY_PCM_ENCODING,
                             AudioFormat.ENCODING_PCM_16BIT,
                         )
+                        output.updateFormat(outputFormat(outputSampleRate, outputChannels, pcmEncoding))
                     }
                     MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                     else -> if (outputIndex >= 0) {
@@ -99,8 +99,7 @@ class AndroidAudioDecoder(
                             val buffer = requireNotNull(codec.getOutputBuffer(outputIndex)).duplicate()
                             buffer.position(info.offset)
                             buffer.limit(info.offset + info.size)
-                            appendPcm16(output, buffer.slice(), pcmEncoding)
-                            enforceDecodedSize(output.size(), outputChannels, outputSampleRate)
+                            output.push(buffer.slice())
                         }
                         outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                         codec.releaseOutputBuffer(outputIndex, false)
@@ -118,16 +117,7 @@ class AndroidAudioDecoder(
             codec.release()
         }
 
-        val pcm = output.toByteArray().toShortArray()
-        return DecodedAudio(
-            samples = Pcm16Normalizer.toMonoFloat(
-                interleavedSamples = pcm,
-                channelCount = outputChannels,
-                sourceSampleRate = outputSampleRate,
-                targetSampleRate = targetSampleRate,
-            ),
-            sampleRate = targetSampleRate,
-        )
+        return output.finish()
     }
 
     private fun findAudioTrack(extractor: MediaExtractor): AudioTrack {
@@ -147,35 +137,16 @@ class AndroidAudioDecoder(
         }
     }
 
-    private fun enforceDecodedSize(byteCount: Int, channelCount: Int, sampleRate: Int) {
-        val maximumBytes = MAX_DURATION_SECONDS.toLong() * sampleRate * channelCount * Short.SIZE_BYTES
-        require(byteCount.toLong() <= maximumBytes) {
-            "Decoded audio exceeded the 5-minute safety limit"
-        }
-    }
-
-    private fun appendPcm16(output: ByteArrayOutputStream, buffer: ByteBuffer, encoding: Int) {
-        buffer.order(ByteOrder.nativeOrder())
-        when (encoding) {
-            AudioFormat.ENCODING_PCM_16BIT -> {
-                val bytes = ByteArray(buffer.remaining())
-                buffer.get(bytes)
-                output.write(bytes)
-            }
-            AudioFormat.ENCODING_PCM_FLOAT -> while (buffer.remaining() >= Float.SIZE_BYTES) {
-                val sample = (buffer.float.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
-                output.write(sample.toInt() and 0xff)
-                output.write(sample.toInt().ushr(8) and 0xff)
-            }
-            else -> throw IllegalArgumentException("Unsupported decoder PCM encoding: $encoding")
-        }
-    }
-
-    private fun ByteArray.toShortArray(): ShortArray {
-        require(size % Short.SIZE_BYTES == 0) { "Decoder returned incomplete PCM16 data" }
-        val buffer = ByteBuffer.wrap(this).order(ByteOrder.nativeOrder())
-        return ShortArray(size / Short.SIZE_BYTES) { buffer.short }
-    }
+    private fun outputFormat(sampleRate: Int, channelCount: Int, encoding: Int) =
+        MediaCodecPcmAccumulator.PcmOutputFormat(
+            sampleRate = sampleRate,
+            channelCount = channelCount,
+            encoding = when (encoding) {
+                AudioFormat.ENCODING_PCM_16BIT -> MediaCodecPcmAccumulator.PcmEncoding.PCM_16BIT
+                AudioFormat.ENCODING_PCM_FLOAT -> MediaCodecPcmAccumulator.PcmEncoding.PCM_FLOAT
+                else -> throw IllegalArgumentException("Unsupported decoder PCM encoding: $encoding")
+            },
+        )
 
     private fun MediaFormat.getLongOrDefault(key: String, defaultValue: Long): Long =
         if (containsKey(key)) getLong(key) else defaultValue
