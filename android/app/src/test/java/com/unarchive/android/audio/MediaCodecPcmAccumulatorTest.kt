@@ -98,6 +98,24 @@ class MediaCodecPcmAccumulatorTest {
         assertEquals(0, audio.samples.size)
     }
 
+    @Test
+    fun streamingModeEmitsChunksWithoutCollectingCompatibilityOutput() {
+        val emitted = mutableListOf<Float>()
+        val accumulator = MediaCodecPcmAccumulator(
+            targetSampleRate = 16_000,
+            maximumDurationSeconds = 300,
+            onSamples = { samples -> samples.forEach(emitted::add) },
+            collectOutput = false,
+        )
+        accumulator.updateFormat(PcmOutputFormat(16_000, 1, PcmEncoding.PCM_16BIT))
+        accumulator.push(shortBuffer(shortArrayOf(0, 16_384, -16_384)))
+
+        val count = accumulator.finishStreaming()
+
+        assertEquals(3L, count)
+        assertArrayEquals(floatArrayOf(0f, 0.5f, -0.5f), emitted.toFloatArray(), 0.000001f)
+    }
+
     private fun accumulator(format: PcmOutputFormat) =
         MediaCodecPcmAccumulator(targetSampleRate = 16_000, maximumDurationSeconds = 300)
             .also { it.updateFormat(format) }

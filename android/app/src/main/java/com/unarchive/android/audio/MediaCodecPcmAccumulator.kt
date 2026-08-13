@@ -6,6 +6,8 @@ import java.nio.ByteOrder
 class MediaCodecPcmAccumulator(
     private val targetSampleRate: Int,
     private val maximumDurationSeconds: Long,
+    private val onSamples: (FloatArray) -> Unit = {},
+    private val collectOutput: Boolean = true,
 ) {
     private var format: PcmOutputFormat? = null
     private var normalizer: StreamingPcm16Normalizer? = null
@@ -13,7 +15,8 @@ class MediaCodecPcmAccumulator(
     private var pendingByteCount = 0
     private var decodedSampleCount = 0L
     private var finished = false
-    private val output = FloatArrayBuilder()
+    private val output = FloatArrayCollector()
+    private var normalizedSampleCount = 0L
 
     internal var maximumPendingByteCount = 0
         private set
@@ -71,7 +74,7 @@ class MediaCodecPcmAccumulator(
         if (samples.isNotEmpty()) {
             decodedSampleCount += samples.size
             enforceDuration(currentFormat)
-            output.addAll(currentNormalizer.push(samples))
+            emit(currentNormalizer.push(samples))
         }
     }
 
@@ -80,8 +83,20 @@ class MediaCodecPcmAccumulator(
         finished = true
         require(pendingByteCount == 0) { "Decoder returned an incomplete PCM sample" }
         val currentNormalizer = requireNotNull(normalizer) { "Decoder produced no PCM format" }
-        output.addAll(currentNormalizer.finish())
+        emit(currentNormalizer.finish())
         return DecodedAudio(output.toArray(), targetSampleRate)
+    }
+
+    fun finishStreaming(): Long {
+        finish()
+        return normalizedSampleCount
+    }
+
+    private fun emit(samples: FloatArray) {
+        if (samples.isEmpty()) return
+        normalizedSampleCount += samples.size
+        onSamples(samples)
+        if (collectOutput) output.addAll(samples)
     }
 
     private fun enforceDuration(currentFormat: PcmOutputFormat) {
@@ -114,22 +129,4 @@ class MediaCodecPcmAccumulator(
         PCM_FLOAT(Float.SIZE_BYTES),
     }
 
-    private class FloatArrayBuilder {
-        private var values = FloatArray(1_024)
-        private var size = 0
-
-        fun addAll(samples: FloatArray) {
-            if (samples.isEmpty()) return
-            val requiredSize = size + samples.size
-            if (requiredSize > values.size) {
-                var newSize = values.size
-                while (newSize < requiredSize) newSize *= 2
-                values = values.copyOf(newSize)
-            }
-            samples.copyInto(values, destinationOffset = size)
-            size = requiredSize
-        }
-
-        fun toArray(): FloatArray = values.copyOf(size)
-    }
 }

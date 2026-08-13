@@ -19,13 +19,30 @@ class AndroidAudioDecoder(
         targetSampleRate: Int,
         progressListener: AsrProgressListener,
     ): DecodedAudio {
+        val output = FloatArrayCollector()
+        decodeChunks(uri, targetSampleRate, progressListener, output::addAll)
+        return DecodedAudio(output.toArray(), targetSampleRate)
+    }
+
+    suspend fun decodeChunks(
+        uri: Uri,
+        targetSampleRate: Int,
+        progressListener: AsrProgressListener,
+        onSamples: (FloatArray) -> Unit,
+    ): Long {
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(context, uri, null)
             val track = findAudioTrack(extractor)
             extractor.selectTrack(track.index)
             enforceDurationLimit(track.format)
-            return decodeTrack(extractor, track.format, targetSampleRate, progressListener)
+            return decodeTrack(
+                extractor = extractor,
+                inputFormat = track.format,
+                targetSampleRate = targetSampleRate,
+                progressListener = progressListener,
+                onSamples = onSamples,
+            )
         } finally {
             extractor.release()
         }
@@ -36,13 +53,19 @@ class AndroidAudioDecoder(
         inputFormat: MediaFormat,
         targetSampleRate: Int,
         progressListener: AsrProgressListener,
-    ): DecodedAudio {
+        onSamples: (FloatArray) -> Unit,
+    ): Long {
         val mime = requireNotNull(inputFormat.getString(MediaFormat.KEY_MIME))
         val codec = MediaCodec.createDecoderByType(mime)
         var outputSampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var outputChannels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
-        val output = MediaCodecPcmAccumulator(targetSampleRate, MAX_DURATION_SECONDS)
+        val output = MediaCodecPcmAccumulator(
+            targetSampleRate = targetSampleRate,
+            maximumDurationSeconds = MAX_DURATION_SECONDS,
+            onSamples = onSamples,
+            collectOutput = false,
+        )
         output.updateFormat(outputFormat(outputSampleRate, outputChannels, pcmEncoding))
         var inputEnded = false
         var outputEnded = false
@@ -117,7 +140,7 @@ class AndroidAudioDecoder(
             codec.release()
         }
 
-        return output.finish()
+        return output.finishStreaming()
     }
 
     private fun findAudioTrack(extractor: MediaExtractor): AudioTrack {

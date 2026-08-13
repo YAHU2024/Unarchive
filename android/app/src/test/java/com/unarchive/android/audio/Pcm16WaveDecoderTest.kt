@@ -128,6 +128,43 @@ class Pcm16WaveDecoderTest {
         assertEquals(2, chunkCount)
     }
 
+    @Test
+    fun chunkApiMatchesCompatibilityDecodeAndReportsActualSampleCount() {
+        val wave = waveFile(1, 8_000, shortArrayOf(0, 16_384, 0))
+        val expected = Pcm16WaveDecoder.decode(
+            ByteArrayInputStream(wave),
+            targetSampleRate = 16_000,
+            readBufferBytes = 3,
+        )
+        val chunks = mutableListOf<Float>()
+
+        val count = Pcm16WaveDecoder.decodeChunks(
+            input = ByteArrayInputStream(wave),
+            targetSampleRate = 16_000,
+            readBufferBytes = 3,
+        ) { samples -> samples.forEach(chunks::add) }
+
+        assertEquals(expected.samples.size.toLong(), count)
+        assertArrayEquals(expected.samples, chunks.toFloatArray(), 0f)
+    }
+
+    @Test
+    fun chunkApiReportsMonotonicDecodeProgress() {
+        val wave = waveFile(1, 16_000, ShortArray(1_000) { it.toShort() })
+        val progress = mutableListOf<Float>()
+
+        Pcm16WaveDecoder.decodeChunks(
+            input = ByteArrayInputStream(wave),
+            targetSampleRate = 16_000,
+            readBufferBytes = 127,
+            onProgress = progress::add,
+        ) { }
+
+        assertTrue(progress.isNotEmpty())
+        assertTrue(progress.zipWithNext().all { (before, after) -> after >= before })
+        assertEquals(1f, progress.last(), 0f)
+    }
+
     private fun waveFile(
         channelCount: Int,
         sampleRate: Int,

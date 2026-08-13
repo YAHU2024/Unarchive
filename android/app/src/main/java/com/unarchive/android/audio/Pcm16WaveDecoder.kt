@@ -11,6 +11,27 @@ object Pcm16WaveDecoder {
         readBufferBytes: Int = DEFAULT_READ_BUFFER_BYTES,
         onChunk: () -> Unit = {},
     ): DecodedAudio {
+        val output = FloatArrayCollector()
+        decodeChunks(
+            input = input,
+            targetSampleRate = targetSampleRate,
+            maximumDurationSeconds = maximumDurationSeconds,
+            readBufferBytes = readBufferBytes,
+            onChunk = onChunk,
+            onSamples = output::addAll,
+        )
+        return DecodedAudio(output.toArray(), targetSampleRate)
+    }
+
+    fun decodeChunks(
+        input: InputStream,
+        targetSampleRate: Int,
+        maximumDurationSeconds: Long = 5 * 60L,
+        readBufferBytes: Int = DEFAULT_READ_BUFFER_BYTES,
+        onChunk: () -> Unit = {},
+        onProgress: (Float) -> Unit = {},
+        onSamples: (FloatArray) -> Unit,
+    ): Long {
         require(readBufferBytes > 0) { "readBufferBytes must be positive" }
         require(input.readAscii(4) == "RIFF") { "Selected WAV has no RIFF header" }
         input.readUInt32Le()
@@ -40,15 +61,20 @@ object Pcm16WaveDecoder {
                         sourceSampleRate = waveFormat.sampleRate,
                         targetSampleRate = targetSampleRate,
                     )
-                    val output = FloatArrayBuilder()
-                    input.readPcm16Chunks(chunkSize, readBufferBytes, onChunk) { samples ->
-                        output.addAll(normalizer.push(samples))
+                    var normalizedSampleCount = 0L
+                    fun emit(samples: FloatArray) {
+                        if (samples.isEmpty()) return
+                        normalizedSampleCount += samples.size
+                        onSamples(samples)
                     }
-                    output.addAll(normalizer.finish())
-                    return DecodedAudio(
-                        samples = output.toArray(),
-                        sampleRate = targetSampleRate,
-                    )
+                    input.readPcm16Chunks(
+                        byteCount = chunkSize,
+                        readBufferBytes = readBufferBytes,
+                        onChunk = onChunk,
+                        onProgress = onProgress,
+                    ) { samples -> emit(normalizer.push(samples)) }
+                    emit(normalizer.finish())
+                    return normalizedSampleCount
                 }
                 else -> input.skipExactly(chunkSize)
             }
@@ -115,10 +141,12 @@ object Pcm16WaveDecoder {
         byteCount: Long,
         readBufferBytes: Int,
         onChunk: () -> Unit,
+        onProgress: (Float) -> Unit,
         consume: (ShortArray) -> Unit,
     ) {
         val buffer = ByteArray(readBufferBytes)
         var remaining = byteCount
+        var consumedBytes = 0L
         var pendingLowByte = -1
         while (remaining > 0) {
             onChunk()
@@ -127,6 +155,7 @@ object Pcm16WaveDecoder {
             if (count < 0) throw EOFException("Unexpected end of WAV file")
             if (count == 0) continue
             remaining -= count
+            consumedBytes += count
 
             val sampleCount = (count + if (pendingLowByte >= 0) 1 else 0) / Short.SIZE_BYTES
             val samples = ShortArray(sampleCount)
@@ -146,6 +175,7 @@ object Pcm16WaveDecoder {
             }
             if (byteIndex < count) pendingLowByte = buffer[byteIndex].toInt() and 0xff
             if (samples.isNotEmpty()) consume(samples)
+            onProgress(consumedBytes.toFloat() / byteCount.coerceAtLeast(1L))
         }
         check(pendingLowByte < 0) { "WAV contains incomplete PCM16 data" }
     }
@@ -157,25 +187,6 @@ object Pcm16WaveDecoder {
         (uint16Le(offset).toLong() or (uint16Le(offset + 2).toLong() shl 16)) and 0xffffffffL
 
     private data class WaveFormat(val channelCount: Int, val sampleRate: Int)
-
-    private class FloatArrayBuilder {
-        private var values = FloatArray(1_024)
-        private var size = 0
-
-        fun addAll(samples: FloatArray) {
-            if (samples.isEmpty()) return
-            val requiredSize = size + samples.size
-            if (requiredSize > values.size) {
-                var newSize = values.size
-                while (newSize < requiredSize) newSize *= 2
-                values = values.copyOf(newSize)
-            }
-            samples.copyInto(values, destinationOffset = size)
-            size = requiredSize
-        }
-
-        fun toArray(): FloatArray = values.copyOf(size)
-    }
 
     private const val PCM_FORMAT = 1
     private const val MIN_FORMAT_SIZE = 16

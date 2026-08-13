@@ -11,7 +11,6 @@ import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.unarchive.android.audio.AndroidAudioDecoder
-import com.unarchive.android.audio.DecodedAudio
 import com.unarchive.android.audio.Pcm16WaveDecoder
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngine
@@ -21,8 +20,8 @@ import com.unarchive.android.asr.AsrProgressListener
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.SenseVoiceModelFiles
 import com.unarchive.android.asr.SileroVadModelFile
-import com.unarchive.android.asr.SpeechSampleRange
-import com.unarchive.android.asr.SpeechSegmentPlanner
+import com.unarchive.android.asr.BufferedSpeechSegment
+import com.unarchive.android.asr.StreamingSpeechSegmentBuffer
 import com.unarchive.android.asr.TranscriptSegment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -56,116 +55,181 @@ class SenseVoiceAsrEngine(
         coroutineContext.ensureActive()
         progressListener.onProgress(0.05f)
 
-        val sourceUri = Uri.parse(source.uri)
-        val audio = if (source.displayName.endsWith(".wav", ignoreCase = true)) {
-            readWave(sourceUri, progressListener)
-        } else {
-            AndroidAudioDecoder(context).decode(
-                uri = sourceUri,
-                targetSampleRate = EXPECTED_SAMPLE_RATE,
+        val recognizer = createRecognizer(modelFiles, config)
+        val transcripts = mutableListOf<TranscriptSegment>()
+        try {
+            val currentContext = coroutineContext
+            val segmentBuffer = StreamingSpeechSegmentBuffer(
+                contextSamples = if (config.enableVad) {
+                    config.contextPaddingMs * EXPECTED_SAMPLE_RATE / 1_000
+                } else {
+                    0
+                },
+                maximumSegmentSamples = MAX_SEGMENT_SECONDS * EXPECTED_SAMPLE_RATE,
+                historySamples = if (config.enableVad) {
+                    VAD_HISTORY_SECONDS * EXPECTED_SAMPLE_RATE
+                } else {
+                    0
+                },
+            ) { segment ->
+                currentContext.ensureActive()
+                recognizeSegment(recognizer, segment)?.let(transcripts::add)
+            }
+            val audioDurationSamples = streamAudio(
+                source = source,
+                config = config,
+                vadModel = vadModel,
+                segmentBuffer = segmentBuffer,
                 progressListener = progressListener,
             )
-        }
-        coroutineContext.ensureActive()
-        progressListener.onProgress(0.55f)
-
-        val ranges = if (config.enableVad) {
-            detectSpeech(audio, vadModel, progressListener)
-        } else {
-            listOf(SpeechSampleRange(0, audio.samples.size))
-        }
-        val segments = SpeechSegmentPlanner.withContext(
-            speechRanges = ranges,
-            totalSamples = audio.samples.size,
-            contextSamples = config.contextPaddingMs * audio.sampleRate / 1_000,
-            maximumSegmentSamples = MAX_SEGMENT_SECONDS * audio.sampleRate,
-        )
-        coroutineContext.ensureActive()
-        progressListener.onProgress(0.65f)
-
-        val recognizer = createRecognizer(modelFiles, config)
-        try {
-            val transcripts = segments.mapIndexedNotNull { index, segment ->
-                coroutineContext.ensureActive()
-                val stream = recognizer.createStream()
-                val samples = audio.samples.copyOfRange(segment.startSample, segment.endSample)
-                val text = try {
-                    stream.acceptWaveform(samples, audio.sampleRate)
-                    recognizer.decode(stream)
-                    coroutineContext.ensureActive()
-                    recognizer.getResult(stream).text.trim()
-                } finally {
-                    stream.release()
-                }
-                progressListener.onProgress(
-                    0.65f + 0.35f * (index + 1).toFloat() / segments.size.coerceAtLeast(1),
-                )
-                text.takeIf { it.isNotEmpty() }?.let {
-                    TranscriptSegment(
-                        startMs = segment.startSample * 1_000L / audio.sampleRate,
-                        endMs = segment.endSample * 1_000L / audio.sampleRate,
-                        text = it,
-                    )
-                }
-            }
-            if (segments.isEmpty()) progressListener.onProgress(1f)
+            coroutineContext.ensureActive()
+            progressListener.onProgress(1f)
             AsrOutput(
                 segments = transcripts,
-                audioDurationMs = audio.samples.size * 1_000L / audio.sampleRate,
+                audioDurationMs = audioDurationSamples * 1_000L / EXPECTED_SAMPLE_RATE,
             )
         } finally {
             recognizer.release()
         }
     }
 
-    private suspend fun detectSpeech(
-        audio: DecodedAudio,
-        model: SileroVadModelFile,
+    private suspend fun streamAudio(
+        source: AudioSource,
+        config: AsrConfig,
+        vadModel: SileroVadModelFile,
+        segmentBuffer: StreamingSpeechSegmentBuffer,
         progressListener: AsrProgressListener,
-    ): List<SpeechSampleRange> {
-        val vad = Vad(
+    ): Long {
+        val vad = if (config.enableVad) Vad(
             config = VadModelConfig(
                 sileroVadModelConfig = SileroVadModelConfig(
-                    model = model.model.absolutePath,
+                    model = vadModel.model.absolutePath,
                     threshold = 0.5f,
                     minSilenceDuration = 0.5f,
                     minSpeechDuration = 0.25f,
                     windowSize = VAD_WINDOW_SIZE,
                     maxSpeechDuration = VAD_MAX_SPEECH_SECONDS.toFloat(),
                 ),
-                sampleRate = audio.sampleRate,
+                sampleRate = EXPECTED_SAMPLE_RATE,
                 numThreads = 1,
                 provider = "cpu",
             ),
-        )
+        ) else null
         return try {
-            var offset = 0
-            val window = FloatArray(VAD_WINDOW_SIZE)
-            while (offset < audio.samples.size) {
-                coroutineContext.ensureActive()
-                val end = (offset + VAD_WINDOW_SIZE).coerceAtMost(audio.samples.size)
-                window.fill(0f)
-                audio.samples.copyInto(window, endIndex = end, startIndex = offset)
-                vad.acceptWaveform(window)
-                offset = end
-                progressListener.onProgress(
-                    0.55f + 0.1f * offset.toFloat() / audio.samples.size.coerceAtLeast(1),
-                )
-            }
-            vad.flush()
-            buildList {
-                while (!vad.empty()) {
-                    val segment = vad.front()
-                    val start = segment.start.coerceIn(0, audio.samples.size)
-                    val end = (segment.start.toLong() + segment.samples.size)
-                        .coerceIn(start.toLong(), audio.samples.size.toLong())
-                        .toInt()
-                    if (end > start) add(SpeechSampleRange(start, end))
-                    vad.pop()
+            val currentContext = coroutineContext
+            val vadWindow = FloatArray(VAD_WINDOW_SIZE)
+            var vadWindowSize = 0
+            var decodedSamples = 0L
+            fun consume(samples: FloatArray) {
+                currentContext.ensureActive()
+                if (vad == null) {
+                    val chunkStart = decodedSamples
+                    decodedSamples += samples.size
+                    segmentBuffer.updateSpeechActive(true)
+                    segmentBuffer.append(samples)
+                    segmentBuffer.addSpeechRange(chunkStart, decodedSamples)
+                    return
+                }
+
+                var offset = 0
+                while (offset < samples.size) {
+                    val count = minOf(VAD_WINDOW_SIZE - vadWindowSize, samples.size - offset)
+                    val audioSlice = FloatArray(count)
+                    samples.copyInto(
+                        audioSlice,
+                        startIndex = offset,
+                        endIndex = offset + count,
+                    )
+                    segmentBuffer.updateSpeechActive(vad.isSpeechDetected())
+                    segmentBuffer.append(audioSlice)
+                    audioSlice.copyInto(vadWindow, destinationOffset = vadWindowSize)
+                    decodedSamples += count
+                    vadWindowSize += count
+                    offset += count
+                    if (vadWindowSize == VAD_WINDOW_SIZE) {
+                        vad.acceptWaveform(vadWindow)
+                        drainVad(vad, segmentBuffer, decodedSamples)
+                        vadWindowSize = 0
+                    }
                 }
             }
+
+            val sourceUri = Uri.parse(source.uri)
+            val reportedSamples = if (source.displayName.endsWith(".wav", ignoreCase = true)) {
+                context.contentResolver.openInputStream(sourceUri).use { input ->
+                    requireNotNull(input) { "Cannot open selected audio" }
+                    Pcm16WaveDecoder.decodeChunks(
+                        input = input,
+                        targetSampleRate = EXPECTED_SAMPLE_RATE,
+                        onChunk = { currentContext.ensureActive() },
+                        onProgress = { decodedProgress ->
+                            progressListener.onProgress(0.05f + 0.45f * decodedProgress)
+                        },
+                        onSamples = ::consume,
+                    )
+                }.also { progressListener.onProgress(0.55f) }
+            } else {
+                AndroidAudioDecoder(context).decodeChunks(
+                    uri = sourceUri,
+                    targetSampleRate = EXPECTED_SAMPLE_RATE,
+                    progressListener = progressListener,
+                    onSamples = ::consume,
+                )
+            }
+            check(reportedSamples == decodedSamples) { "Decoder sample count mismatch" }
+
+            if (vad != null) {
+                if (vadWindowSize > 0) {
+                    vadWindow.fill(0f, vadWindowSize)
+                    vad.acceptWaveform(vadWindow)
+                }
+                vad.flush()
+                drainVad(vad, segmentBuffer, decodedSamples, forceInactive = true)
+            } else {
+                segmentBuffer.updateSpeechActive(false)
+            }
+            segmentBuffer.finish()
+            decodedSamples
         } finally {
-            vad.release()
+            vad?.release()
+        }
+    }
+
+    private fun drainVad(
+        vad: Vad,
+        segmentBuffer: StreamingSpeechSegmentBuffer,
+        totalSamples: Long,
+        forceInactive: Boolean = false,
+    ) {
+        while (!vad.empty()) {
+            val segment = vad.front()
+            val start = segment.start.toLong().coerceIn(0L, totalSamples)
+            val end = (segment.start.toLong() + segment.samples.size)
+                .coerceIn(start, totalSamples)
+            segmentBuffer.addSpeechRange(start, end)
+            vad.pop()
+        }
+        segmentBuffer.updateSpeechActive(!forceInactive && vad.isSpeechDetected())
+    }
+
+    private fun recognizeSegment(
+        recognizer: OfflineRecognizer,
+        segment: BufferedSpeechSegment,
+    ): TranscriptSegment? {
+        val stream = recognizer.createStream()
+        val text = try {
+            stream.acceptWaveform(segment.samples, EXPECTED_SAMPLE_RATE)
+            recognizer.decode(stream)
+            recognizer.getResult(stream).text.trim()
+        } finally {
+            stream.release()
+        }
+        return text.takeIf { it.isNotEmpty() }?.let {
+            TranscriptSegment(
+                startMs = segment.startSample * 1_000L / EXPECTED_SAMPLE_RATE,
+                endMs = segment.endSample * 1_000L / EXPECTED_SAMPLE_RATE,
+                text = it,
+            )
         }
     }
 
@@ -188,22 +252,11 @@ class SenseVoiceAsrEngine(
         ),
     )
 
-    private suspend fun readWave(uri: Uri, progressListener: AsrProgressListener): DecodedAudio {
-        val currentContext = coroutineContext
-        val audio = context.contentResolver.openInputStream(uri).use { input ->
-            requireNotNull(input) { "Cannot open selected audio" }
-            Pcm16WaveDecoder.decode(input, EXPECTED_SAMPLE_RATE) {
-                currentContext.ensureActive()
-            }
-        }
-        progressListener.onProgress(0.5f)
-        return audio
-    }
-
     companion object {
         private const val EXPECTED_SAMPLE_RATE = 16_000
         private const val VAD_WINDOW_SIZE = 512
         private const val VAD_MAX_SPEECH_SECONDS = 29
+        private const val VAD_HISTORY_SECONDS = 2
         private const val MAX_SEGMENT_SECONDS = 30
     }
 }
