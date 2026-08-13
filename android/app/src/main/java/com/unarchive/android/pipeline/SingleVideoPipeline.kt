@@ -17,7 +17,9 @@ enum class SingleVideoStage {
     RESOLVING_REFERENCE,
     FETCHING_METADATA,
     RESOLVING_AUDIO,
+    CHECKING_AUDIO_CACHE,
     DOWNLOADING_AUDIO,
+    USING_CACHED_AUDIO,
     TRANSCRIBING,
     COMPLETE,
 }
@@ -48,6 +50,7 @@ class SingleVideoPipeline(
     suspend fun run(
         input: String,
         config: AsrConfig,
+        forceRefreshAudio: Boolean = false,
         progressListener: SingleVideoProgressListener,
     ): SingleVideoResult {
         progressListener.update(SingleVideoStage.RESOLVING_REFERENCE, 0.02f)
@@ -56,11 +59,14 @@ class SingleVideoPipeline(
         val metadata = platformAdapter.fetchMetadata(reference)
         progressListener.update(SingleVideoStage.RESOLVING_AUDIO, 0.15f)
         val stream = platformAdapter.resolveAudio(metadata)
-        progressListener.update(SingleVideoStage.DOWNLOADING_AUDIO, 0.2f)
+        progressListener.update(SingleVideoStage.CHECKING_AUDIO_CACHE, 0.18f)
+        var downloadStarted = false
         val download = audioDownloader.download(
             metadata,
             stream,
+            forceRefreshAudio,
             DownloadProgressListener { downloaded, total ->
+                downloadStarted = true
                 val fraction = total?.takeIf { it > 0 }
                     ?.let { downloaded.toFloat() / it }
                     ?.coerceIn(0f, 1f)
@@ -71,6 +77,11 @@ class SingleVideoPipeline(
                 )
             },
         )
+        if (download.reused) {
+            progressListener.update(SingleVideoStage.USING_CACHED_AUDIO, 0.5f)
+        } else if (!downloadStarted) {
+            progressListener.update(SingleVideoStage.DOWNLOADING_AUDIO, 0.5f)
+        }
         progressListener.update(SingleVideoStage.TRANSCRIBING, 0.5f)
         val benchmark = benchmarkRunner.run(
             source = AudioSource(download.file.name, download.file.toURI().toString()),

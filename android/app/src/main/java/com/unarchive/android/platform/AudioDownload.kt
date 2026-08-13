@@ -16,6 +16,7 @@ fun interface AudioDownloader {
     suspend fun download(
         metadata: VideoMetadata,
         stream: AudioStream,
+        forceRefresh: Boolean,
         progressListener: DownloadProgressListener,
     ): DownloadedAudio
 }

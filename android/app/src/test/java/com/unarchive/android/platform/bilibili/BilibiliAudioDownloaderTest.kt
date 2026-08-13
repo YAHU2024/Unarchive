@@ -36,7 +36,7 @@ class BilibiliAudioDownloaderTest {
             },
         )
 
-        val result = downloader.download(metadata(), stream(), NO_PROGRESS)
+        val result = downloader.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS)
 
         assertEquals(listOf("https://cdn.example/main", "https://cdn.example/backup"), requested)
         assertArrayEquals(byteArrayOf(3, 4, 5), result.file.readBytes())
@@ -45,19 +45,117 @@ class BilibiliAudioDownloaderTest {
     }
 
     @Test
-    fun reusesCompleteCachedAudio() = runTest {
+    fun reusesFreshCacheWithMatchingMetadata() = runTest {
         val cache = temporaryFolder.newFolder("reused")
-        val cached = cache.resolve("BV1PS42197aM.m4a")
-        cached.writeBytes(byteArrayOf(9, 8, 7))
+        val clock = MutableEpochClock(1_000)
+        val first = BilibiliAudioDownloader(
+            cacheDirectory = cache,
+            transport = MediaDownloadTransport { request ->
+                request.destination.writeBytes(byteArrayOf(9, 8, 7))
+                3
+            },
+            wallClockEpochMs = clock::now,
+        ).download(metadata(), stream(), forceRefresh = false, NO_PROGRESS)
         val downloader = BilibiliAudioDownloader(
             cacheDirectory = cache,
             transport = MediaDownloadTransport { throw AssertionError("network should not run") },
+            wallClockEpochMs = clock::now,
         )
 
-        val result = downloader.download(metadata(), stream(), NO_PROGRESS)
+        clock.value = 2_000
+        val result = downloader.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS)
 
+        assertFalse(first.reused)
         assertTrue(result.reused)
         assertEquals(3, result.byteCount)
+        val persistedMetadata = cache.resolve("BV1PS42197aM.m4a.json").readText()
+        assertFalse(persistedMetadata.contains("cdn.example"))
+        assertTrue(persistedMetadata.contains(metadata().canonicalUrl))
+    }
+
+    @Test
+    fun refreshesExpiredCacheAndForceRefreshesFreshCache() = runTest {
+        val cache = temporaryFolder.newFolder("refresh")
+        val clock = MutableEpochClock(1_000)
+        var downloads = 0
+        val downloader = BilibiliAudioDownloader(
+            cacheDirectory = cache,
+            cacheLifetimeMs = 100,
+            wallClockEpochMs = clock::now,
+            transport = MediaDownloadTransport { request ->
+                downloads++
+                request.destination.writeBytes(byteArrayOf(downloads.toByte()))
+                1
+            },
+        )
+
+        downloader.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS)
+        clock.value = 1_050
+        assertTrue(downloader.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS).reused)
+        assertFalse(downloader.download(metadata(), stream(), forceRefresh = true, NO_PROGRESS).reused)
+        clock.value = 1_201
+        assertFalse(downloader.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS).reused)
+
+        assertEquals(3, downloads)
+    }
+
+    @Test
+    fun refreshesLegacyFileWithoutMetadata() = runTest {
+        val cache = temporaryFolder.newFolder("legacy")
+        cache.resolve("BV1PS42197aM.m4a").writeBytes(byteArrayOf(9))
+        var downloads = 0
+        val downloader = BilibiliAudioDownloader(
+            cacheDirectory = cache,
+            transport = MediaDownloadTransport { request ->
+                downloads++
+                request.destination.writeBytes(byteArrayOf(1, 2))
+                2
+            },
+        )
+
+        val result = downloader.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS)
+
+        assertFalse(result.reused)
+        assertEquals(1, downloads)
+        assertArrayEquals(byteArrayOf(1, 2), result.file.readBytes())
+    }
+
+    @Test
+    fun failedRefreshPreservesExistingCache() = runTest {
+        val cache = temporaryFolder.newFolder("failed-refresh")
+        val clock = MutableEpochClock(1_000)
+        val seed = BilibiliAudioDownloader(
+            cacheDirectory = cache,
+            wallClockEpochMs = clock::now,
+            transport = MediaDownloadTransport { request ->
+                request.destination.writeBytes(byteArrayOf(4, 5, 6))
+                3
+            },
+        )
+        val cached = seed.download(metadata(), stream(), forceRefresh = false, NO_PROGRESS).file
+        val metadataFile = cache.resolve("${cached.name}.json")
+        val metadataBefore = metadataFile.readText()
+        val failing = BilibiliAudioDownloader(
+            cacheDirectory = cache,
+            wallClockEpochMs = clock::now,
+            transport = MediaDownloadTransport { request ->
+                request.destination.writeBytes(byteArrayOf(9))
+                throw IOException("refresh failed")
+            },
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            runTest {
+                failing.download(
+                    metadata(),
+                    stream(backupUrls = emptyList()),
+                    forceRefresh = true,
+                    NO_PROGRESS,
+                )
+            }
+        }
+        assertArrayEquals(byteArrayOf(4, 5, 6), cached.readBytes())
+        assertEquals(metadataBefore, metadataFile.readText())
     }
 
     @Test
@@ -72,7 +170,14 @@ class BilibiliAudioDownloaderTest {
         )
 
         assertThrows(CancellationException::class.java) {
-            runTest { downloader.download(metadata(), stream(backupUrls = emptyList()), NO_PROGRESS) }
+            runTest {
+                downloader.download(
+                    metadata(),
+                    stream(backupUrls = emptyList()),
+                    forceRefresh = false,
+                    NO_PROGRESS,
+                )
+            }
         }
         assertFalse(cache.resolve("BV1PS42197aM.m4a.part").exists())
     }
@@ -92,13 +197,21 @@ class BilibiliAudioDownloaderTest {
         )
 
         assertThrows(IllegalStateException::class.java) {
-            runTest { oversized.download(metadata(), stream(backupUrls = emptyList()), NO_PROGRESS) }
+            runTest {
+                oversized.download(
+                    metadata(),
+                    stream(backupUrls = emptyList()),
+                    forceRefresh = false,
+                    NO_PROGRESS,
+                )
+            }
         }
         assertThrows(IllegalStateException::class.java) {
             runTest {
                 insecure.download(
                     metadata(),
                     stream(url = "http://cdn.example/audio", backupUrls = emptyList()),
+                    forceRefresh = false,
                     NO_PROGRESS,
                 )
             }
@@ -128,4 +241,8 @@ class BilibiliAudioDownloaderTest {
     private companion object {
         val NO_PROGRESS = DownloadProgressListener { _, _ -> }
     }
+}
+
+private class MutableEpochClock(var value: Long) {
+    fun now() = value
 }

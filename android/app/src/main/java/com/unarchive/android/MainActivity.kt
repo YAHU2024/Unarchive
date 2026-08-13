@@ -12,6 +12,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -124,6 +127,11 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
     }
     var selectedEngine by remember { mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA) }
     var progress by remember { mutableFloatStateOf(0f) }
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = if (progress == 0f) snap() else tween(durationMillis = PROGRESS_ANIMATION_MS),
+        label = "pipeline progress",
+    )
     var result by remember { mutableStateOf<BenchmarkResult?>(null) }
     var videoResult by remember { mutableStateOf<SingleVideoResult?>(null) }
     var storedResults by remember { mutableStateOf(resultRepository.list()) }
@@ -147,7 +155,8 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         progress = 0f
         status = if (uri == null) "No audio selected." else "Audio selected. Ready to benchmark."
     }
-    fun processVideo(reference: String) {
+    fun processVideo(reference: String, forceRefreshAudio: Boolean = false) {
+        val previousStoredResult = selectedStoredResult
         result = null
         videoResult = null
         selectedStoredResult = null
@@ -158,18 +167,24 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 videoResult = videoPipeline.run(
                     input = reference,
                     config = AsrConfig(engine = selectedEngine),
+                    forceRefreshAudio = forceRefreshAudio,
                     progressListener = SingleVideoProgressListener { update ->
-                        progress = update.overallProgress
+                        progress = advanceProgress(progress, update.overallProgress)
                         status = update.stage.displayText
                     },
                 )
                 result = videoResult?.benchmark
                 storedResults = resultRepository.list()
                 selectedStoredResult = videoResult?.storedResult
-                status = "Recognition complete and saved locally."
+                status = videoCompletionStatus(
+                    reusedDownload = videoResult?.reusedDownload == true,
+                    forceRefreshAudio = forceRefreshAudio,
+                )
             } catch (_: CancellationException) {
+                selectedStoredResult = previousStoredResult
                 status = "Video processing cancelled."
             } catch (error: Exception) {
+                selectedStoredResult = previousStoredResult
                 status = error.message ?: "Video processing failed."
             } finally {
                 runningJob = null
@@ -229,7 +244,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
 
         if (runningJob != null) {
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { animatedProgress },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -253,7 +268,9 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                                     uri = uri.toString(),
                                 ),
                                 config = AsrConfig(engine = selectedEngine),
-                                progressListener = AsrProgressListener { progress = it.coerceIn(0f, 1f) },
+                                progressListener = AsrProgressListener {
+                                    progress = advanceProgress(progress, it)
+                                },
                             )
                             status = if (
                                 selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
@@ -319,6 +336,16 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             ) {
                 Text("Rerun")
             }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = runningJob == null,
+                onClick = {
+                    videoReference = stored.canonicalUrl
+                    processVideo(stored.canonicalUrl, forceRefreshAudio = true)
+                },
+            ) {
+                Text("Redownload and rerun")
+            }
             stored.segments.forEach { segment ->
                 Text("[${segment.startMs.asTimestamp()} - ${segment.endMs.asTimestamp()}] ${segment.text}")
             }
@@ -355,7 +382,9 @@ private val SingleVideoStage.displayText: String
         SingleVideoStage.RESOLVING_REFERENCE -> "Resolving Bilibili reference..."
         SingleVideoStage.FETCHING_METADATA -> "Fetching video metadata..."
         SingleVideoStage.RESOLVING_AUDIO -> "Resolving audio stream..."
+        SingleVideoStage.CHECKING_AUDIO_CACHE -> "Checking audio cache..."
         SingleVideoStage.DOWNLOADING_AUDIO -> "Downloading audio..."
+        SingleVideoStage.USING_CACHED_AUDIO -> "Using cached audio..."
         SingleVideoStage.TRANSCRIBING -> "Transcribing on device..."
         SingleVideoStage.COMPLETE -> "Recognition complete."
     }
@@ -402,3 +431,17 @@ private fun Context.shareText(title: String, text: String) {
         .putExtra(Intent.EXTRA_TEXT, text)
     startActivity(Intent.createChooser(intent, "Share transcript"))
 }
+
+internal fun videoCompletionStatus(
+    reusedDownload: Boolean,
+    forceRefreshAudio: Boolean,
+): String = when {
+    reusedDownload -> "Recognition complete. Audio cache reused and result saved locally."
+    forceRefreshAudio -> "Recognition complete. Audio redownloaded and result saved locally."
+    else -> "Recognition complete. Audio downloaded and result saved locally."
+}
+
+internal fun advanceProgress(current: Float, next: Float): Float =
+    maxOf(current, next.coerceIn(0f, 1f))
+
+private const val PROGRESS_ANIMATION_MS = 350

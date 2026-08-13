@@ -34,5 +34,9 @@ speech, adds up to 500 ms context, and bounds SenseVoice inputs to 30 seconds.
 Cancellation is checked between decoding, VAD windows, and ASR segments, and
 before and after sherpa's blocking native decode; it cannot interrupt a decode
 already in progress. Saved video results use private atomic JSON files keyed by
-platform and canonical video ID. Cached Bilibili audio still needs an explicit
-age policy and force-refresh path before it is treated as durable long-term state.
+platform and canonical video ID. Bilibili audio cache entries include private
+metadata without signed CDN URLs, remain reusable for seven days, and can be
+explicitly redownloaded from a saved result. Failed refreshes preserve the prior
+audio and saved transcript. Legacy audio files without metadata refresh once;
+subsequent normal reruns report that the audio cache was reused. Pipeline progress
+is monotonic and visually animated across cache, download, and transcription stages.

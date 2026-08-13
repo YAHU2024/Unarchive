@@ -41,7 +41,7 @@ class SingleVideoPipelineTest {
         var asrSource: AudioSource? = null
         val pipeline = SingleVideoPipeline(
             platformAdapter = FakePlatformAdapter(),
-            audioDownloader = AudioDownloader { _, _, progress ->
+            audioDownloader = AudioDownloader { _, _, _, progress ->
                 progress.onProgress(3, 3)
                 DownloadedAudio(audio, 3, reused = false)
             },
@@ -66,16 +66,54 @@ class SingleVideoPipelineTest {
         )
 
         val result = pipeline.run(
-            "https://b23.tv/example",
-            AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
-            SingleVideoProgressListener { stages += it.stage },
+            input = "https://b23.tv/example",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener { stages += it.stage },
         )
 
         assertEquals("BV1PS42197aM", result.metadata.id.value)
         assertEquals("hello", result.benchmark.segments.single().text)
         assertTrue(requireNotNull(asrSource).uri.startsWith("file:"))
         assertEquals(SingleVideoStage.COMPLETE, stages.last())
+        assertTrue(stages.indexOf(SingleVideoStage.CHECKING_AUDIO_CACHE) < stages.indexOf(SingleVideoStage.DOWNLOADING_AUDIO))
         assertTrue(stages.indexOf(SingleVideoStage.DOWNLOADING_AUDIO) < stages.indexOf(SingleVideoStage.TRANSCRIBING))
+    }
+
+    @Test
+    fun reportsCacheReuseWithoutClaimingToDownload() = runTest {
+        val audio = temporaryFolder.newFile("cached.m4a")
+        val stages = mutableListOf<SingleVideoStage>()
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _, _ ->
+                DownloadedAudio(audio, 1, reused = true)
+            },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ) = AsrOutput(emptyList(), 0)
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+        )
+
+        pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener { stages += it.stage },
+        )
+
+        assertTrue(SingleVideoStage.CHECKING_AUDIO_CACHE in stages)
+        assertTrue(SingleVideoStage.USING_CACHED_AUDIO in stages)
+        assertTrue(SingleVideoStage.DOWNLOADING_AUDIO !in stages)
+        assertTrue(stages.indexOf(SingleVideoStage.USING_CACHED_AUDIO) < stages.indexOf(SingleVideoStage.TRANSCRIBING))
     }
 
     @Test
@@ -84,7 +122,7 @@ class SingleVideoPipelineTest {
         val repository = InMemoryResultRepository()
         val pipeline = SingleVideoPipeline(
             platformAdapter = FakePlatformAdapter(),
-            audioDownloader = AudioDownloader { _, _, _ -> DownloadedAudio(audio, 0, reused = true) },
+            audioDownloader = AudioDownloader { _, _, _, _ -> DownloadedAudio(audio, 0, reused = true) },
             benchmarkRunner = BenchmarkRunner(
                 engineProvider = AsrEngineProvider { kind ->
                     object : AsrEngine {
@@ -104,20 +142,56 @@ class SingleVideoPipelineTest {
         )
 
         val first = pipeline.run(
-            "BV1PS42197aM",
-            AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
-            SingleVideoProgressListener {},
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
         )
         val second = pipeline.run(
-            "BV1PS42197aM",
-            AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
-            SingleVideoProgressListener {},
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
         )
 
         assertEquals(1_000L, first.storedResult?.createdAtEpochMs)
         assertEquals(1_000L, second.storedResult?.createdAtEpochMs)
         assertEquals(2_000L, second.storedResult?.updatedAtEpochMs)
         assertEquals(1, repository.list().size)
+    }
+
+    @Test
+    fun forwardsForcedAudioRefreshToDownloader() = runTest {
+        val audio = temporaryFolder.newFile("audio.m4a")
+        var forcedRefresh: Boolean? = null
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, force, _ ->
+                forcedRefresh = force
+                DownloadedAudio(audio, 0, reused = false)
+            },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ) = AsrOutput(emptyList(), 0)
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+        )
+
+        pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            forceRefreshAudio = true,
+            progressListener = SingleVideoProgressListener {},
+        )
+
+        assertEquals(true, forcedRefresh)
     }
 }
 
