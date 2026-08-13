@@ -50,6 +50,24 @@ class BilibiliApiTest {
     }
 
     @Test
+    fun choosesLowestBandwidthDashVideo() = runTest {
+        val api = BilibiliApi(TextTransport { _, _ ->
+            """{"code":0,"data":{"dash":{"video":[
+                {"bandwidth":800000,"baseUrl":"https://video.example/720p","width":1280,"height":720},
+                {"bandwidth":300000,"base_url":"https://video.example/360p","width":640,"height":360,"codecs":"avc1.64001f","mimeType":"video/mp4"}
+            ]}}}"""
+        })
+        val metadata = sampleMetadata()
+
+        val result = api.resolveVideo(metadata)
+
+        assertEquals("https://video.example/360p", result.url)
+        assertEquals(300_000, result.bandwidth)
+        assertEquals(640, result.width)
+        assertEquals(360, result.height)
+    }
+
+    @Test
     fun rejectsApiErrorsMissingAudioAndInsecureMediaUrls() {
         listOf(
             """{"code":-400,"message":"bad request"}""",

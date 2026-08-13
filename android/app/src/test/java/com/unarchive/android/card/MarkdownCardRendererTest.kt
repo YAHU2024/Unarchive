@@ -132,4 +132,21 @@ class MarkdownCardRendererTest {
         assertFalse(markdown.contains("## 故事线"))
         assertFalse(markdown.contains("## 关键要点"))
     }
+
+    @Test
+    fun rendersScreenshotsForChaptersWithImages() {
+        val analysis = CardAnalysis(
+            summary = "s",
+            keyPoints = emptyList(),
+            chapters = listOf(
+                CardChapter("章1", 0, 5_000, emptyList()),
+                CardChapter("章2", 5_000, 10_000, emptyList()),
+            ),
+        )
+
+        val markdown = MarkdownCardRenderer.render(result(), analysis, listOf("base64AAA", ""))
+
+        assertTrue(markdown.contains("![](data:image/jpeg;base64,base64AAA)"))
+        assertEquals(1, markdown.split("data:image/jpeg").size - 1)
+    }
 }

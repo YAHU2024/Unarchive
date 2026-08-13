@@ -21,6 +21,7 @@ import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.VideoPlatformAdapter
 import com.unarchive.android.platform.VideoReference
+import com.unarchive.android.platform.VideoStream
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.result.VideoResultKey
 import com.unarchive.android.result.VideoResultRepository
@@ -267,6 +268,16 @@ private class FakePlatformAdapter : VideoPlatformAdapter {
         backupUrls = emptyList(),
         bandwidth = 1,
         mimeType = "audio/mp4",
+        codecs = null,
+    )
+
+    override suspend fun resolveVideo(metadata: VideoMetadata) = VideoStream(
+        url = "https://cdn.example/video",
+        backupUrls = emptyList(),
+        bandwidth = 1,
+        width = 640,
+        height = 360,
+        mimeType = "video/mp4",
         codecs = null,
     )
 

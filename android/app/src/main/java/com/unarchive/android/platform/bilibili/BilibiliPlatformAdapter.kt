@@ -4,6 +4,7 @@ import com.unarchive.android.platform.VideoPlatformAdapter
 import com.unarchive.android.platform.VideoReference
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.AudioStream
+import com.unarchive.android.platform.VideoStream
 
 class BilibiliPlatformAdapter(
     private val redirectResolver: BilibiliRedirectResolver = BilibiliRedirectResolver(
@@ -26,4 +27,7 @@ class BilibiliPlatformAdapter(
 
     override suspend fun resolveAudio(metadata: VideoMetadata): AudioStream =
         api.resolveAudio(metadata)
+
+    override suspend fun resolveVideo(metadata: VideoMetadata): VideoStream =
+        api.resolveVideo(metadata)
 }

@@ -65,7 +65,13 @@ import com.unarchive.android.pipeline.SingleVideoProgressListener
 import com.unarchive.android.pipeline.SingleVideoResult
 import com.unarchive.android.pipeline.SingleVideoStage
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
+import com.unarchive.android.platform.DownloadProgressListener
+import com.unarchive.android.platform.PlatformVideoId
+import com.unarchive.android.platform.VideoPlatformAdapter
+import com.unarchive.android.platform.VideoReference
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
+import com.unarchive.android.video.VideoDownloader
+import com.unarchive.android.video.VideoFrameExtractor
 import com.unarchive.android.analyzer.ApiKeyStore
 import com.unarchive.android.analyzer.CardAnalyzer
 import com.unarchive.android.card.MarkdownCardRenderer
@@ -76,6 +82,8 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -129,15 +137,18 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
     val localAudioRunner = remember {
         LocalAudioCheckpointRunner(runner, checkpointRepository)
     }
+    val platformAdapter = remember { BilibiliPlatformAdapter() }
     val videoPipeline = remember {
         SingleVideoPipeline(
-            platformAdapter = BilibiliPlatformAdapter(),
+            platformAdapter = platformAdapter,
             audioDownloader = BilibiliAudioDownloader(File(context.cacheDir, "bilibili-audio")),
             benchmarkRunner = runner,
             resultRepository = resultRepository,
             checkpointRepository = checkpointRepository,
         )
     }
+    val videoDownloader = remember { VideoDownloader(File(context.cacheDir, "video-cache")) }
+    val frameExtractor = remember { VideoFrameExtractor() }
     val modelRepository = remember { ModelRepository(File(context.filesDir, "models")) }
     val apiKeyStore = remember { ApiKeyStore(context) }
     val cardAnalyzer = remember { CardAnalyzer() }
@@ -257,8 +268,17 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 val analysis = cardAnalyzer.analyze(
                     apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
                 )
-                context.exportCard(stored, MarkdownCardRenderer.render(stored, analysis))
-                status = "AI 卡片已生成并导出。"
+                val screenshots = if (analysis.chapters.isEmpty()) {
+                    emptyList()
+                } else {
+                    status = "正在下载视频并截图..."
+                    extractChapterScreenshots(
+                        platformAdapter, videoDownloader, frameExtractor,
+                        stored, analysis.chapters.map { it.startMs },
+                    )
+                }
+                context.exportCard(stored, MarkdownCardRenderer.render(stored, analysis, screenshots))
+                status = if (screenshots.isEmpty()) "AI 卡片已生成并导出。" else "图文卡片已生成并导出。"
             } catch (_: CancellationException) {
                 status = "AI 卡片生成已取消。"
             } catch (error: Exception) {
@@ -623,6 +643,37 @@ private fun Context.shareText(title: String, text: String) {
         .putExtra(Intent.EXTRA_SUBJECT, title)
         .putExtra(Intent.EXTRA_TEXT, text)
     startActivity(Intent.createChooser(intent, "Share transcript"))
+}
+
+private suspend fun extractChapterScreenshots(
+    platformAdapter: VideoPlatformAdapter,
+    videoDownloader: VideoDownloader,
+    frameExtractor: VideoFrameExtractor,
+    stored: StoredVideoResult,
+    timestampsMs: List<Long>,
+): List<String> {
+    val metadata = platformAdapter.fetchMetadata(
+        VideoReference.Canonical(
+            id = PlatformVideoId(stored.key.platform, stored.key.videoId),
+            url = stored.canonicalUrl,
+        ),
+    )
+    val stream = platformAdapter.resolveVideo(metadata)
+    val videoFile = videoDownloader.download(
+        stream = stream,
+        videoId = stored.key.videoId,
+        progressListener = DownloadProgressListener { _, _ -> },
+    )
+    return try {
+        withContext(Dispatchers.IO) {
+            frameExtractor.extractFrames(videoFile, timestampsMs).map { bytes ->
+                bytes?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+                    .orEmpty()
+            }
+        }
+    } finally {
+        videoFile.delete()
+    }
 }
 
 private fun Context.exportCard(stored: StoredVideoResult, markdown: String? = null) {

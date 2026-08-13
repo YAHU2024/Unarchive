@@ -19,6 +19,16 @@ data class AudioStream(
     val codecs: String?,
 )
 
+data class VideoStream(
+    val url: String,
+    val backupUrls: List<String>,
+    val bandwidth: Long,
+    val width: Int,
+    val height: Int,
+    val mimeType: String?,
+    val codecs: String?,
+)
+
 interface VideoPlatformAdapter {
     val platform: String
 
@@ -29,6 +39,8 @@ interface VideoPlatformAdapter {
     suspend fun fetchMetadata(reference: VideoReference.Canonical): VideoMetadata
 
     suspend fun resolveAudio(metadata: VideoMetadata): AudioStream
+
+    suspend fun resolveVideo(metadata: VideoMetadata): VideoStream
 }
 
 sealed interface VideoReference {

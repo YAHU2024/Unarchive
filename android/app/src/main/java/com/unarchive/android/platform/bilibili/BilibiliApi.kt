@@ -3,6 +3,7 @@ package com.unarchive.android.platform.bilibili
 import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.platform.VideoMetadata
+import com.unarchive.android.platform.VideoStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import org.json.JSONObject
@@ -79,6 +80,46 @@ class BilibiliApi(private val transport: TextTransport) {
             ?: throw IllegalArgumentException("Bilibili response has no usable DASH audio")
     }
 
+    suspend fun resolveVideo(metadata: VideoMetadata): VideoStream {
+        require(metadata.id.platform == PLATFORM && BVID_PATTERN.matches(metadata.id.value)) {
+            "Bilibili video resolution requires a canonical BV ID"
+        }
+        require(metadata.cid > 0) { "Bilibili video resolution requires a valid cid" }
+        val query = "bvid=${encode(metadata.id.value)}&cid=${metadata.cid}&fnval=16&fnver=0&fourk=1"
+        val root = responseRoot(
+            transport.get("$API_BASE/x/player/playurl?$query", PLAYURL_HEADERS),
+            "video stream",
+        )
+        val video = root.optJSONObject("data")
+            ?.optJSONObject("dash")
+            ?.optJSONArray("video")
+            ?: throw IllegalArgumentException("Bilibili response has no DASH video")
+        require(video.length() > 0) { "Bilibili response has no DASH video" }
+
+        val candidates = (0 until video.length()).mapNotNull { index ->
+            video.optJSONObject(index)?.let { item ->
+                val url = item.optString("baseUrl").ifBlank { item.optString("base_url") }
+                if (url.isBlank()) null else VideoStream(
+                    url = checkedMediaUrl(url),
+                    backupUrls = (item.optJSONArray("backupUrl") ?: item.optJSONArray("backup_url"))
+                        ?.let { values ->
+                            (0 until values.length()).mapNotNull { position ->
+                                values.optString(position).takeIf(String::isNotBlank)?.let(::checkedMediaUrl)
+                            }
+                        }
+                        .orEmpty(),
+                    bandwidth = item.optLong("bandwidth", 0),
+                    width = item.optInt("width", 0),
+                    height = item.optInt("height", 0),
+                    mimeType = item.optString("mimeType").takeIf(String::isNotBlank),
+                    codecs = item.optString("codecs").takeIf(String::isNotBlank),
+                )
+            }
+        }
+        return candidates.minByOrNull(VideoStream::bandwidth)
+            ?: throw IllegalArgumentException("Bilibili response has no usable DASH video")
+    }
+
     private fun responseRoot(body: String, purpose: String): JSONObject {
         val root = runCatching { JSONObject(body) }
             .getOrElse { throw IllegalArgumentException("Bilibili $purpose response is invalid") }
@@ -92,7 +133,7 @@ class BilibiliApi(private val transport: TextTransport) {
 
     private fun checkedMediaUrl(url: String): String {
         require(url.startsWith("https://", ignoreCase = true)) {
-            "Bilibili audio URL must use HTTPS"
+            "Bilibili media URL must use HTTPS"
         }
         return url
     }
