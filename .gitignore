@@ -40,12 +40,8 @@ Thumbs.db
 # CodeBuddy (project data, not source)
 .codebuddy/
 
-# Personal development documents
+# Private development documents
 .plan.md
-PLAN.md
-ANDROID_MVP_PLAN.md
-ANDROID_MVP_HANDOFF.md
-ANDROID_STREAMING_AUDIO_PLAN.md
 AGENTS.md
 CLAUDE.md
 
@@ -55,7 +51,7 @@ CODEBUDDY.md
 # Misc
 1.0.0
 
-# Internal documentation
+# Private plans, fixes, audits, handoffs, acceptance records, and research
 docs/internal/
 
 # Android local toolchains, build output, models, and secrets
