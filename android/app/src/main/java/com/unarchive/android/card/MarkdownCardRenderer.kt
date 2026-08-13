@@ -17,7 +17,7 @@ object MarkdownCardRenderer {
     private const val MAX_FILE_NAME_LENGTH = 80
     private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\\\/:*?\"<>|]")
 
-    fun render(result: StoredVideoResult): String = buildString {
+    fun render(result: StoredVideoResult, analysis: CardAnalysis? = null): String = buildString {
         appendLine("---")
         appendLine("title: ${yamlString(result.title)}")
         appendLine("author: ${yamlString(result.ownerName)}")
@@ -27,6 +27,26 @@ object MarkdownCardRenderer {
         appendLine()
         appendLine("# ${result.title}")
         appendLine()
+        if (analysis != null) {
+            appendLine("## 摘要")
+            appendLine(analysis.summary)
+            appendLine()
+            if (analysis.chapters.isNotEmpty()) {
+                appendLine("## 故事线")
+                analysis.chapters.forEach { chapter ->
+                    appendLine("### ${chapter.startMs.asTimestamp()}–${chapter.endMs.asTimestamp()} ${chapter.title}")
+                    chapter.points.forEach { point ->
+                        appendLine("- ${timestampLink(result.canonicalUrl, point.timestampMs)} ${point.text}")
+                    }
+                }
+                appendLine()
+            }
+            if (analysis.keyPoints.isNotEmpty()) {
+                appendLine("## 关键要点")
+                analysis.keyPoints.forEach { appendLine("- $it") }
+                appendLine()
+            }
+        }
         appendLine("## 转录全文")
         result.segments.forEach { segment ->
             appendLine("${timestampLink(result.canonicalUrl, segment.startMs)} ${segment.text}")

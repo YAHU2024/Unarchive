@@ -99,4 +99,37 @@ class MarkdownCardRendererTest {
         assertTrue(markdown.contains("## 转录全文"))
         assertFalse(markdown.contains("[]"))
     }
+
+    @Test
+    fun rendersSummaryStoryLineAndKeyPointsWhenAnalysisPresent() {
+        val analysis = CardAnalysis(
+            summary = "视频讲了四个跑姿错误",
+            keyPoints = listOf("要点1", "要点2"),
+            chapters = listOf(
+                CardChapter(
+                    title = "错误一：过度跨步",
+                    startMs = 0,
+                    endMs = 5_000,
+                    points = listOf(CardPoint(2_000, "跨步过大")),
+                ),
+            ),
+        )
+
+        val markdown = MarkdownCardRenderer.render(result(), analysis)
+
+        assertTrue(markdown.contains("## 摘要\n视频讲了四个跑姿错误\n"))
+        assertTrue(markdown.contains("## 故事线\n"))
+        assertTrue(markdown.contains("### 00:00–00:05 错误一：过度跨步\n"))
+        assertTrue(markdown.contains("- [00:02](https://www.bilibili.com/video/BV1PS42197aM?t=2) 跨步过大\n"))
+        assertTrue(markdown.contains("## 关键要点\n- 要点1\n- 要点2\n"))
+    }
+
+    @Test
+    fun rendersOnlyBaseLayerWhenAnalysisNull() {
+        val markdown = MarkdownCardRenderer.render(result())
+
+        assertFalse(markdown.contains("## 摘要"))
+        assertFalse(markdown.contains("## 故事线"))
+        assertFalse(markdown.contains("## 关键要点"))
+    }
 }

@@ -34,6 +34,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -65,6 +66,8 @@ import com.unarchive.android.pipeline.SingleVideoResult
 import com.unarchive.android.pipeline.SingleVideoStage
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
+import com.unarchive.android.analyzer.ApiKeyStore
+import com.unarchive.android.analyzer.CardAnalyzer
 import com.unarchive.android.card.MarkdownCardRenderer
 import com.unarchive.android.result.FileVideoResultRepository
 import com.unarchive.android.result.StoredVideoResult
@@ -136,6 +139,11 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         )
     }
     val modelRepository = remember { ModelRepository(File(context.filesDir, "models")) }
+    val apiKeyStore = remember { ApiKeyStore(context) }
+    val cardAnalyzer = remember { CardAnalyzer() }
+    var apiKeyInput by remember { mutableStateOf(apiKeyStore.get().orEmpty()) }
+    var generateJob by remember { mutableStateOf<Job?>(null) }
+    var thinkingEnabled by remember { mutableStateOf(apiKeyStore.getThinkingEnabled()) }
     var videoReference by remember(initialVideoReference) {
         mutableStateOf(initialVideoReference.orEmpty())
     }
@@ -237,6 +245,30 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         }
     }
 
+    fun generateCard(stored: StoredVideoResult) {
+        val apiKey = apiKeyStore.get()
+        if (apiKey == null) {
+            status = "请先在上方配置 DeepSeek API Key。"
+            return
+        }
+        status = "正在生成 AI 卡片..."
+        generateJob = scope.launch {
+            try {
+                val analysis = cardAnalyzer.analyze(
+                    apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
+                )
+                context.exportCard(stored, MarkdownCardRenderer.render(stored, analysis))
+                status = "AI 卡片已生成并导出。"
+            } catch (_: CancellationException) {
+                status = "AI 卡片生成已取消。"
+            } catch (error: Exception) {
+                status = "AI 生成失败：${error.message}。可点「导出卡片」导出基础版。"
+            } finally {
+                generateJob = null
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -292,6 +324,52 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             modelsDirectory = File(context.filesDir, "models"),
             enabled = runningJob == null,
         )
+
+        HorizontalDivider()
+        Text("AI 卡片（可选）", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            value = apiKeyInput,
+            onValueChange = { apiKeyInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = runningJob == null && generateJob == null,
+            label = { Text("DeepSeek API Key") },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(
+                enabled = runningJob == null && generateJob == null && apiKeyInput.isNotBlank(),
+                onClick = {
+                    apiKeyStore.save(apiKeyInput)
+                    status = "API Key 已保存。"
+                },
+            ) {
+                Text("保存 Key")
+            }
+            OutlinedButton(
+                enabled = runningJob == null && generateJob == null,
+                onClick = {
+                    apiKeyStore.clear()
+                    apiKeyInput = ""
+                    status = "API Key 已清除。"
+                },
+            ) {
+                Text("清除")
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("思考模式（更慢但更深入）")
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = thinkingEnabled,
+                onCheckedChange = {
+                    thinkingEnabled = it
+                    apiKeyStore.saveThinkingEnabled(it)
+                },
+                enabled = runningJob == null && generateJob == null,
+            )
+        }
 
         if (runningJob != null) {
             LinearProgressIndicator(
@@ -390,15 +468,23 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 ) {
                     Text("Share")
                 }
-                OutlinedButton(
-                    enabled = runningJob == null,
-                    onClick = {
-                        context.exportCard(stored)
-                        status = "知识卡片已导出。"
-                    },
-                ) {
-                    Text("导出卡片")
-                }
+            }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = runningJob == null,
+                onClick = {
+                    context.exportCard(stored)
+                    status = "知识卡片已导出。"
+                },
+            ) {
+                Text("导出卡片")
+            }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = runningJob == null && generateJob == null,
+                onClick = { generateCard(stored) },
+            ) {
+                Text("生成 AI 卡片")
             }
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
@@ -539,15 +625,23 @@ private fun Context.shareText(title: String, text: String) {
     startActivity(Intent.createChooser(intent, "Share transcript"))
 }
 
-private fun Context.exportCard(stored: StoredVideoResult) {
-    val file = File(cacheDir, "export/${MarkdownCardRenderer.fileName(stored)}")
+private fun Context.exportCard(stored: StoredVideoResult, markdown: String? = null) {
+    shareMarkdownFile(
+        fileName = MarkdownCardRenderer.fileName(stored),
+        markdown = markdown ?: MarkdownCardRenderer.render(stored),
+        title = stored.title,
+    )
+}
+
+private fun Context.shareMarkdownFile(fileName: String, markdown: String, title: String) {
+    val file = File(cacheDir, "export/$fileName")
     file.parentFile?.mkdirs()
-    file.writeText(MarkdownCardRenderer.render(stored))
+    file.writeText(markdown)
     val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
     val intent = Intent(Intent.ACTION_SEND)
         .setType("text/markdown")
         .putExtra(Intent.EXTRA_STREAM, uri)
-        .putExtra(Intent.EXTRA_SUBJECT, stored.title)
+        .putExtra(Intent.EXTRA_SUBJECT, title)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     startActivity(Intent.createChooser(intent, "导出知识卡片"))
 }
