@@ -60,4 +60,12 @@ fun interface AsrEngineProvider {
 data class AudioSource(
     val displayName: String,
     val uri: String,
+    val resumeStartMs: Long = 0,
+    val onSegmentCompleted: (CompletedAsrSegment) -> Unit = {},
+)
+
+data class CompletedAsrSegment(
+    val startMs: Long,
+    val endMs: Long,
+    val transcript: TranscriptSegment?,
 )

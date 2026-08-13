@@ -20,7 +20,12 @@ class AndroidAudioDecoder(
         progressListener: AsrProgressListener,
     ): DecodedAudio {
         val output = FloatArrayCollector()
-        decodeChunks(uri, targetSampleRate, progressListener, output::addAll)
+        decodeChunks(
+            uri = uri,
+            targetSampleRate = targetSampleRate,
+            progressListener = progressListener,
+            onSamples = output::addAll,
+        )
         return DecodedAudio(output.toArray(), targetSampleRate)
     }
 
@@ -28,14 +33,21 @@ class AndroidAudioDecoder(
         uri: Uri,
         targetSampleRate: Int,
         progressListener: AsrProgressListener,
+        startAtMs: Long = 0,
+        onResolvedStartMs: (Long) -> Unit = {},
         onSamples: (FloatArray) -> Unit,
     ): Long {
+        require(startAtMs >= 0) { "startAtMs cannot be negative" }
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(context, uri, null)
             val track = findAudioTrack(extractor)
             extractor.selectTrack(track.index)
             enforceDurationLimit(track.format)
+            if (startAtMs > 0) {
+                extractor.seekTo(startAtMs * 1_000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            }
+            onResolvedStartMs(extractor.sampleTime.coerceAtLeast(0L) / 1_000L)
             return decodeTrack(
                 extractor = extractor,
                 inputFormat = track.format,

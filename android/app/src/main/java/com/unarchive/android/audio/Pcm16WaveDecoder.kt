@@ -30,9 +30,11 @@ object Pcm16WaveDecoder {
         readBufferBytes: Int = DEFAULT_READ_BUFFER_BYTES,
         onChunk: () -> Unit = {},
         onProgress: (Float) -> Unit = {},
+        startAtMs: Long = 0,
         onSamples: (FloatArray) -> Unit,
     ): Long {
         require(readBufferBytes > 0) { "readBufferBytes must be positive" }
+        require(startAtMs >= 0) { "startAtMs cannot be negative" }
         require(input.readAscii(4) == "RIFF") { "Selected WAV has no RIFF header" }
         input.readUInt32Le()
         require(input.readAscii(4) == "WAVE") { "Selected file is not a WAVE container" }
@@ -61,6 +63,12 @@ object Pcm16WaveDecoder {
                         sourceSampleRate = waveFormat.sampleRate,
                         targetSampleRate = targetSampleRate,
                     )
+                    val frameBytes = waveFormat.channelCount * Short.SIZE_BYTES
+                    val requestedFrames = startAtMs * waveFormat.sampleRate / 1_000
+                    val availableFrames = chunkSize / frameBytes
+                    val skippedBytes = minOf(requestedFrames, availableFrames) * frameBytes
+                    input.skipExactly(skippedBytes)
+                    val remainingBytes = chunkSize - skippedBytes
                     var normalizedSampleCount = 0L
                     fun emit(samples: FloatArray) {
                         if (samples.isEmpty()) return
@@ -68,7 +76,7 @@ object Pcm16WaveDecoder {
                         onSamples(samples)
                     }
                     input.readPcm16Chunks(
-                        byteCount = chunkSize,
+                        byteCount = remainingBytes,
                         readBufferBytes = readBufferBytes,
                         onChunk = onChunk,
                         onProgress = onProgress,

@@ -28,6 +28,7 @@ class BenchmarkRunner(
         source: AudioSource,
         config: AsrConfig,
         progressListener: AsrProgressListener,
+        initialSegments: List<TranscriptSegment> = emptyList(),
     ): BenchmarkResult {
         val engine = engineProvider.create(config.engine)
         require(engine.kind == config.engine) {
@@ -36,6 +37,8 @@ class BenchmarkRunner(
 
         val startedAt = clock.elapsedRealtimeMs()
         val output = engine.transcribe(source, config, progressListener)
+        val segments = (initialSegments + output.segments)
+            .sortedWith(compareBy(TranscriptSegment::startMs, TranscriptSegment::endMs))
         val elapsedMs = (clock.elapsedRealtimeMs() - startedAt).coerceAtLeast(0)
         val realTimeFactor = output.audioDurationMs
             .takeIf { it > 0 }
@@ -46,7 +49,7 @@ class BenchmarkRunner(
             processingDurationMs = elapsedMs,
             audioDurationMs = output.audioDurationMs,
             realTimeFactor = realTimeFactor,
-            segments = output.segments,
+            segments = segments,
         )
     }
 }

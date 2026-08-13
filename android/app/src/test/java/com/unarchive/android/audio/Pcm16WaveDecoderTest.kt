@@ -12,6 +12,24 @@ import java.util.concurrent.CancellationException
 
 class Pcm16WaveDecoderTest {
     @Test
+    fun startsAtRequestedFrameBoundary() {
+        val samples = ShortArray(16_000) { it.toShort() }
+        val emitted = mutableListOf<Float>()
+
+        val count = Pcm16WaveDecoder.decodeChunks(
+            input = ByteArrayInputStream(
+                waveFile(channelCount = 1, sampleRate = 16_000, samples = samples),
+            ),
+            targetSampleRate = 16_000,
+            startAtMs = 500,
+            onSamples = { chunk -> emitted += chunk.toList() },
+        )
+
+        assertEquals(8_000L, count)
+        assertEquals(samples[8_000] / 32768f, emitted.first(), 0f)
+    }
+
+    @Test
     fun decodesAndDownmixesStereoPcm16Wave() {
         val wave = waveFile(
             channelCount = 2,

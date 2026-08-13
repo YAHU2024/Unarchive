@@ -8,8 +8,11 @@ import com.unarchive.android.asr.AsrOutput
 import com.unarchive.android.asr.AsrProgressListener
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkRunner
+import com.unarchive.android.asr.CompletedAsrSegment
 import com.unarchive.android.asr.MonotonicClock
 import com.unarchive.android.asr.TranscriptSegment
+import com.unarchive.android.checkpoint.TranscriptionCheckpoint
+import com.unarchive.android.checkpoint.TranscriptionCheckpointRepository
 import com.unarchive.android.platform.AudioDownloader
 import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.DownloadProgressListener
@@ -193,6 +196,54 @@ class SingleVideoPipelineTest {
 
         assertEquals(true, forcedRefresh)
     }
+
+    @Test
+    fun savesResultBeforeDeletingCheckpoint() = runTest {
+        val audio = temporaryFolder.newFile("audio.m4a").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val events = mutableListOf<String>()
+        val checkpointRepository = RecordingCheckpointRepository(events)
+        val checkpointCounts = mutableListOf<Int>()
+        val resultRepository = object : VideoResultRepository by InMemoryResultRepository() {
+            override fun save(result: StoredVideoResult): StoredVideoResult {
+                events += "result"
+                return result
+            }
+        }
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _, _ -> DownloadedAudio(audio, 3, reused = true) },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ): AsrOutput {
+                            val segment = TranscriptSegment(0, 1_000, "saved")
+                            source.onSegmentCompleted(CompletedAsrSegment(0, 1_000, segment))
+                            return AsrOutput(listOf(segment), 1_000)
+                        }
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+            resultRepository = resultRepository,
+            checkpointRepository = checkpointRepository,
+            wallClockEpochMs = SequenceEpochClock(1, 2, 3)::next,
+        )
+
+        pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
+            checkpointListener = checkpointCounts::add,
+        )
+
+        assertEquals(listOf("checkpoint", "result", "delete"), events)
+        assertEquals(listOf(0, 1, 0), checkpointCounts)
+    }
 }
 
 private class FakePlatformAdapter : VideoPlatformAdapter {
@@ -247,5 +298,20 @@ private class InMemoryResultRepository : VideoResultRepository {
     override fun save(result: StoredVideoResult): StoredVideoResult {
         values[result.key] = result
         return result
+    }
+}
+
+private class RecordingCheckpointRepository(
+    private val events: MutableList<String>,
+) : TranscriptionCheckpointRepository {
+    override fun find(key: VideoResultKey): TranscriptionCheckpoint? = null
+
+    override fun save(checkpoint: TranscriptionCheckpoint): TranscriptionCheckpoint {
+        events += "checkpoint"
+        return checkpoint
+    }
+
+    override fun delete(key: VideoResultKey) {
+        events += "delete"
     }
 }

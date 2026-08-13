@@ -21,6 +21,7 @@ import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.SenseVoiceModelFiles
 import com.unarchive.android.asr.SileroVadModelFile
 import com.unarchive.android.asr.BufferedSpeechSegment
+import com.unarchive.android.asr.CompletedAsrSegment
 import com.unarchive.android.asr.StreamingSpeechSegmentBuffer
 import com.unarchive.android.asr.TranscriptSegment
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,7 @@ class SenseVoiceAsrEngine(
 
         val recognizer = createRecognizer(modelFiles, config)
         val transcripts = mutableListOf<TranscriptSegment>()
+        var timeOffsetMs = source.resumeStartMs
         try {
             val currentContext = coroutineContext
             val segmentBuffer = StreamingSpeechSegmentBuffer(
@@ -73,7 +75,17 @@ class SenseVoiceAsrEngine(
                 },
             ) { segment ->
                 currentContext.ensureActive()
-                recognizeSegment(recognizer, segment)?.let(transcripts::add)
+                val transcript = recognizeSegment(recognizer, segment, timeOffsetMs)
+                transcript?.let(transcripts::add)
+                source.onSegmentCompleted(
+                    CompletedAsrSegment(
+                        startMs = segment.startSample * 1_000L / EXPECTED_SAMPLE_RATE +
+                            timeOffsetMs,
+                        endMs = segment.endSample * 1_000L / EXPECTED_SAMPLE_RATE +
+                            timeOffsetMs,
+                        transcript = transcript,
+                    ),
+                )
             }
             val audioDurationSamples = streamAudio(
                 source = source,
@@ -81,6 +93,7 @@ class SenseVoiceAsrEngine(
                 vadModel = vadModel,
                 segmentBuffer = segmentBuffer,
                 progressListener = progressListener,
+                onResolvedStartMs = { timeOffsetMs = it },
             )
             coroutineContext.ensureActive()
             progressListener.onProgress(1f)
@@ -99,6 +112,7 @@ class SenseVoiceAsrEngine(
         vadModel: SileroVadModelFile,
         segmentBuffer: StreamingSpeechSegmentBuffer,
         progressListener: AsrProgressListener,
+        onResolvedStartMs: (Long) -> Unit,
     ): Long {
         val vad = if (config.enableVad) Vad(
             config = VadModelConfig(
@@ -156,6 +170,7 @@ class SenseVoiceAsrEngine(
 
             val sourceUri = Uri.parse(source.uri)
             val reportedSamples = if (source.displayName.endsWith(".wav", ignoreCase = true)) {
+                onResolvedStartMs(source.resumeStartMs)
                 context.contentResolver.openInputStream(sourceUri).use { input ->
                     requireNotNull(input) { "Cannot open selected audio" }
                     Pcm16WaveDecoder.decodeChunks(
@@ -165,6 +180,7 @@ class SenseVoiceAsrEngine(
                         onProgress = { decodedProgress ->
                             progressListener.onProgress(0.05f + 0.45f * decodedProgress)
                         },
+                        startAtMs = source.resumeStartMs,
                         onSamples = ::consume,
                     )
                 }.also { progressListener.onProgress(0.55f) }
@@ -173,6 +189,8 @@ class SenseVoiceAsrEngine(
                     uri = sourceUri,
                     targetSampleRate = EXPECTED_SAMPLE_RATE,
                     progressListener = progressListener,
+                    startAtMs = source.resumeStartMs,
+                    onResolvedStartMs = onResolvedStartMs,
                     onSamples = ::consume,
                 )
             }
@@ -215,6 +233,7 @@ class SenseVoiceAsrEngine(
     private fun recognizeSegment(
         recognizer: OfflineRecognizer,
         segment: BufferedSpeechSegment,
+        timeOffsetMs: Long,
     ): TranscriptSegment? {
         val stream = recognizer.createStream()
         val text = try {
@@ -226,8 +245,8 @@ class SenseVoiceAsrEngine(
         }
         return text.takeIf { it.isNotEmpty() }?.let {
             TranscriptSegment(
-                startMs = segment.startSample * 1_000L / EXPECTED_SAMPLE_RATE,
-                endMs = segment.endSample * 1_000L / EXPECTED_SAMPLE_RATE,
+                startMs = segment.startSample * 1_000L / EXPECTED_SAMPLE_RATE + timeOffsetMs,
+                endMs = segment.endSample * 1_000L / EXPECTED_SAMPLE_RATE + timeOffsetMs,
                 text = it,
             )
         }

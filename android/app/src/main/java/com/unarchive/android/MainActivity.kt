@@ -52,6 +52,10 @@ import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
 import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.MonotonicClock
+import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
+import com.unarchive.android.checkpoint.LocalAudioIdentity
+import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
+import com.unarchive.android.checkpoint.TranscriptionSourceIdentity
 import com.unarchive.android.pipeline.SingleVideoPipeline
 import com.unarchive.android.pipeline.SingleVideoProgressListener
 import com.unarchive.android.pipeline.SingleVideoResult
@@ -61,6 +65,7 @@ import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
 import com.unarchive.android.result.FileVideoResultRepository
 import com.unarchive.android.result.asTimestamp
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -110,23 +115,35 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
     val resultRepository = remember {
         FileVideoResultRepository(File(context.filesDir, "video-results"))
     }
+    val checkpointRepository = remember {
+        FileTranscriptionCheckpointRepository(File(context.filesDir, "transcription-checkpoints"))
+    }
+    val localAudioRunner = remember {
+        LocalAudioCheckpointRunner(runner, checkpointRepository)
+    }
     val videoPipeline = remember {
         SingleVideoPipeline(
             platformAdapter = BilibiliPlatformAdapter(),
             audioDownloader = BilibiliAudioDownloader(File(context.cacheDir, "bilibili-audio")),
             benchmarkRunner = runner,
             resultRepository = resultRepository,
+            checkpointRepository = checkpointRepository,
         )
     }
     var videoReference by remember(initialVideoReference) {
         mutableStateOf(initialVideoReference.orEmpty())
     }
-    var selectedAudio by remember(initialAudio) { mutableStateOf(initialAudio) }
-    var selectedAudioName by remember(initialAudio) {
-        mutableStateOf(initialAudio?.let { context.displayName(it) })
+    val savedAudio = remember {
+        context.getSharedPreferences("unarchive", Context.MODE_PRIVATE)
+            .getString("last_audio_uri", null)?.let(Uri::parse)
+    }
+    var selectedAudio by remember(initialAudio, savedAudio) { mutableStateOf(initialAudio ?: savedAudio) }
+    var selectedAudioName by remember(initialAudio, savedAudio) {
+        mutableStateOf((initialAudio ?: savedAudio)?.let { context.displayName(it) })
     }
     var selectedEngine by remember { mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA) }
     var progress by remember { mutableFloatStateOf(0f) }
+    var checkpointSegmentCount by remember { mutableStateOf(0) }
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
         animationSpec = if (progress == 0f) snap() else tween(durationMillis = PROGRESS_ANIMATION_MS),
@@ -146,8 +163,16 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         )
     }
     var runningJob by remember { mutableStateOf<Job?>(null) }
-    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         selectedAudio = uri
+        uri?.let {
+            context.contentResolver.takePersistableUriPermission(
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+            context.getSharedPreferences("unarchive", Context.MODE_PRIVATE)
+                .edit().putString("last_audio_uri", it.toString()).apply()
+        }
         selectedAudioName = uri?.let { context.displayName(it) }
         result = null
         videoResult = null
@@ -161,6 +186,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         videoResult = null
         selectedStoredResult = null
         progress = 0f
+        checkpointSegmentCount = 0
         status = "Resolving Bilibili reference..."
         runningJob = scope.launch {
             try {
@@ -172,14 +198,19 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                         progress = advanceProgress(progress, update.overallProgress)
                         status = update.stage.displayText
                     },
+                    checkpointListener = { checkpointSegmentCount = it },
                 )
                 result = videoResult?.benchmark
                 storedResults = resultRepository.list()
                 selectedStoredResult = videoResult?.storedResult
-                status = videoCompletionStatus(
-                    reusedDownload = videoResult?.reusedDownload == true,
-                    forceRefreshAudio = forceRefreshAudio,
-                )
+                status = if (videoResult?.resumedFromCheckpoint == true) {
+                    "Recognition complete. Saved transcription resumed and result saved locally."
+                } else {
+                    videoCompletionStatus(
+                        reusedDownload = videoResult?.reusedDownload == true,
+                        forceRefreshAudio = forceRefreshAudio,
+                    )
+                }
             } catch (_: CancellationException) {
                 selectedStoredResult = previousStoredResult
                 status = "Video processing cancelled."
@@ -221,7 +252,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         Text("Local audio benchmark", style = MaterialTheme.typography.titleMedium)
         OutlinedButton(
             enabled = runningJob == null,
-            onClick = { audioPicker.launch("audio/*") },
+            onClick = { audioPicker.launch(arrayOf("audio/*")) },
         ) {
             Text(if (selectedAudio == null) "Select audio" else "Change audio")
         }
@@ -249,6 +280,9 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             )
         }
         Text(status)
+        if (checkpointSegmentCount > 0) {
+            Text("Checkpoint saved: $checkpointSegmentCount text segments. Safe to interrupt.")
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
@@ -259,24 +293,27 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                     videoResult = null
                     selectedStoredResult = null
                     progress = 0f
+                    checkpointSegmentCount = 0
                     status = "Running benchmark harness..."
                     runningJob = scope.launch {
                         try {
-                            result = runner.run(
+                            val config = AsrConfig(engine = selectedEngine)
+                            val localRun = localAudioRunner.run(
                                 source = AudioSource(
                                     displayName = selectedAudioName ?: "audio.wav",
                                     uri = uri.toString(),
                                 ),
-                                config = AsrConfig(engine = selectedEngine),
-                                progressListener = AsrProgressListener {
-                                    progress = advanceProgress(progress, it)
-                                },
+                                sourceIdentity = context.localAudioIdentity(uri),
+                                config = config,
+                                progressListener = AsrProgressListener { progress = advanceProgress(progress, it) },
+                                checkpointListener = { checkpointSegmentCount = it },
                             )
+                            result = localRun.benchmark
                             status = if (
                                 selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
                                 BuildConfig.SHERPA_ENABLED
                             ) {
-                                "Recognition complete."
+                                if (localRun.resumed) "Recognition complete. Saved transcription resumed." else "Recognition complete."
                             } else {
                                 "Harness complete. Native ASR is not connected for this engine."
                             }
@@ -385,6 +422,7 @@ private val SingleVideoStage.displayText: String
         SingleVideoStage.CHECKING_AUDIO_CACHE -> "Checking audio cache..."
         SingleVideoStage.DOWNLOADING_AUDIO -> "Downloading audio..."
         SingleVideoStage.USING_CACHED_AUDIO -> "Using cached audio..."
+        SingleVideoStage.RESUMING_TRANSCRIPTION -> "Resuming saved transcription..."
         SingleVideoStage.TRANSCRIBING -> "Transcribing on device..."
         SingleVideoStage.COMPLETE -> "Recognition complete."
     }
@@ -417,6 +455,38 @@ internal fun Intent.audioUri(): Uri? = when (action) {
 internal fun Intent.videoReferenceText(): String? = when (action) {
     Intent.ACTION_SEND -> if (type == "text/plain") getStringExtra(Intent.EXTRA_TEXT) else null
     else -> null
+}
+
+private fun Context.localAudioIdentity(uri: Uri): TranscriptionSourceIdentity {
+    var size = -1L
+    var modified = 0L
+    contentResolver.query(
+        uri,
+        arrayOf(OpenableColumns.SIZE, "last_modified"),
+        null,
+        null,
+        null,
+    )?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            cursor.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = cursor.getLong(it) }
+            cursor.getColumnIndex("last_modified").takeIf { it >= 0 }?.let { modified = cursor.getLong(it) }
+        }
+    }
+    val digest = MessageDigest.getInstance("SHA-256")
+    digest.update(uri.toString().toByteArray(Charsets.UTF_8))
+    contentResolver.openInputStream(uri).use { input ->
+        requireNotNull(input) { "Cannot open selected audio" }
+        val buffer = ByteArray(64 * 1024)
+        val count = input.read(buffer)
+        if (count > 0) digest.update(buffer, 0, count)
+    }
+    return TranscriptionSourceIdentity(
+        key = LocalAudioIdentity.key(uri.toString()),
+        canonicalUrl = uri.toString(),
+        byteCount = size,
+        modifiedAtEpochMs = modified,
+        contentFingerprint = digest.digest().joinToString("") { "%02x".format(it) },
+    )
 }
 
 private fun Context.copyText(text: String) {
