@@ -3,9 +3,12 @@ package com.unarchive.android.audio
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.EOFException
+import java.util.concurrent.CancellationException
 
 class Pcm16WaveDecoderTest {
     @Test
@@ -45,6 +48,84 @@ class Pcm16WaveDecoderTest {
         assertThrows(IllegalArgumentException::class.java) {
             Pcm16WaveDecoder.decode(ByteArrayInputStream(wave), targetSampleRate = 16_000)
         }
+    }
+
+    @Test
+    fun matchesWholeArrayNormalizerAcrossUnalignedReadChunks() {
+        val samples = ShortArray(4_002) { index ->
+            ((index * 4_099L + 811L) % 65_536L - 32_768L).toShort()
+        }
+        val wave = waveFile(2, 44_100, samples)
+        val expected = Pcm16Normalizer.toMonoFloat(samples, 2, 44_100, 16_000)
+
+        val decoded = Pcm16WaveDecoder.decode(
+            input = ByteArrayInputStream(wave),
+            targetSampleRate = 16_000,
+            readBufferBytes = 7,
+        )
+
+        assertArrayEquals(expected, decoded.samples, 0.000001f)
+    }
+
+    @Test
+    fun limitsPcmReadRequestsToConfiguredBuffer() {
+        val wave = waveFile(1, 16_000, ShortArray(20_000) { it.toShort() })
+        val input = TrackingInputStream(wave)
+
+        val decoded = Pcm16WaveDecoder.decode(
+            input = input,
+            targetSampleRate = 16_000,
+            readBufferBytes = 257,
+        )
+
+        assertEquals(20_000, decoded.samples.size)
+        assertTrue(input.maximumReadLength <= 257)
+    }
+
+    @Test
+    fun rejectsTruncatedPcmDataDuringChunkedRead() {
+        val complete = waveFile(1, 16_000, shortArrayOf(1, 2, 3, 4))
+        val truncated = complete.copyOf(complete.size - 2)
+
+        assertThrows(EOFException::class.java) {
+            Pcm16WaveDecoder.decode(
+                ByteArrayInputStream(truncated),
+                targetSampleRate = 16_000,
+                readBufferBytes = 3,
+            )
+        }
+    }
+
+    @Test
+    fun rejectsPcmThatEndsMidChannelFrame() {
+        val wave = waveFile(2, 16_000, shortArrayOf(1, 2, 3))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            Pcm16WaveDecoder.decode(
+                ByteArrayInputStream(wave),
+                targetSampleRate = 16_000,
+                readBufferBytes = 3,
+            )
+        }
+    }
+
+    @Test
+    fun checksCancellationBetweenPcmReadChunks() {
+        val wave = waveFile(1, 16_000, ShortArray(20_000) { it.toShort() })
+        var chunkCount = 0
+
+        assertThrows(CancellationException::class.java) {
+            Pcm16WaveDecoder.decode(
+                input = ByteArrayInputStream(wave),
+                targetSampleRate = 16_000,
+                readBufferBytes = 257,
+                onChunk = {
+                    chunkCount++
+                    if (chunkCount == 2) throw CancellationException("cancelled")
+                },
+            )
+        }
+        assertEquals(2, chunkCount)
     }
 
     private fun waveFile(
@@ -88,5 +169,15 @@ class Pcm16WaveDecoderTest {
     private fun ByteArrayOutputStream.writeLe32(value: Int) {
         writeLe16(value)
         writeLe16(value ushr 16)
+    }
+
+    private class TrackingInputStream(bytes: ByteArray) : ByteArrayInputStream(bytes) {
+        var maximumReadLength = 0
+            private set
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            maximumReadLength = maxOf(maximumReadLength, length)
+            return super.read(buffer, offset, length)
+        }
     }
 }

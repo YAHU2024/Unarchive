@@ -188,10 +188,13 @@ class SenseVoiceAsrEngine(
         ),
     )
 
-    private fun readWave(uri: Uri, progressListener: AsrProgressListener): DecodedAudio {
+    private suspend fun readWave(uri: Uri, progressListener: AsrProgressListener): DecodedAudio {
+        val currentContext = coroutineContext
         val audio = context.contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Cannot open selected audio" }
-            Pcm16WaveDecoder.decode(input, EXPECTED_SAMPLE_RATE)
+            Pcm16WaveDecoder.decode(input, EXPECTED_SAMPLE_RATE) {
+                currentContext.ensureActive()
+            }
         }
         progressListener.onProgress(0.5f)
         return audio
