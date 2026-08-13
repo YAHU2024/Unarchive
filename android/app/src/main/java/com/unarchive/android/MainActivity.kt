@@ -56,6 +56,8 @@ import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioIdentity
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.checkpoint.TranscriptionSourceIdentity
+import com.unarchive.android.model.ModelManagementSection
+import com.unarchive.android.model.ModelRepository
 import com.unarchive.android.pipeline.SingleVideoPipeline
 import com.unarchive.android.pipeline.SingleVideoProgressListener
 import com.unarchive.android.pipeline.SingleVideoResult
@@ -130,6 +132,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             checkpointRepository = checkpointRepository,
         )
     }
+    val modelRepository = remember { ModelRepository(File(context.filesDir, "models")) }
     var videoReference by remember(initialVideoReference) {
         mutableStateOf(initialVideoReference.orEmpty())
     }
@@ -181,6 +184,14 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         status = if (uri == null) "No audio selected." else "Audio selected. Ready to benchmark."
     }
     fun processVideo(reference: String, forceRefreshAudio: Boolean = false) {
+        if (
+            BuildConfig.SHERPA_ENABLED &&
+            selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
+            !modelRepository.allInstalled()
+        ) {
+            status = "模型未安装。请先在下方 Models 区下载 SenseVoice 和 Silero VAD。"
+            return
+        }
         val previousStoredResult = selectedStoredResult
         result = null
         videoResult = null
@@ -273,6 +284,12 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             }
         }
 
+        HorizontalDivider()
+        ModelManagementSection(
+            modelsDirectory = File(context.filesDir, "models"),
+            enabled = runningJob == null,
+        )
+
         if (runningJob != null) {
             LinearProgressIndicator(
                 progress = { animatedProgress },
@@ -289,6 +306,14 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 enabled = selectedAudio != null && runningJob == null,
                 onClick = {
                     val uri = selectedAudio ?: return@Button
+                    if (
+                        BuildConfig.SHERPA_ENABLED &&
+                        selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
+                        !modelRepository.allInstalled()
+                    ) {
+                        status = "模型未安装。请先在下方 Models 区下载 SenseVoice 和 Silero VAD。"
+                        return@Button
+                    }
                     result = null
                     videoResult = null
                     selectedStoredResult = null

@@ -68,6 +68,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // tar.bz2 extraction for on-device model downloads (SenseVoice archive).
+    implementation("org.apache.commons:commons-compress:1.28.0")
     if (sherpaEnabled) {
         implementation(files(sherpaAar))
     }
