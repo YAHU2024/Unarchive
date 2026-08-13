@@ -39,19 +39,21 @@ packages.
 
 ## Optional local Android artifacts
 
-The following files are ignored and are not part of the public source checkout:
+The following files are ignored and are not part of the public source checkout.
+Their exact versions, source URLs, checksums, and license terms are recorded in
+the private `docs/internal/GPL3_ARTIFACT_EVIDENCE.md`; the summary below must be
+kept in sync with that record.
 
-- `android/app/libs/sherpa_onnx-release.aar` (sherpa-onnx v1.13.4 and its
-  native libraries); obtain and retain the exact upstream license and native
-  notices before placing it in a release APK.
-- SenseVoice model and `tokens.txt` files.
-- Silero VAD ONNX model.
+| Artifact | Version | License | Attribution / notice action |
+| --- | --- | --- | --- |
+| `android/app/libs/sherpa_onnx-release.aar` | sherpa-onnx v1.13.4 | Apache-2.0 (bundled `libonnxruntime.so` is MIT) | ship Apache-2.0 text + ONNX Runtime MIT notice in the release APK. |
+| SenseVoice model (`model.int8.onnx` + `tokens.txt`) | 2024-07-17 | FunASR Model Open Source License Agreement v1.1 (Alibaba 2023-2028) | attribute FunASR/Alibaba/SenseVoice and retain the "SenseVoice" model name. No non-commercial clause, but no warranty. |
+| Silero VAD (`silero_vad.onnx`) | sherpa-onnx `asr-models` | MIT (Silero Team) | ship MIT text and copyright notice in the release APK. |
 
-These artifacts are currently **release blockers**, not cleared third-party
-notices. A release that bundles them must record the exact source URL, version,
-checksum, license/model terms, attribution, and any source-distribution or
-non-commercial restrictions. Do not commit credentials, downloaded models, or
-local AARs merely to satisfy this document.
+A release that bundles these artifacts must additionally freeze dependency
+versions, generate an SBOM with transitive notices, and build a corresponding-source
+package. Do not commit credentials, downloaded models, or local AARs merely to
+satisfy this document.
 
 ## Upstream application provenance
 
