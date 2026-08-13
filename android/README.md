@@ -20,10 +20,13 @@ The local-audio ASR benchmark remains available for engine and device checks.
 The SDK, model files, benchmark recordings, results, and local planning documents
 must remain untracked.
 
-The optional sherpa-onnx AAR, SenseVoice model, and Silero VAD model are local
-inputs and are not cleared for redistribution by this repository. Before
-shipping an APK that contains them, record exact versions/checksums, upstream
-licenses and notices, model terms, and the corresponding source package.
+The sherpa-onnx AAR, SenseVoice model, and Silero VAD model are local inputs and
+are not committed to this repository. The AAR is built by
+`scripts/prepare_sherpa.ps1`. The model weights are bundled into the APK under
+`assets/models/` and copied to the app's private `files/models/` directory on
+first install (verified by SHA-256). Before shipping an APK, record exact
+versions/checksums, upstream licenses and notices, model terms, and the
+corresponding source package.
 
 ```powershell
 cd android
@@ -31,10 +34,10 @@ cd android
 ```
 
 Without the ignored local sherpa AAR, the UI uses `PreviewAsrEngine` to validate
-audio selection, progress, cancellation, and result rendering. After running
-`scripts/prepare_sherpa.ps1`, SenseVoice uses the real CPU recognizer when its
-`model.int8.onnx` and `tokens.txt` are present in the app's private
-`files/models/sensevoice-2024-07-17-int8/` directory.
+audio selection, progress, cancellation, and result rendering. With the AAR and
+bundled models present, SenseVoice uses the real CPU recognizer from the private
+`files/models/sensevoice-2024-07-17-int8/` directory. A network download of the
+models remains available as a fallback for future model updates.
 
 The native path reads PCM16 WAV across common sample rates and channel counts,
 and uses Android's platform codecs for other audio containers. Both paths

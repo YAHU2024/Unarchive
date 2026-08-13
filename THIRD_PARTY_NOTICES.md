@@ -37,27 +37,41 @@ packages.
 | org.json | Android unit-test JSON support | Public domain / JSON license terms; retain upstream notice when redistributed. |
 | Gradle wrapper | Build tooling | Apache-2.0; the wrapper is tracked for building, not an application runtime dependency. |
 
-## Optional local Android artifacts
+## Bundled ASR models and runtime
 
-The following files are ignored and are not part of the public source checkout.
-Their exact versions, source URLs, checksums, and license terms are recorded in
-the private `docs/internal/GPL3_ARTIFACT_EVIDENCE.md`; the summary below must be
-kept in sync with that record.
+The ASR runtime and model weights are packaged into the APK. The model weights
+live under `android/app/src/main/assets/models/` (kept out of Git via
+`.gitignore`) and are bundled into the APK for redistribution. Their exact
+versions, source URLs, checksums, and license terms are recorded in the private
+`docs/internal/GPL3_ARTIFACT_EVIDENCE.md`.
 
-| Artifact | Version | License | Attribution / notice action |
+| Component | Version | License | Attribution / notice action |
 | --- | --- | --- | --- |
-| `android/app/libs/sherpa_onnx-release.aar` | sherpa-onnx v1.13.4 | Apache-2.0 (bundled `libonnxruntime.so` is MIT) | ship Apache-2.0 text + ONNX Runtime MIT notice in the release APK. |
-| SenseVoice model (`model.int8.onnx` + `tokens.txt`) | 2024-07-17 | FunASR Model Open Source License Agreement v1.1 (Alibaba 2023-2028) | attribute FunASR/Alibaba/SenseVoice and retain the "SenseVoice" model name. No non-commercial clause, but no warranty. |
+| sherpa-onnx AAR + JNI (`android/app/libs/sherpa_onnx-release.aar`) | v1.13.4 | Apache-2.0 (bundled `libonnxruntime.so` is MIT) | ship Apache-2.0 text + ONNX Runtime MIT notice in the release APK. |
+| SenseVoice model (`model.int8.onnx` + `tokens.txt`) | 2024-07-17 | FunASR Model Open Source License Agreement v1.1 (Alibaba 2023-2028) | attribute FunASR/Alibaba/SenseVoice and retain the "SenseVoice" model name in the app. No non-commercial clause, but no warranty. |
 | Silero VAD (`silero_vad.onnx`) | sherpa-onnx `asr-models` | MIT (Silero Team) | ship MIT text and copyright notice in the release APK. |
 
-A release that bundles these artifacts must additionally freeze dependency
-versions, generate an SBOM with transitive notices, and build a corresponding-source
-package. Do not commit credentials, downloaded models, or local AARs merely to
-satisfy this document.
+A release must additionally freeze dependency versions, generate an SBOM with
+transitive notices, build a corresponding-source package, and retain the model
+attribution above in the app's about screen. Do not commit credentials or
+downloaded models.
 
 ## Upstream application provenance
 
-SubtitleEditforAndroid is GPL-3.0 reference material. No application code has
-been copied into this repository. When a module is ported, add its source path,
-upstream commit, copyright header, modifications, and test coverage to the
-private provenance record before publishing it.
+SubtitleEditforAndroid is GPL-3.0 reference material
+(https://github.com/nihaina/SubtitleEditforAndroid). The model-management module
+adapts the download -> verify -> atomic-install -> backup-recovery flow from its
+`ModelDownloader` (reviewed commit
+`ce255c6a37188b594d08e3e74a3ef984baefd3f9`, GNU GPL v3):
+
+- `android/app/src/main/java/com/unarchive/android/model/ModelDownloader.kt` —
+  adapts the download/verify/atomic-install/backup-recovery flow; extraction and
+  transport are reimplemented (Apache Commons Compress + the project's own HTTPS
+  transport) rather than the upstream 7-Zip/OkHttp stack.
+- `android/app/src/main/java/com/unarchive/android/model/TarBz2Extractor.kt` —
+  follows the upstream `StreamingTarExtractor` path-traversal and duplicate-entry
+  defenses, implemented with Apache Commons Compress instead of the upstream
+  7-Zip native bundle.
+
+Both files retain the upstream provenance notice (source commit + GNU GPL v3) in
+their header comments. No upstream application code has been copied verbatim.
