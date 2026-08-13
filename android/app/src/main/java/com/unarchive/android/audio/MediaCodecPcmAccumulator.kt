@@ -103,7 +103,7 @@ class MediaCodecPcmAccumulator(
         val maximumSamples = maximumDurationSeconds *
             currentFormat.sampleRate * currentFormat.channelCount
         require(decodedSampleCount <= maximumSamples) {
-            "Decoded audio exceeded the 5-minute safety limit"
+            "Decoded audio exceeded the safety duration limit"
         }
     }
 

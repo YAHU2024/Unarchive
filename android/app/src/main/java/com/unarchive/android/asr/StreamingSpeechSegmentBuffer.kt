@@ -46,8 +46,15 @@ class StreamingSpeechSegmentBuffer(
         require(endSample >= startSample) { "endSample must not precede startSample" }
         if (endSample == startSample) return
 
+        // A delayed VAD range (e.g. audio ending mid-speech) can start before the
+        // retained audio window. Clamp it to what is still available; drop the
+        // range entirely if its samples are already gone.
+        val earliestAvailable = chunks.firstOrNull()?.availableStart ?: totalSamples
+        val clampedStart = maxOf(startSample, earliestAvailable + contextSamples)
+        if (clampedStart >= endSample) return
+
         val padded = SampleRange(
-            start = (startSample - contextSamples).coerceAtLeast(0L),
+            start = (clampedStart - contextSamples).coerceAtLeast(0L),
             end = endSample + contextSamples,
         )
         val current = pendingRange
@@ -103,7 +110,8 @@ class StreamingSpeechSegmentBuffer(
         require(size <= maximumSegmentSamples) { "Speech segment exceeded the configured maximum" }
         val availableStart = chunks.firstOrNull()?.availableStart ?: totalSamples
         require(range.start >= availableStart && range.end <= totalSamples) {
-            "Speech segment audio is no longer available"
+            "Speech segment audio is no longer available " +
+                "(range=$range availableStart=$availableStart totalSamples=$totalSamples)"
         }
         val samples = FloatArray(size)
         chunks.forEach { chunk ->

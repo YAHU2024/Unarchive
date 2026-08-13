@@ -168,7 +168,7 @@ class AndroidAudioDecoder(
     private fun enforceDurationLimit(format: MediaFormat) {
         val durationUs = format.getLongOrDefault(MediaFormat.KEY_DURATION, 0L)
         require(durationUs <= MAX_DURATION_US || durationUs <= 0) {
-            "Media decoding is limited to 5 minutes until bounded-memory streaming is available"
+            "Media decoding is limited to ${MAX_DURATION_SECONDS / 60} minutes"
         }
     }
 
@@ -193,7 +193,7 @@ class AndroidAudioDecoder(
 
     companion object {
         private const val TIMEOUT_US = 10_000L
-        private const val MAX_DURATION_SECONDS = 5 * 60L
+        private const val MAX_DURATION_SECONDS = 4 * 60 * 60L
         private const val MAX_DURATION_US = MAX_DURATION_SECONDS * 1_000_000L
     }
 }

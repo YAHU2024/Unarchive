@@ -7,7 +7,7 @@ object Pcm16WaveDecoder {
     fun decode(
         input: InputStream,
         targetSampleRate: Int,
-        maximumDurationSeconds: Long = 5 * 60L,
+        maximumDurationSeconds: Long = 4 * 60 * 60L,
         readBufferBytes: Int = DEFAULT_READ_BUFFER_BYTES,
         onChunk: () -> Unit = {},
     ): DecodedAudio {
@@ -26,7 +26,7 @@ object Pcm16WaveDecoder {
     fun decodeChunks(
         input: InputStream,
         targetSampleRate: Int,
-        maximumDurationSeconds: Long = 5 * 60L,
+        maximumDurationSeconds: Long = 4 * 60 * 60L,
         readBufferBytes: Int = DEFAULT_READ_BUFFER_BYTES,
         onChunk: () -> Unit = {},
         onProgress: (Float) -> Unit = {},
@@ -53,7 +53,7 @@ object Pcm16WaveDecoder {
                     val maximumBytes = maximumDurationSeconds *
                         waveFormat.sampleRate * waveFormat.channelCount * Short.SIZE_BYTES
                     require(chunkSize <= maximumBytes) {
-                        "WAV audio exceeded the 5-minute safety limit"
+                        "WAV audio exceeded the safety duration limit"
                     }
                     require(chunkSize % Short.SIZE_BYTES == 0L) {
                         "WAV contains incomplete PCM16 data"

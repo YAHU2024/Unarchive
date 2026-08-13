@@ -116,6 +116,42 @@ class StreamingSpeechSegmentBufferTest {
         assertArrayEquals(samples(3, 30), emitted.single().samples, 0f)
     }
 
+    @Test
+    fun delayedRangeStartingBeforeRetainedAudioIsDropped() {
+        val emitted = mutableListOf<BufferedSpeechSegment>()
+        val buffer = buffer(context = 5, maximum = 40, history = 10, emitted = emitted)
+        repeat(100) { index ->
+            buffer.append(floatArrayOf(index.toFloat()))
+            buffer.updateSpeechActive(false)
+        }
+        // totalSamples=100, retained window starts at 90. A delayed range starting
+        // at 50 is fully before 90+5, so it is dropped without throwing.
+        buffer.addSpeechRange(50, 95)
+        buffer.updateSpeechActive(false)
+        buffer.finish()
+
+        assertTrue(emitted.isEmpty())
+    }
+
+    @Test
+    fun delayedRangePartiallyBeforeRetainedAudioIsClamped() {
+        val emitted = mutableListOf<BufferedSpeechSegment>()
+        val buffer = buffer(context = 5, maximum = 40, history = 10, emitted = emitted)
+        repeat(100) { index ->
+            buffer.append(floatArrayOf(index.toFloat()))
+            buffer.updateSpeechActive(false)
+        }
+        // totalSamples=100, retained window starts at 90. A range starting at 88
+        // is clamped to 95 (earliest 90 + context 5), so it emits from 90.
+        buffer.addSpeechRange(88, 110)
+        buffer.append(samples(100, 115))
+        buffer.updateSpeechActive(false)
+        buffer.finish()
+
+        assertTrue(emitted.isNotEmpty())
+        assertTrue(emitted.all { it.startSample >= 90L })
+    }
+
     private fun buffer(
         context: Int,
         maximum: Int,

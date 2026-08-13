@@ -41,9 +41,9 @@ models remains available as a fallback for future model updates.
 
 The native path reads PCM16 WAV across common sample rates and channel counts,
 and uses Android's platform codecs for other audio containers. Both paths
-normalize output to 16 kHz mono before ASR. Decoding is limited to five minutes
-until bounded-memory streaming decode and durable resume are available. Optional Silero VAD detects
-speech, adds up to 500 ms context, and bounds SenseVoice inputs to 30 seconds.
+normalize output to 16 kHz mono before ASR. Decoding accepts up to four hours of
+input. Optional Silero VAD detects speech, adds up to 500 ms context, and bounds
+SenseVoice inputs to 30 seconds.
 Cancellation is checked between decoding, VAD windows, and ASR segments, and
 before and after sherpa's blocking native decode; it cannot interrupt a decode
 already in progress. Saved video results use private atomic JSON files keyed by
