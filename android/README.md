@@ -1,5 +1,10 @@
 # Unarchive Android
 
+The Android source in this repository is licensed under GPL-3.0; see the
+repository [LICENSE](../LICENSE). AndroidX, Kotlin, and other dependencies keep
+their own licenses. The project-level inventory is in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
 This directory contains the independent Android MVP. The accepted local-first
 flow processes one Bilibili link, downloads its audio, transcribes it on device,
 and persists a timestamped result that can be restored, copied, shared, or rerun.
@@ -14,6 +19,11 @@ The local-audio ASR benchmark remains available for engine and device checks.
 
 The SDK, model files, benchmark recordings, results, and local planning documents
 must remain untracked.
+
+The optional sherpa-onnx AAR, SenseVoice model, and Silero VAD model are local
+inputs and are not cleared for redistribution by this repository. Before
+shipping an APK that contains them, record exact versions/checksums, upstream
+licenses and notices, model terms, and the corresponding source package.
 
 ```powershell
 cd android
