@@ -38,20 +38,10 @@
 
 <br>
 
-<p align="center">
-  <figure>
-    <img src="docs/images/Android主页.jpg" width="260" alt="Unarchive Android 主页" />
-    <figcaption><b>① 粘贴 Bilibili 链接</b> — 下方可选引擎、查看本地模型状态</figcaption>
-  </figure>
-  <figure>
-    <img src="docs/images/模型和API管理页(含示例).jpg" width="260" alt="模型与 API 管理" />
-    <figcaption><b>② 模型与 API 管理</b> — 内置 ASR 模型本地安装，SHA-256 校验</figcaption>
-  </figure>
-  <figure>
-    <img src="docs/images/转录结果页示例.jpg" width="260" alt="带时间戳的转录结果" />
-    <figcaption><b>③ 带时间戳的转录</b> — 复制、分享、重跑或导出知识卡片</figcaption>
-  </figure>
-</p>
+| | | |
+|:---:|:---:|:---:|
+| <img src="docs/images/Android主页.jpg" width="230" alt="Unarchive Android 主页"/> | <img src="docs/images/模型和API管理页(含示例).jpg" width="230" alt="模型与 API 管理"/> | <img src="docs/images/转录结果页示例.jpg" width="230" alt="带时间戳的转录结果"/> |
+| **① 粘贴 Bilibili 链接**<br/><sub>下方可选引擎、查看本地模型状态</sub> | **② 模型与 API 管理**<br/><sub>内置 ASR 模型本地安装，SHA-256 校验</sub> | **③ 带时间戳的转录**<br/><sub>复制、分享、重跑或导出知识卡片</sub> |
 
 <p align="center"><em>Android 应用：粘贴链接 → 设备端转写 → 知识卡片。全部本地完成。</em></p>
 

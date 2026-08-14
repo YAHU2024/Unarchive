@@ -38,20 +38,10 @@ PC, no cloud account required.
 
 <br>
 
-<p align="center">
-  <figure>
-    <img src="docs/images/Android主页.jpg" width="260" alt="Unarchive Android main screen" />
-    <figcaption><b>① Paste a Bilibili link</b> — engine picker and local model status below</figcaption>
-  </figure>
-  <figure>
-    <img src="docs/images/模型和API管理页(含示例).jpg" width="260" alt="Model and API management" />
-    <figcaption><b>② Manage models &amp; API key</b> — bundled ASR models install locally, SHA-256 verified</figcaption>
-  </figure>
-  <figure>
-    <img src="docs/images/转录结果页示例.jpg" width="260" alt="Transcript result with timestamps" />
-    <figcaption><b>③ Timestamped transcript</b> — copy, share, rerun, or export a knowledge card</figcaption>
-  </figure>
-</p>
+| | | |
+|:---:|:---:|:---:|
+| <img src="docs/images/Android主页.jpg" width="230" alt="Unarchive Android main screen"/> | <img src="docs/images/模型和API管理页(含示例).jpg" width="230" alt="Model and API management"/> | <img src="docs/images/转录结果页示例.jpg" width="230" alt="Transcript result with timestamps"/> |
+| **① Paste a Bilibili link**<br/><sub>engine picker &amp; local model status below</sub> | **② Manage models &amp; API key**<br/><sub>bundled ASR models install locally, SHA-256 verified</sub> | **③ Timestamped transcript**<br/><sub>copy, share, rerun, or export a knowledge card</sub> |
 
 <p align="center"><em>Android app: paste a link → on-device transcript → knowledge card. Everything runs locally.</em></p>
 
