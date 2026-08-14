@@ -74,6 +74,11 @@ data class ModelSource(
             displayName = "SenseVoice int8（中文 / 多语）",
             directoryName = "sensevoice-2024-07-17-int8",
             assetPath = "models/sensevoice-2024-07-17-int8",
+            // Upstream tar.bz2 remains the fallback archive. Zip repacks
+            // (scripts/repack_model_archive.ps1) are supported by the
+            // downloader and are ~10-15x faster to extract on-device (native
+            // zlib vs pure-Java bzip2); switch to the zip asset URL when the
+            // repacked artifact is published on this project's GitHub Release.
             archiveUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
             downloadFileName = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
             files = listOf(

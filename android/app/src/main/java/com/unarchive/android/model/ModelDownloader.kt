@@ -72,13 +72,29 @@ class ModelDownloader(
                     val wanted = source.files.map { it.fileName }.toSet()
                     onProgress(Progress.Extracting(0, null))
                     val context = coroutineContext
-                    TarBz2Extractor.extract(
-                        archive = archive,
-                        outputDir = stagingDir,
-                        wantedFileNames = wanted,
-                        isCancelled = { !context.isActive },
-                        onProgress = { bytes, total -> onProgress(Progress.Extracting(bytes, total)) },
-                    )
+                    // zip uses the platform's native zlib and reports a known
+                    // total; legacy tar.bz2 stays on the pure-Java decoder.
+                    if (archive.name.endsWith(ZIP_EXTENSION, ignoreCase = true)) {
+                        ZipExtractor.extract(
+                            archive = archive,
+                            outputDir = stagingDir,
+                            wantedFileNames = wanted,
+                            isCancelled = { !context.isActive },
+                            onProgress = { bytes, total ->
+                                onProgress(Progress.Extracting(bytes, total))
+                            },
+                        )
+                    } else {
+                        TarBz2Extractor.extract(
+                            archive = archive,
+                            outputDir = stagingDir,
+                            wantedFileNames = wanted,
+                            isCancelled = { !context.isActive },
+                            onProgress = { bytes, total ->
+                                onProgress(Progress.Extracting(bytes, total))
+                            },
+                        )
+                    }
                     archive.delete()
                 } else {
                     downloadTo(source, File(stagingDir, source.downloadFileName), onProgress)
@@ -218,6 +234,7 @@ class ModelDownloader(
 
     private companion object {
         const val USER_AGENT = "Unarchive-Android"
+        const val ZIP_EXTENSION = ".zip"
         // Generous ceiling for the SenseVoice int8 archive (~239 MB); Silero is 643 KB.
         const val MAXIMUM_MODEL_BYTES = 1024L * 1024 * 1024
     }
