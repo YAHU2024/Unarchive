@@ -22,6 +22,7 @@ import com.unarchive.android.platform.VideoPlatformAdapter
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.result.VideoResultKey
 import com.unarchive.android.result.VideoResultRepository
+import android.util.Log
 
 enum class SingleVideoStage {
     RESOLVING_REFERENCE,
@@ -71,6 +72,11 @@ class SingleVideoPipeline(
         progressListener: SingleVideoProgressListener,
         checkpointListener: (Int) -> Unit = {},
     ): SingleVideoResult {
+        // The pipeline instance is reused across runs; reset stage timing so
+        // diagnostics do not accumulate previous runs.
+        lastStage = null
+        lastStageStartMs = 0L
+        stageElapsedMs.clear()
         progressListener.update(SingleVideoStage.RESOLVING_REFERENCE, 0.02f)
         val reference = platformAdapter.resolveReference(input)
         progressListener.update(SingleVideoStage.FETCHING_METADATA, 0.08f)
@@ -279,12 +285,18 @@ class SingleVideoPipeline(
         if (stage != lastStage) {
             val now = stageClockMs()
             lastStage?.let { previous ->
-                stageElapsedMs[previous] =
-                    stageElapsedMs.getOrDefault(previous, 0L) + (now - lastStageStartMs)
+                val elapsed = now - lastStageStartMs
+                stageElapsedMs[previous] = stageElapsedMs.getOrDefault(previous, 0L) + elapsed
+                Log.i(TAG, "stage done prev=$previous ms=$elapsed")
             }
             lastStage = stage
             lastStageStartMs = now
+            Log.i(TAG, "stage enter $stage")
         }
         onProgress(SingleVideoProgress(stage, progress.coerceIn(0f, 1f)))
+    }
+
+    companion object {
+        private const val TAG = "UnarchivePipeline"
     }
 }
