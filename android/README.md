@@ -10,6 +10,11 @@ flow processes one Bilibili link, downloads its audio, transcribes it on device,
 and persists a timestamped result that can be restored, copied, shared, or rerun.
 The local-audio ASR benchmark remains available for engine and device checks.
 
+**v0.1.0 released 2026-08-14** (see
+[GitHub Releases](https://github.com/YAHU2024/Unarchive/releases)): signed APK,
+corresponding-source archive, CycloneDX SBOM, and checksums. Requires Android
+8.0+; first launch installs the bundled ASR models without network.
+
 ## Local setup
 
 - JDK 17
