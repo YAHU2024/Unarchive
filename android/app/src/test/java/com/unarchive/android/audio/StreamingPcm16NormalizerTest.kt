@@ -64,8 +64,8 @@ class StreamingPcm16NormalizerTest {
     fun carriesIncompleteStereoFrameAcrossPushes() {
         val normalizer = StreamingPcm16Normalizer(2, 16_000, 16_000)
 
-        val first = normalizer.push(shortArrayOf(16_384))
-        val second = normalizer.push(shortArrayOf(-16_384, 16_384, 16_384))
+        val first = normalizer.push(floatArrayOf(0.5f))
+        val second = normalizer.push(floatArrayOf(-0.5f, 0.5f, 0.5f))
         val final = normalizer.finish()
 
         assertArrayEquals(FloatArray(0), first, 0f)
@@ -75,11 +75,11 @@ class StreamingPcm16NormalizerTest {
     @Test
     fun flushesSingleFrameAndUpsampledTailLikeWholeArrayNormalizer() {
         val single = StreamingPcm16Normalizer(1, 8_000, 16_000)
-        assertArrayEquals(floatArrayOf(0.5f), single.push(shortArrayOf(16_384)), 0.000001f)
+        assertArrayEquals(floatArrayOf(0.5f), single.push(floatArrayOf(0.5f)), 0.000001f)
         assertArrayEquals(FloatArray(0), single.finish(), 0f)
 
         val upsampled = StreamingPcm16Normalizer(1, 2, 4)
-        val actual = upsampled.push(shortArrayOf(0, 16_384)) + upsampled.finish()
+        val actual = upsampled.push(floatArrayOf(0f, 0.5f)) + upsampled.finish()
         val expected = Pcm16Normalizer.toMonoFloat(shortArrayOf(0, 16_384), 1, 2, 4)
         assertArrayEquals(expected, actual, 0.000001f)
     }
@@ -88,7 +88,7 @@ class StreamingPcm16NormalizerTest {
     fun retainsOnlyChannelCarryAndTwoMonoSamples() {
         val normalizer = StreamingPcm16Normalizer(2, 48_000, 16_000)
         repeat(10_000) { index ->
-            normalizer.push(shortArrayOf(index.toShort()))
+            normalizer.push(floatArrayOf(index % 64 / 64f))
             assertTrue(normalizer.maximumRetainedSampleCount <= 4)
         }
         normalizer.finish()
@@ -99,12 +99,12 @@ class StreamingPcm16NormalizerTest {
     @Test
     fun rejectsIncompleteFrameAndUseAfterFinish() {
         val incomplete = StreamingPcm16Normalizer(2, 16_000, 16_000)
-        incomplete.push(shortArrayOf(1))
+        incomplete.push(floatArrayOf(1f))
         assertThrows(IllegalArgumentException::class.java) { incomplete.finish() }
 
         val finished = StreamingPcm16Normalizer(1, 16_000, 16_000)
         finished.finish()
-        assertThrows(IllegalStateException::class.java) { finished.push(shortArrayOf(1)) }
+        assertThrows(IllegalStateException::class.java) { finished.push(floatArrayOf(1f)) }
         assertThrows(IllegalStateException::class.java) { finished.finish() }
     }
 
@@ -112,7 +112,7 @@ class StreamingPcm16NormalizerTest {
     fun emptyInputProducesEmptyOutput() {
         val normalizer = StreamingPcm16Normalizer(1, 16_000, 16_000)
 
-        assertEquals(0, normalizer.push(ShortArray(0)).size)
+        assertEquals(0, normalizer.push(FloatArray(0)).size)
         assertEquals(0, normalizer.finish().size)
     }
 
@@ -131,7 +131,8 @@ class StreamingPcm16NormalizerTest {
         var chunkIndex = 0
         while (offset < samples.size) {
             val end = (offset + chunkSizes[chunkIndex % chunkSizes.size]).coerceAtMost(samples.size)
-            normalizer.push(samples.copyOfRange(offset, end)).forEach(output::add)
+            val floats = samples.copyOfRange(offset, end).map { it / 32768f }.toFloatArray()
+            normalizer.push(floats).forEach(output::add)
             offset = end
             chunkIndex++
         }

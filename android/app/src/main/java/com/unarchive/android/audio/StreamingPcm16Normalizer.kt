@@ -7,7 +7,7 @@ class StreamingPcm16Normalizer(
     private val sourceSampleRate: Int,
     private val targetSampleRate: Int,
 ) {
-    private val pendingFrame = ShortArray(channelCount.coerceAtLeast(1))
+    private val pendingFrame = FloatArray(channelCount.coerceAtLeast(1))
     private val sourceStep = sourceSampleRate.toDouble() / targetSampleRate
     private val monoSamples = ArrayDeque<Float>(2)
     private var pendingSampleCount = 0
@@ -25,7 +25,8 @@ class StreamingPcm16Normalizer(
         require(targetSampleRate > 0) { "targetSampleRate must be positive" }
     }
 
-    fun push(interleavedSamples: ShortArray): FloatArray {
+    /** Accepts interleaved samples normalized to [-1, 1]; emits mono [-1, 1]. */
+    fun push(interleavedSamples: FloatArray): FloatArray {
         check(!finished) { "Normalizer is already finished" }
         if (interleavedSamples.isEmpty()) return FloatArray(0)
 
@@ -36,7 +37,7 @@ class StreamingPcm16Normalizer(
             if (pendingSampleCount == channelCount) {
                 var sum = 0f
                 repeat(channelCount) { channel ->
-                    sum += pendingFrame[channel] / 32768f
+                    sum += pendingFrame[channel]
                 }
                 pendingSampleCount = 0
                 acceptMono(sum / channelCount, output)

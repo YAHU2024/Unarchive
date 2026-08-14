@@ -49,7 +49,7 @@ class MediaCodecPcmAccumulator(
         val currentNormalizer = requireNotNull(normalizer)
         val input = buffer.duplicate().order(ByteOrder.nativeOrder())
         val sampleBytes = currentFormat.encoding.bytesPerSample
-        val samples = ShortArray((pendingByteCount + input.remaining()) / sampleBytes)
+        val samples = FloatArray((pendingByteCount + input.remaining()) / sampleBytes)
         var sampleIndex = 0
 
         if (pendingByteCount > 0) {
@@ -107,10 +107,9 @@ class MediaCodecPcmAccumulator(
         }
     }
 
-    private fun decodeSample(buffer: ByteBuffer, encoding: PcmEncoding): Short = when (encoding) {
-        PcmEncoding.PCM_16BIT -> buffer.short
-        PcmEncoding.PCM_FLOAT ->
-            (buffer.float.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+    private fun decodeSample(buffer: ByteBuffer, encoding: PcmEncoding): Float = when (encoding) {
+        PcmEncoding.PCM_16BIT -> buffer.short / 32768f
+        PcmEncoding.PCM_FLOAT -> buffer.float.coerceIn(-1f, 1f)
     }
 
     data class PcmOutputFormat(

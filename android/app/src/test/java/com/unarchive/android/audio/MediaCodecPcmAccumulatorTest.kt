@@ -31,16 +31,13 @@ class MediaCodecPcmAccumulatorTest {
     }
 
     @Test
-    fun floatChunksClampAndMatchPcm16Conversion() {
+    fun floatChunksClampAndPassThroughWithoutPcm16Quantization() {
         val floats = floatArrayOf(-2f, -1f, -0.5f, 0f, 0.5f, 1f, 2f)
         val bytes = ByteBuffer.allocate(floats.size * Float.SIZE_BYTES)
             .order(ByteOrder.nativeOrder())
             .apply { floats.forEach(::putFloat) }
             .array()
-        val expectedPcm = floats.map {
-            (it.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
-        }.toShortArray()
-        val expected = Pcm16Normalizer.toMonoFloat(expectedPcm, 1, 16_000, 16_000)
+        val expected = floats.map { it.coerceIn(-1f, 1f) }.toFloatArray()
         val accumulator = accumulator(PcmOutputFormat(16_000, 1, PcmEncoding.PCM_FLOAT))
 
         pushInChunks(accumulator, bytes, intArrayOf(3, 1, 5))
