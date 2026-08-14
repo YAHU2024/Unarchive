@@ -51,7 +51,7 @@ PC, no cloud account required.
 
 ### 📱 Android — try it in 1 minute
 
-1. Grab the latest APK from **[GitHub Releases](https://github.com/YAHU2024/Unarchive/releases)** (Android 8.0+, ~280 MB, signed)
+1. Grab the per-ABI APK for your phone from **[GitHub Releases](https://github.com/YAHU2024/Unarchive/releases)** (Android 8.0+, ~184 MB arm64 with bundled ASR models, signed; universal ~274 MB available too)
 2. Install, open, paste a Bilibili link
 3. First run installs the bundled ASR models locally (no network needed)
 4. Get a timestamped transcript → export a Markdown knowledge card

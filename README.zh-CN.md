@@ -51,7 +51,7 @@
 
 ### 📱 Android — 1 分钟上手
 
-1. 从 **[GitHub Releases](https://github.com/YAHU2024/Unarchive/releases)** 下载最新 APK（Android 8.0+，约 280 MB，已签名）
+1. 从 **[GitHub Releases](https://github.com/YAHU2024/Unarchive/releases)** 下载适配你手机架构的 APK（Android 8.0+，arm64 版约 184 MB，含内置 ASR 模型，已签名；另有 universal 约 274 MB）
 2. 安装后打开，粘贴一个 Bilibili 链接
 3. 首次启动自动在本地安装内置 ASR 模型（无需联网）
 4. 获得带时间戳的转录 → 导出 Markdown 知识卡片

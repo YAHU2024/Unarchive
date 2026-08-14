@@ -38,6 +38,13 @@ cd android
 .\gradlew.bat testDebugUnitTest assembleDebug
 ```
 
+Release builds enable R8 shrinking and produce **per-ABI APKs**
+(`app-arm64-v8a-release.apk`, `app-armeabi-v7a-release.apk`, `app-x86_64-release.apk`,
+`app-x86-release.apk`) plus a universal APK, so a phone only carries its own
+native library payload (~184 MB arm64 vs ~274 MB universal with the bundled
+model). `scripts/device_acceptance.ps1` picks the debug APK matching the
+connected device's ABI automatically.
+
 The APK bundles third-party license texts under
 `app/src/main/assets/licenses/` and exposes them in-app via the "查看开源许可"
 button in the Models section. Release signing reads
@@ -57,13 +64,23 @@ Without the ignored local sherpa AAR, the UI uses `PreviewAsrEngine` to validate
 audio selection, progress, cancellation, and result rendering. With the AAR and
 bundled models present, SenseVoice uses the real CPU recognizer from the private
 `files/models/sensevoice-2024-07-17-int8/` directory. A network download of the
-models remains available as a fallback for future model updates.
+models remains available as a fallback for builds without bundled assets and
+future model updates; the fallback archive is a zip (native zlib extraction),
+built with `scripts/repack_model_archive.ps1` and hosted on this project's
+GitHub Release. Legacy tar.bz2 archives are still extracted but are an order of
+magnitude slower (pure-Java bzip2), so prefer the zip artifact.
 
-The native path reads PCM16 WAV across common sample rates and channel counts,
-and uses Android's platform codecs for other audio containers. Both paths
-normalize output to 16 kHz mono before ASR. Decoding accepts up to four hours of
-input. Optional Silero VAD detects speech, adds up to 500 ms context, and bounds
-SenseVoice inputs to 30 seconds.
+The native path reads WAV files with PCM 8/16/24/32-bit integer, IEEE float
+32/64-bit, and WAVE_FORMAT_EXTENSIBLE containers, and uses Android's platform
+codecs for other audio containers. Both paths normalize output to 16 kHz mono
+before ASR. Decoding accepts up to four hours of input. Optional Silero VAD
+detects speech, adds up to 500 ms context, and bounds SenseVoice inputs to 30
+seconds. VAD segments longer than 8 seconds are re-split at internal pauses so
+each timestamp block stays close to one sentence even when the model emits no
+mid-segment punctuation. Inference threads default to the device's exclusive
+(big) cores on Android 13+ — sizing the ORT pool to the slow efficiency cores
+is the main cause of near-little-core throughput — and can be overridden with
+the "推理线程数" selector in the app (or `AsrConfig.numThreads`).
 Cancellation is checked between decoding, VAD windows, and ASR segments, and
 before and after sherpa's blocking native decode; it cannot interrupt a decode
 already in progress. Saved video results use private atomic JSON files keyed by
