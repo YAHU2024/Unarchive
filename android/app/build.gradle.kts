@@ -45,12 +45,39 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
             signingConfig = signingConfigs.findByName("release")
+        }
+    }
+
+    // Per-ABI APKs keep the onnxruntime + sherpa .so payload out of every
+    // download: a phone only needs its own ABI. The universal APK is kept for
+    // sideloading and the release workflow.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+            )
         }
     }
 

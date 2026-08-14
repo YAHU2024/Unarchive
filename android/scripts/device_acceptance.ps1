@@ -8,7 +8,6 @@ param(
 $ErrorActionPreference = "Stop"
 $androidRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $adb = Join-Path $androidRoot ".android-sdk\platform-tools\adb.exe"
-$apk = Join-Path $androidRoot "app\build\outputs\apk\debug\app-debug.apk"
 $packageName = "com.unarchive.android"
 $deviceStagingDirectory = "/data/local/tmp/unarchive-sensevoice"
 $deviceModelDirectory = "files/models/sensevoice-2024-07-17-int8"
@@ -25,6 +24,15 @@ $devices = & $adb devices | Select-String "\tdevice$"
 if ($devices.Count -ne 1) {
     throw "Connect exactly one authorized Android device; found $($devices.Count)."
 }
+
+# ABI-split builds produce one debug APK per ABI; install the one matching the
+# connected device, falling back to the universal APK.
+$abi = (& $adb shell getprop ro.product.cpu.abi).Trim()
+$apk = Join-Path $androidRoot "app\build\outputs\apk\debug\app-$abi-debug.apk"
+if (-not (Test-Path $apk)) {
+    $apk = Join-Path $androidRoot "app\build\outputs\apk\debug\app-universal-debug.apk"
+}
+Write-Host "Installing APK for ABI $abi : $apk"
 
 & $adb install -r $apk
 if ($LASTEXITCODE -ne 0) { throw "APK installation failed." }

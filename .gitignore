@@ -58,12 +58,15 @@ docs/internal/
 android/.android-sdk/
 android/.deps/
 android/.gradle/
+android/.kotlin/
 android/**/build/
 android/local.properties
 android/app/libs/*.aar
 android/app/src/main/assets/models/
 android/models/
 android/benchmark-results/
+android/scripts/bench/artifacts/
+android/scripts/bench/out/
 
 # Release packaging artifacts (SBOM, archives, keystores) — never committed
 release-artifacts/
