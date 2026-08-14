@@ -33,12 +33,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -84,6 +86,7 @@ import com.unarchive.android.result.asTimestamp
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -173,6 +176,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
     }
     var selectedEngine by remember { mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA) }
     var selectedThreads by remember { mutableStateOf<Int?>(null) }
+    var selectedVadMaxSeconds by remember { mutableIntStateOf(AsrConfig.DEFAULT_VAD_MAX_SPEECH_SECONDS) }
     var progress by remember { mutableFloatStateOf(0f) }
     var checkpointSegmentCount by remember { mutableStateOf(0) }
     val animatedProgress by animateFloatAsState(
@@ -231,7 +235,11 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             try {
                 videoResult = videoPipeline.run(
                     input = reference,
-                    config = AsrConfig(engine = selectedEngine, numThreads = selectedThreads),
+                    config = AsrConfig(
+                        engine = selectedEngine,
+                        numThreads = selectedThreads,
+                        vadMaxSpeechSeconds = selectedVadMaxSeconds,
+                    ),
                     forceRefreshAudio = forceRefreshAudio,
                     progressListener = SingleVideoProgressListener { update ->
                         progress = advanceProgress(progress, update.overallProgress)
@@ -412,6 +420,18 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             }
         }
 
+        Text(
+            "VAD 最大段长：$selectedVadMaxSeconds 秒（越小越精细，停顿更平滑）",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Slider(
+            value = selectedVadMaxSeconds.toFloat(),
+            onValueChange = { selectedVadMaxSeconds = it.roundToInt() },
+            enabled = runningJob == null,
+            valueRange = 1f..30f,
+            steps = 28,
+        )
+
         HorizontalDivider()
         ModelManagementSection(
             modelsDirectory = File(context.filesDir, "models"),
@@ -496,7 +516,11 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                     status = "Running benchmark harness..."
                     runningJob = scope.launch {
                         try {
-                            val config = AsrConfig(engine = selectedEngine, numThreads = selectedThreads)
+                            val config = AsrConfig(
+                                engine = selectedEngine,
+                                numThreads = selectedThreads,
+                                vadMaxSpeechSeconds = selectedVadMaxSeconds,
+                            )
                             val sourceIdentity = context.localAudioIdentity(uri)
                             val localRun = localAudioRunner.run(
                                 source = AudioSource(

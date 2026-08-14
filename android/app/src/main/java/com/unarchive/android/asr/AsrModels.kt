@@ -41,7 +41,7 @@ data class AsrConfig(
 
     companion object {
         const val DEFAULT_PARALLEL_WORKERS = 2
-        const val DEFAULT_VAD_MAX_SPEECH_SECONDS = 30
+        const val DEFAULT_VAD_MAX_SPEECH_SECONDS = 10
     }
 }
 
