@@ -90,8 +90,12 @@ class AndroidAudioDecoder(
             while (!outputEnded) {
                 coroutineContext.ensureActive()
                 if (!inputEnded) {
-                    val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
-                    if (inputIndex >= 0) {
+                    // Feed every available input buffer so the decoder never
+                    // starves. Decoding one sample per 10 ms poll starved the
+                    // codec and multiplied wall time by ~3 (measured: 337 s
+                    // M4A took 71 s to decode vs 24 s WAV before this fix).
+                    var inputIndex = codec.dequeueInputBuffer(0)
+                    while (inputIndex >= 0) {
                         val inputBuffer = requireNotNull(codec.getInputBuffer(inputIndex))
                         inputBuffer.clear()
                         val sampleSize = extractor.readSampleData(inputBuffer, 0)
@@ -104,20 +108,21 @@ class AndroidAudioDecoder(
                                 MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                             )
                             inputEnded = true
-                        } else {
-                            codec.queueInputBuffer(
-                                inputIndex,
-                                0,
-                                sampleSize,
-                                extractor.sampleTime,
-                                extractor.sampleFlags,
-                            )
-                            extractor.advance()
+                            break
                         }
+                        codec.queueInputBuffer(
+                            inputIndex,
+                            0,
+                            sampleSize,
+                            extractor.sampleTime,
+                            extractor.sampleFlags,
+                        )
+                        extractor.advance()
+                        inputIndex = codec.dequeueInputBuffer(0)
                     }
                 }
 
-                when (val outputIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US)) {
+                when (val outputIndex = codec.dequeueOutputBuffer(info, BLOCKING_OUTPUT_TIMEOUT_US)) {
                     MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         val format = codec.outputFormat
                         outputSampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -128,7 +133,11 @@ class AndroidAudioDecoder(
                         )
                         output.updateFormat(outputFormat(outputSampleRate, outputChannels, pcmEncoding))
                     }
-                    MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                    MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                        // Blocking-mode call returned nothing only at the tail
+                        // (EOS in flight); a short pause avoids a busy spin.
+                        Thread.sleep(POLL_WAIT_MS)
+                    }
                     else -> if (outputIndex >= 0) {
                         if (info.size > 0) {
                             val buffer = requireNotNull(codec.getOutputBuffer(outputIndex)).duplicate()
@@ -193,6 +202,10 @@ class AndroidAudioDecoder(
 
     companion object {
         private const val TIMEOUT_US = 10_000L
+        private const val POLL_WAIT_MS = 1L
+        // Blocking-mode output drain: absorbs the decoder's per-frame latency
+        // instead of converting it into poll+sleep wall time.
+        private const val BLOCKING_OUTPUT_TIMEOUT_US = 50_000L
         private const val MAX_DURATION_SECONDS = 4 * 60 * 60L
         private const val MAX_DURATION_US = MAX_DURATION_SECONDS * 1_000_000L
     }
