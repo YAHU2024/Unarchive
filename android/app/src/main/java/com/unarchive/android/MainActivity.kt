@@ -167,6 +167,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         mutableStateOf((initialAudio ?: savedAudio)?.let { context.displayName(it) })
     }
     var selectedEngine by remember { mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA) }
+    var selectedThreads by remember { mutableStateOf<Int?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var checkpointSegmentCount by remember { mutableStateOf(0) }
     val animatedProgress by animateFloatAsState(
@@ -225,7 +226,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             try {
                 videoResult = videoPipeline.run(
                     input = reference,
-                    config = AsrConfig(engine = selectedEngine),
+                    config = AsrConfig(engine = selectedEngine, numThreads = selectedThreads),
                     forceRefreshAudio = forceRefreshAudio,
                     progressListener = SingleVideoProgressListener { update ->
                         progress = advanceProgress(progress, update.overallProgress)
@@ -345,6 +346,21 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             }
         }
 
+        Text("推理线程数（性能对比用）", style = MaterialTheme.typography.titleMedium)
+        listOf(null to "自动（按大核数）", 1 to "1", 2 to "2", 4 to "4").forEach { (threads, label) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = selectedThreads == threads,
+                    onClick = { selectedThreads = threads },
+                    enabled = runningJob == null,
+                )
+                Text(label)
+            }
+        }
+
         HorizontalDivider()
         ModelManagementSection(
             modelsDirectory = File(context.filesDir, "models"),
@@ -429,7 +445,7 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                     status = "Running benchmark harness..."
                     runningJob = scope.launch {
                         try {
-                            val config = AsrConfig(engine = selectedEngine)
+                            val config = AsrConfig(engine = selectedEngine, numThreads = selectedThreads)
                             val localRun = localAudioRunner.run(
                                 source = AudioSource(
                                     displayName = selectedAudioName ?: "audio.wav",

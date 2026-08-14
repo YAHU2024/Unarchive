@@ -116,6 +116,51 @@ class ModelDownloaderTest {
         assertTrue(File(modelsDir, "sense-dir/tokens.txt").isFile)
     }
 
+    @Test
+    fun installsZipArchiveSource() = runTest {
+        val modelBytes = "archived-model".toByteArray()
+        val tokensBytes = "tok".toByteArray()
+        val zipBytes = zip(
+            listOf(
+                "model.int8.onnx" to modelBytes,
+                "tokens.txt" to tokensBytes,
+            ),
+        )
+        val source = ModelSource(
+            id = "sense",
+            displayName = "Sense",
+            directoryName = "sense-dir",
+            archiveUrl = "https://example.com/model.zip",
+            downloadFileName = "model.zip",
+            files = listOf(
+                ModelFileSpec("model.int8.onnx", sha256Hex(modelBytes)),
+                ModelFileSpec("tokens.txt", sha256Hex(tokensBytes)),
+            ),
+        )
+        val transport = FakeTransport(zipBytes)
+        val modelsDir = tempDir()
+        val downloader = ModelDownloader(modelsDir, transport)
+
+        val installed = downloader.ensureInstalled(source) {}
+
+        assertTrue(installed)
+        assertTrue(File(modelsDir, "sense-dir/model.int8.onnx").isFile)
+        assertEquals("archived-model", File(modelsDir, "sense-dir/model.int8.onnx").readText())
+        assertTrue(File(modelsDir, "sense-dir/tokens.txt").isFile)
+    }
+
+    private fun zip(entries: List<Pair<String, ByteArray>>): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(bytes).use { zip ->
+            for ((name, content) in entries) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(content)
+                zip.closeEntry()
+            }
+        }
+        return bytes.toByteArray()
+    }
+
     private fun tarBz2(entries: List<Pair<String, ByteArray>>): ByteArray {
         val bytes = ByteArrayOutputStream()
         BZip2CompressorOutputStream(bytes).use { bz ->

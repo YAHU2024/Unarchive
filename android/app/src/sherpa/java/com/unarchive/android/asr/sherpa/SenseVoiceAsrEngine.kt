@@ -1,7 +1,10 @@
 package com.unarchive.android.asr.sherpa
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Process
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
@@ -11,13 +14,17 @@ import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.unarchive.android.audio.AndroidAudioDecoder
-import com.unarchive.android.audio.Pcm16WaveDecoder
+import com.unarchive.android.audio.WaveDecoder
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngine
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrOutput
 import com.unarchive.android.asr.AsrProgressListener
+import com.unarchive.android.asr.AsrThreadDefaults
 import com.unarchive.android.asr.AudioSource
+import com.unarchive.android.asr.ParallelWorkers
+import com.unarchive.android.asr.SegmentParallelizer
+import com.unarchive.android.asr.SentenceBoundaryDetector
 import com.unarchive.android.asr.SenseVoiceModelFiles
 import com.unarchive.android.asr.SileroVadModelFile
 import com.unarchive.android.asr.BufferedSpeechSegment
@@ -25,9 +32,11 @@ import com.unarchive.android.asr.CompletedAsrSegment
 import com.unarchive.android.asr.StreamingSpeechSegmentBuffer
 import com.unarchive.android.asr.TranscriptSegment
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 
 class SenseVoiceAsrEngine(
@@ -56,55 +65,94 @@ class SenseVoiceAsrEngine(
         coroutineContext.ensureActive()
         progressListener.onProgress(0.05f)
 
-        val recognizer = createRecognizer(modelFiles, config)
+        val workers = ParallelWorkers.infer(
+            requested = config.parallelWorkers,
+            memoryClassMb = memoryClassMb(context),
+            exclusiveCoreCount = exclusiveCores().size,
+        )
+        val recognizers = List(workers) { createRecognizer(modelFiles, config) }
         val transcripts = mutableListOf<TranscriptSegment>()
-        var timeOffsetMs = source.resumeStartMs
+        val timeOffsetMs = AtomicLong(source.resumeStartMs)
         try {
-            val currentContext = coroutineContext
-            val segmentBuffer = StreamingSpeechSegmentBuffer(
-                contextSamples = if (config.enableVad) {
-                    config.contextPaddingMs * EXPECTED_SAMPLE_RATE / 1_000
-                } else {
-                    0
-                },
-                maximumSegmentSamples = MAX_SEGMENT_SECONDS * EXPECTED_SAMPLE_RATE,
-                historySamples = if (config.enableVad) {
-                    VAD_HISTORY_SECONDS * EXPECTED_SAMPLE_RATE
-                } else {
-                    0
-                },
-            ) { segment ->
-                currentContext.ensureActive()
-                val transcript = recognizeSegment(recognizer, segment, timeOffsetMs)
-                transcript?.let(transcripts::add)
-                source.onSegmentCompleted(
-                    CompletedAsrSegment(
-                        startMs = segment.startSample * 1_000L / EXPECTED_SAMPLE_RATE +
-                            timeOffsetMs,
-                        endMs = segment.endSample * 1_000L / EXPECTED_SAMPLE_RATE +
-                            timeOffsetMs,
-                        transcript = transcript,
-                    ),
+            coroutineScope {
+                val currentContext = coroutineContext
+                val audioDurationMsRef = AtomicLong(0)
+                val parallelizer = SegmentParallelizer<BufferedSpeechSegment, List<TranscriptSegment>>(
+                    scope = this,
+                    workerCount = workers,
+                    process = { workerIndex, segment ->
+                        currentContext.ensureActive()
+                        recognizeSegment(recognizers[workerIndex], segment, timeOffsetMs.get())
+                    },
+                    consume = { _, recognized ->
+                        recognized.forEach { transcript ->
+                            transcripts.add(transcript)
+                            source.onSegmentCompleted(
+                                CompletedAsrSegment(
+                                    startMs = transcript.startMs,
+                                    endMs = transcript.endMs,
+                                    transcript = transcript,
+                                ),
+                            )
+                        }
+                        val durationMs = audioDurationMsRef.get()
+                        if (durationMs > 0) {
+                            var committedEndMs = 0L
+                            for (transcript in recognized) {
+                                if (transcript.endMs > committedEndMs) {
+                                    committedEndMs = transcript.endMs
+                                }
+                            }
+                            if (committedEndMs > 0) {
+                                progressListener.onProgress(
+                                    (0.55f + 0.45f * committedEndMs.toFloat() / durationMs)
+                                        .coerceIn(0.55f, 1f),
+                                )
+                            }
+                        }
+                    },
+                )
+                val segmentBuffer = StreamingSpeechSegmentBuffer(
+                    contextSamples = if (config.enableVad) {
+                        config.contextPaddingMs * EXPECTED_SAMPLE_RATE / 1_000
+                    } else {
+                        0
+                    },
+                    maximumSegmentSamples = MAX_SEGMENT_SECONDS * EXPECTED_SAMPLE_RATE,
+                    historySamples = if (config.enableVad) {
+                        VAD_HISTORY_SECONDS * EXPECTED_SAMPLE_RATE
+                    } else {
+                        0
+                    },
+                ) { segment ->
+                    currentContext.ensureActive()
+                    parallelizer.submit(segment)
+                }
+                val audioDurationSamples = streamAudio(
+                    source = source,
+                    config = config,
+                    vadModel = vadModel,
+                    segmentBuffer = segmentBuffer,
+                    progressListener = progressListener,
+                    onResolvedStartMs = { timeOffsetMs.set(it) },
+                )
+                coroutineContext.ensureActive()
+                val audioDurationMs = audioDurationSamples * 1_000L / EXPECTED_SAMPLE_RATE
+                audioDurationMsRef.set(audioDurationMs)
+                parallelizer.finish()
+                progressListener.onProgress(1f)
+                AsrOutput(
+                    segments = transcripts,
+                    audioDurationMs = audioDurationMs,
                 )
             }
-            val audioDurationSamples = streamAudio(
-                source = source,
-                config = config,
-                vadModel = vadModel,
-                segmentBuffer = segmentBuffer,
-                progressListener = progressListener,
-                onResolvedStartMs = { timeOffsetMs = it },
-            )
-            coroutineContext.ensureActive()
-            progressListener.onProgress(1f)
-            AsrOutput(
-                segments = transcripts,
-                audioDurationMs = audioDurationSamples * 1_000L / EXPECTED_SAMPLE_RATE,
-            )
         } finally {
-            recognizer.release()
+            recognizers.forEach { it.release() }
         }
     }
+
+    private fun memoryClassMb(context: Context): Int =
+        context.getSystemService(ActivityManager::class.java)?.memoryClass ?: 512
 
     private suspend fun streamAudio(
         source: AudioSource,
@@ -173,7 +221,7 @@ class SenseVoiceAsrEngine(
                 onResolvedStartMs(source.resumeStartMs)
                 context.contentResolver.openInputStream(sourceUri).use { input ->
                     requireNotNull(input) { "Cannot open selected audio" }
-                    Pcm16WaveDecoder.decodeChunks(
+                    WaveDecoder.decodeChunks(
                         input = input,
                         targetSampleRate = EXPECTED_SAMPLE_RATE,
                         onChunk = { currentContext.ensureActive() },
@@ -230,14 +278,65 @@ class SenseVoiceAsrEngine(
         segmentBuffer.updateSpeechActive(!forceInactive && vad.isSpeechDetected())
     }
 
+    /**
+     * Recognizes [segment], first re-splitting long segments at internal
+     * pauses so each emitted block stays close to one sentence (see
+     * [SentenceBoundaryDetector]). Returns one [TranscriptSegment] per
+     * sub-range with its own timestamps.
+     */
     private fun recognizeSegment(
         recognizer: OfflineRecognizer,
         segment: BufferedSpeechSegment,
         timeOffsetMs: Long,
+    ): List<TranscriptSegment> {
+        val boundaries = if (segment.samples.size >= MIN_SPLIT_SEGMENT_SAMPLES) {
+            SentenceBoundaryDetector.findSplitSamples(
+                samples = segment.samples,
+                sampleRate = EXPECTED_SAMPLE_RATE,
+            )
+        } else {
+            IntArray(0)
+        }
+        if (boundaries.isEmpty()) {
+            return listOfNotNull(
+                recognizeRange(
+                    recognizer = recognizer,
+                    samples = segment.samples,
+                    startSample = segment.startSample,
+                    endSample = segment.endSample,
+                    timeOffsetMs = timeOffsetMs,
+                ),
+            )
+        }
+        val ranges = buildList {
+            var start = 0
+            for (boundary in boundaries) {
+                add(start to boundary)
+                start = boundary
+            }
+            add(start to segment.samples.size)
+        }
+        return ranges.mapNotNull { (start, end) ->
+            recognizeRange(
+                recognizer = recognizer,
+                samples = segment.samples.copyOfRange(start, end),
+                startSample = segment.startSample + start,
+                endSample = segment.startSample + end,
+                timeOffsetMs = timeOffsetMs,
+            )
+        }
+    }
+
+    private fun recognizeRange(
+        recognizer: OfflineRecognizer,
+        samples: FloatArray,
+        startSample: Long,
+        endSample: Long,
+        timeOffsetMs: Long,
     ): TranscriptSegment? {
         val stream = recognizer.createStream()
         val text = try {
-            stream.acceptWaveform(segment.samples, EXPECTED_SAMPLE_RATE)
+            stream.acceptWaveform(samples, EXPECTED_SAMPLE_RATE)
             recognizer.decode(stream)
             recognizer.getResult(stream).text.trim()
         } finally {
@@ -245,8 +344,8 @@ class SenseVoiceAsrEngine(
         }
         return text.takeIf { it.isNotEmpty() }?.let {
             TranscriptSegment(
-                startMs = segment.startSample * 1_000L / EXPECTED_SAMPLE_RATE + timeOffsetMs,
-                endMs = segment.endSample * 1_000L / EXPECTED_SAMPLE_RATE + timeOffsetMs,
+                startMs = startSample * 1_000L / EXPECTED_SAMPLE_RATE + timeOffsetMs,
+                endMs = endSample * 1_000L / EXPECTED_SAMPLE_RATE + timeOffsetMs,
                 text = it,
             )
         }
@@ -265,11 +364,25 @@ class SenseVoiceAsrEngine(
                     useInverseTextNormalization = true,
                 ),
                 tokens = files.tokens.absolutePath,
-                numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+                numThreads = config.numThreads ?: defaultThreads(),
                 provider = "cpu",
             ),
         ),
     )
+
+    private fun defaultThreads(): Int {
+        return AsrThreadDefaults.infer(
+            availableProcessors = Runtime.getRuntime().availableProcessors(),
+            exclusiveCores = exclusiveCores(),
+        )
+    }
+
+    private fun exclusiveCores(): IntArray =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Process.getExclusiveCores()
+        } else {
+            IntArray(0)
+        }
 
     companion object {
         private const val EXPECTED_SAMPLE_RATE = 16_000
@@ -277,5 +390,7 @@ class SenseVoiceAsrEngine(
         private const val VAD_MAX_SPEECH_SECONDS = 29
         private const val VAD_HISTORY_SECONDS = 2
         private const val MAX_SEGMENT_SECONDS = 30
+        /** Segments at or above this length get re-split at internal pauses. */
+        private const val MIN_SPLIT_SEGMENT_SAMPLES = 8 * 16_000
     }
 }
