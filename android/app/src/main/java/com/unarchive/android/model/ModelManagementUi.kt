@@ -3,12 +3,17 @@ package com.unarchive.android.model
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -178,7 +183,57 @@ fun ModelManagementSection(
                 "Silero VAD（Silero Team，MIT）；sherpa-onnx（Apache-2.0）。",
             style = MaterialTheme.typography.bodySmall,
         )
+
+        var showLicenses by remember { mutableStateOf(false) }
+        OutlinedButton(
+            enabled = enabled,
+            onClick = { showLicenses = true },
+        ) {
+            Text("查看开源许可")
+        }
+        if (showLicenses) {
+            LicensesDialog(
+                onDismiss = { showLicenses = false },
+                licenseText = remember { loadLicenses(context) },
+            )
+        }
     }
+}
+
+/** Reads every text file under `assets/licenses/` and joins them for display. */
+private fun loadLicenses(context: android.content.Context): String {
+    val directory = "licenses"
+    val names = context.assets.list(directory).orEmpty().sorted()
+    val builder = StringBuilder()
+    for (name in names) {
+        val text = context.assets.open("$directory/$name").bufferedReader().use { it.readText() }
+        builder.append("===== $name =====\n\n").append(text).append("\n\n")
+    }
+    return builder.toString()
+}
+
+@Composable
+private fun LicensesDialog(onDismiss: () -> Unit, licenseText: String) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("开源许可") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    "本应用包含第三方开源软件与模型。完整许可文本如下：",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(licenseText, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
 }
 
 private fun formatBytes(bytes: Long): String =

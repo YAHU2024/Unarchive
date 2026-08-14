@@ -1,11 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.cyclonedx.bom")
 }
 
 val sherpaAar = file("libs/sherpa_onnx-release.aar")
 val sherpaEnabled = sherpaAar.isFile
+
+// Release signing: loaded from the git-ignored android/keystore.properties
+// (see android/README.md). Absent properties -> release builds are unsigned,
+// which is fine for local validation; sign before publishing.
+val keystoreProps = Properties().apply {
+    val propsFile = rootProject.file("keystore.properties")
+    if (propsFile.isFile) propsFile.inputStream().use(::load)
+}
 
 android {
     namespace = "com.unarchive.android"
@@ -21,6 +32,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (keystoreProps.getProperty("keystoreFile") != null) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("keystoreFile"))
+                storePassword = keystoreProps.getProperty("keystorePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -28,6 +50,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

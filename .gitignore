@@ -61,6 +61,11 @@ android/.gradle/
 android/**/build/
 android/local.properties
 android/app/libs/*.aar
-android/app/src/main/assets/
+android/app/src/main/assets/models/
 android/models/
 android/benchmark-results/
+
+# Release packaging artifacts (SBOM, archives, keystores) — never committed
+release-artifacts/
+android/keystore/
+android/keystore.properties
