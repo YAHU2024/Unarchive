@@ -54,6 +54,9 @@ import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
 import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.MonotonicClock
+import com.unarchive.android.audio.audioMimeType
+import com.unarchive.android.audio.exportAudioFileName
+import com.unarchive.android.audio.resolveCachedAudio
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioIdentity
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
@@ -138,10 +141,12 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
         LocalAudioCheckpointRunner(runner, checkpointRepository)
     }
     val platformAdapter = remember { BilibiliPlatformAdapter() }
+    val audioCacheDirectory = remember { File(context.cacheDir, "bilibili-audio") }
+    val audioDownloader = remember { BilibiliAudioDownloader(audioCacheDirectory) }
     val videoPipeline = remember {
         SingleVideoPipeline(
             platformAdapter = platformAdapter,
-            audioDownloader = BilibiliAudioDownloader(File(context.cacheDir, "bilibili-audio")),
+            audioDownloader = audioDownloader,
             benchmarkRunner = runner,
             resultRepository = resultRepository,
             checkpointRepository = checkpointRepository,
@@ -298,6 +303,40 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 status = "AI 生成失败：${error.message}。可点「导出卡片」导出基础版。"
             } finally {
                 generateJob = null
+            }
+        }
+    }
+
+    fun exportCachedAudio(stored: StoredVideoResult) {
+        if (runningJob != null) return
+        runningJob = scope.launch {
+            try {
+                val cacheHit = resolveCachedAudio(audioCacheDirectory, stored.key.videoId)
+                val exported = if (cacheHit != null) {
+                    withContext(Dispatchers.IO) { context.prepareAudioExport(stored, cacheHit) }
+                } else {
+                    status = "缓存音频不存在，正在重新下载并导出..."
+                    withContext(Dispatchers.IO) {
+                        val reference = platformAdapter.resolveReference(stored.canonicalUrl)
+                        val metadata = platformAdapter.fetchMetadata(reference)
+                        val stream = platformAdapter.resolveAudio(metadata)
+                        val download = audioDownloader.download(
+                            metadata,
+                            stream,
+                            forceRefresh = true,
+                            DownloadProgressListener { _, _ -> },
+                        )
+                        context.prepareAudioExport(stored, download.file)
+                    }
+                }
+                context.launchAudioShare(stored, exported)
+                status = if (cacheHit != null) "音频已导出（使用本地缓存）。" else "音频已下载并导出。"
+            } catch (_: CancellationException) {
+                status = "音频导出已取消。"
+            } catch (error: Exception) {
+                status = "音频导出失败：${error.message}"
+            } finally {
+                runningJob = null
             }
         }
     }
@@ -535,6 +574,13 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             }
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
+                enabled = runningJob == null,
+                onClick = { exportCachedAudio(stored) },
+            ) {
+                Text("导出音频")
+            }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
                 enabled = runningJob == null && generateJob == null,
                 onClick = { generateCard(stored) },
             ) {
@@ -756,6 +802,31 @@ private fun Context.shareMarkdownFile(fileName: String, markdown: String, title:
         .putExtra(Intent.EXTRA_SUBJECT, title)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     startActivity(Intent.createChooser(intent, "导出知识卡片"))
+}
+
+/**
+ * Copy [source] (a cached or freshly downloaded audio file) into the app's
+ * export directory under a readable name, so other apps receive a
+ * recognizable file instead of the raw cache name. Safe to call on a
+ * background dispatcher.
+ */
+private fun Context.prepareAudioExport(stored: StoredVideoResult, source: File): File {
+    val fileName = exportAudioFileName(stored.key.videoId, stored.title, source.extension)
+    val target = File(cacheDir, "export/$fileName")
+    target.parentFile?.mkdirs()
+    source.copyTo(target, overwrite = true)
+    return target
+}
+
+/** Open the system share sheet with the exported audio file attached. */
+private fun Context.launchAudioShare(stored: StoredVideoResult, file: File) {
+    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND)
+        .setType(audioMimeType(file.extension))
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .putExtra(Intent.EXTRA_SUBJECT, stored.title)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    startActivity(Intent.createChooser(intent, "导出音频"))
 }
 
 internal fun videoCompletionStatus(

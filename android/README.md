@@ -90,3 +90,11 @@ explicitly redownloaded from a saved result. Failed refreshes preserve the prior
 audio and saved transcript. Legacy audio files without metadata refresh once;
 subsequent normal reruns report that the audio cache was reused. Pipeline progress
 is monotonic and visually animated across cache, download, and transcription stages.
+
+Saved results offer an **导出音频** action: when the video's cached audio is
+still present (M4A/WebM in the private cache), it is copied to the app's export
+directory under a readable `{视频ID}_{标题}.m4a` name and opened in the system
+share sheet, so the file can be sent to other transcription tools, file
+managers, or cloud drives. If the cache entry is missing (expired or cleared),
+the app re-downloads the audio first and then shares it; the export never
+requires a rerun of transcription.
