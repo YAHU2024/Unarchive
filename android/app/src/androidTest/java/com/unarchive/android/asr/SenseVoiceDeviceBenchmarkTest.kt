@@ -77,72 +77,48 @@ class SenseVoiceDeviceBenchmarkTest {
 
         // MediaCodec decode-path comparison: the same audio as M4A/AAC goes
         // through AndroidAudioDecoder instead of the WAV decoder, matching the
-        // Bilibili pipeline.
+        // Bilibili pipeline. A fixed fingerprint exercises the decode cache:
+        // the first run decodes and persists the 16k WAV, the second should
+        // hit the cache and skip the container decode.
         val m4a = File(context.cacheDir, "bench-long.m4a")
         if (m4a.isFile) {
             val m4aUri = FileProvider.getUriForFile(context, AUTHORITY, m4a)
-            val engine = SenseVoiceAsrEngine(context)
-            val startedAt = SystemClock.elapsedRealtime()
-            val output = runBlocking {
-                engine.transcribe(
-                    source = AudioSource(displayName = m4a.name, uri = m4aUri.toString()),
-                    config = AsrConfig(
-                        AsrEngineKind.SENSE_VOICE_SHERPA,
-                        numThreads = null,
-                        parallelWorkers = 1,
-                    ),
-                    progressListener = AsrProgressListener {},
+            val fingerprint = "bench-m4a-fp"
+            repeat(2) { round ->
+                val engine = SenseVoiceAsrEngine(context)
+                val startedAt = SystemClock.elapsedRealtime()
+                val output = runBlocking {
+                    engine.transcribe(
+                        source = AudioSource(
+                            displayName = m4a.name,
+                            uri = m4aUri.toString(),
+                            contentFingerprint = fingerprint,
+                        ),
+                        config = AsrConfig(
+                            AsrEngineKind.SENSE_VOICE_SHERPA,
+                            numThreads = null,
+                            parallelWorkers = 1,
+                        ),
+                        progressListener = AsrProgressListener {},
+                    )
+                }
+                val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                val t = output.timings
+                val line = String.format(
+                    "m4a-round%d/auto1w: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
+                        "model=%d decode=%d recognize=%d commit=%d",
+                    round, output.audioDurationMs, elapsedMs,
+                    if (output.audioDurationMs > 0) {
+                        elapsedMs.toDouble() / output.audioDurationMs
+                    } else {
+                        0.0
+                    },
+                    output.segments.size,
+                    t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
                 )
+                Log.i(TAG, line)
+                reportFile.appendText("\n$line\n")
             }
-            val elapsedMs = SystemClock.elapsedRealtime() - startedAt
-            val t = output.timings
-            val line = String.format(
-                "m4a/auto1w: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
-                    "model=%d decode=%d recognize=%d commit=%d",
-                output.audioDurationMs, elapsedMs,
-                if (output.audioDurationMs > 0) {
-                    elapsedMs.toDouble() / output.audioDurationMs
-                } else {
-                    0.0
-                },
-                output.segments.size,
-                t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
-            )
-            Log.i(TAG, line)
-            reportFile.appendText("\n$line\n")
-
-            // Same M4A without VAD: isolates VAD processing on the decode
-            // thread from the codec decode itself.
-            val engineNoVad = SenseVoiceAsrEngine(context)
-            val noVadStart = SystemClock.elapsedRealtime()
-            val noVad = runBlocking {
-                engineNoVad.transcribe(
-                    source = AudioSource(displayName = m4a.name, uri = m4aUri.toString()),
-                    config = AsrConfig(
-                        AsrEngineKind.SENSE_VOICE_SHERPA,
-                        numThreads = null,
-                        parallelWorkers = 1,
-                        enableVad = false,
-                    ),
-                    progressListener = AsrProgressListener {},
-                )
-            }
-            val noVadElapsed = SystemClock.elapsedRealtime() - noVadStart
-            val nt = noVad.timings
-            val noVadLine = String.format(
-                "m4a-novad/auto1w: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
-                    "model=%d decode=%d recognize=%d commit=%d",
-                noVad.audioDurationMs, noVadElapsed,
-                if (noVad.audioDurationMs > 0) {
-                    noVadElapsed.toDouble() / noVad.audioDurationMs
-                } else {
-                    0.0
-                },
-                noVad.segments.size,
-                nt.modelLoadMs, nt.decodeMs, nt.recognitionMs, nt.commitMs,
-            )
-            Log.i(TAG, noVadLine)
-            reportFile.appendText("$noVadLine\n")
         }
     }
 

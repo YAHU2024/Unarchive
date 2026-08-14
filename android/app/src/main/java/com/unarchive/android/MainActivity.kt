@@ -497,12 +497,14 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                     runningJob = scope.launch {
                         try {
                             val config = AsrConfig(engine = selectedEngine, numThreads = selectedThreads)
+                            val sourceIdentity = context.localAudioIdentity(uri)
                             val localRun = localAudioRunner.run(
                                 source = AudioSource(
                                     displayName = selectedAudioName ?: "audio.wav",
                                     uri = uri.toString(),
+                                    contentFingerprint = sourceIdentity.contentFingerprint,
                                 ),
-                                sourceIdentity = context.localAudioIdentity(uri),
+                                sourceIdentity = sourceIdentity,
                                 config = config,
                                 progressListener = AsrProgressListener { progress = advanceProgress(progress, it) },
                                 checkpointListener = { checkpointSegmentCount = it },

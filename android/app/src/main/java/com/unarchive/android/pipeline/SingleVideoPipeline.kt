@@ -246,6 +246,7 @@ class SingleVideoPipeline(
                 displayName = download.file.name,
                 uri = download.file.toURI().toString(),
                 resumeStartMs = resumePlan?.resumeStartMs ?: 0,
+                contentFingerprint = sourceIdentity.contentFingerprint,
                 onSegmentCompleted = ::commit,
             ),
             config = config,

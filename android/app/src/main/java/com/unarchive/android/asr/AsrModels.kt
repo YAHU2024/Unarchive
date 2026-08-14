@@ -141,6 +141,12 @@ data class AudioSource(
     val displayName: String,
     val uri: String,
     val resumeStartMs: Long = 0,
+    /**
+     * Source content fingerprint; when present, the engine serves the decode
+     * from the [com.unarchive.android.audio.DecodedAudioCache] on later runs
+     * instead of decoding the container again.
+     */
+    val contentFingerprint: String? = null,
     val onSegmentCompleted: (CompletedAsrSegment) -> Unit = {},
 )
 
