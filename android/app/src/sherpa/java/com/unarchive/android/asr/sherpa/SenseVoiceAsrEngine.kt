@@ -37,8 +37,14 @@ import com.unarchive.android.asr.TranscriptSegment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 
@@ -182,7 +188,7 @@ class SenseVoiceAsrEngine(
         segmentBuffer: StreamingSpeechSegmentBuffer,
         progressListener: AsrProgressListener,
         onResolvedStartMs: (Long) -> Unit,
-    ): Long {
+    ): Long = coroutineScope {
         val vad = if (config.enableVad) Vad(
             config = VadModelConfig(
                 sileroVadModelConfig = SileroVadModelConfig(
@@ -198,43 +204,79 @@ class SenseVoiceAsrEngine(
                 provider = "cpu",
             ),
         ) else null
-        return try {
+        try {
             val currentContext = coroutineContext
-            val vadWindow = FloatArray(VAD_WINDOW_SIZE)
-            var vadWindowSize = 0
-            var decodedSamples = 0L
-            fun consume(samples: FloatArray) {
-                currentContext.ensureActive()
-                if (vad == null) {
-                    val chunkStart = decodedSamples
-                    decodedSamples += samples.size
-                    segmentBuffer.updateSpeechActive(true)
-                    segmentBuffer.append(samples)
-                    segmentBuffer.addSpeechRange(chunkStart, decodedSamples)
-                    return
-                }
+            // Two-stage pipeline: the decode thread only decodes and hands
+            // samples over; VAD runs on its own thread so its ~64 s of native
+            // calls per 12 minutes overlap the container decode instead of
+            // adding to it serially.
+            val vadQueue = ArrayBlockingQueue<FloatArray>(VAD_QUEUE_CAPACITY)
+            val vadDone = AtomicBoolean(false)
+            val decodedSamples = AtomicLong(0)
 
-                var offset = 0
-                while (offset < samples.size) {
-                    val count = minOf(VAD_WINDOW_SIZE - vadWindowSize, samples.size - offset)
-                    val audioSlice = FloatArray(count)
-                    samples.copyInto(
-                        audioSlice,
-                        startIndex = offset,
-                        endIndex = offset + count,
-                    )
-                    segmentBuffer.updateSpeechActive(vad.isSpeechDetected())
-                    segmentBuffer.append(audioSlice)
-                    audioSlice.copyInto(vadWindow, destinationOffset = vadWindowSize)
-                    decodedSamples += count
-                    vadWindowSize += count
-                    offset += count
-                    if (vadWindowSize == VAD_WINDOW_SIZE) {
-                        vad.acceptWaveform(vadWindow)
-                        drainVad(vad, segmentBuffer, decodedSamples)
-                        vadWindowSize = 0
+            val vadJob = launch(Dispatchers.IO) {
+                val vadContext = coroutineContext
+                val vadWindow = FloatArray(VAD_WINDOW_SIZE)
+                var vadWindowSize = 0
+                var receivedSamples = 0L
+                fun consume(samples: FloatArray) {
+                    vadContext.ensureActive()
+                    if (vad == null) {
+                        val chunkStart = receivedSamples
+                        receivedSamples += samples.size
+                        segmentBuffer.updateSpeechActive(true)
+                        segmentBuffer.append(samples)
+                        segmentBuffer.addSpeechRange(chunkStart, receivedSamples)
+                        return
+                    }
+
+                    var offset = 0
+                    while (offset < samples.size) {
+                        val count = minOf(VAD_WINDOW_SIZE - vadWindowSize, samples.size - offset)
+                        val audioSlice = FloatArray(count)
+                        samples.copyInto(
+                            audioSlice,
+                            startIndex = offset,
+                            endIndex = offset + count,
+                        )
+                        segmentBuffer.updateSpeechActive(vad.isSpeechDetected())
+                        segmentBuffer.append(audioSlice)
+                        audioSlice.copyInto(vadWindow, destinationOffset = vadWindowSize)
+                        receivedSamples += count
+                        vadWindowSize += count
+                        offset += count
+                        if (vadWindowSize == VAD_WINDOW_SIZE) {
+                            vad.acceptWaveform(vadWindow)
+                            drainVad(vad, segmentBuffer, receivedSamples)
+                            vadWindowSize = 0
+                        }
                     }
                 }
+
+                while (vadContext.isActive) {
+                    val samples = runInterruptible {
+                        vadQueue.poll(VAD_POLL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    }
+                    if (samples != null) {
+                        consume(samples)
+                    } else if (vadDone.get()) {
+                        break
+                    }
+                }
+                vadContext.ensureActive()
+                // Tail flush, keeping the previous ordering: drain remaining
+                // VAD state before finishing the segment buffer.
+                if (vad != null) {
+                    if (vadWindowSize > 0) {
+                        vadWindow.fill(0f, vadWindowSize)
+                        vad.acceptWaveform(vadWindow)
+                    }
+                    vad.flush()
+                    drainVad(vad, segmentBuffer, receivedSamples, forceInactive = true)
+                } else {
+                    segmentBuffer.updateSpeechActive(false)
+                }
+                segmentBuffer.finish()
             }
 
             val fingerprint = source.contentFingerprint
@@ -252,84 +294,88 @@ class SenseVoiceAsrEngine(
                 }
             }
 
-            val sourceUri = Uri.parse(source.uri)
-            val reportedSamples = when {
-                // Decode-cache hit: the 16 kHz mono PCM is already on disk, so
-                // the container (e.g. software AAC, ~30 s per 12 min) is skipped.
-                cachedFile != null -> {
-                    onResolvedStartMs(source.resumeStartMs)
-                    cachedFile.inputStream().use { input ->
-                        WaveDecoder.decodeChunks(
-                            input = input,
-                            targetSampleRate = EXPECTED_SAMPLE_RATE,
-                            onChunk = { currentContext.ensureActive() },
-                            onProgress = { decodedProgress ->
-                                progressListener.onProgress(0.05f + 0.45f * decodedProgress)
-                            },
-                            startAtMs = source.resumeStartMs,
-                            onSamples = ::consume,
-                        )
-                    }.also { progressListener.onProgress(0.55f) }
-                }
-                // Plain WAV sources decode fast already; no cache layer.
-                source.displayName.endsWith(".wav", ignoreCase = true) -> {
-                    onResolvedStartMs(source.resumeStartMs)
-                    context.contentResolver.openInputStream(sourceUri).use { input ->
-                        requireNotNull(input) { "Cannot open selected audio" }
-                        WaveDecoder.decodeChunks(
-                            input = input,
-                            targetSampleRate = EXPECTED_SAMPLE_RATE,
-                            onChunk = { currentContext.ensureActive() },
-                            onProgress = { decodedProgress ->
-                                progressListener.onProgress(0.05f + 0.45f * decodedProgress)
-                            },
-                            startAtMs = source.resumeStartMs,
-                            onSamples = ::consume,
-                        )
-                    }.also { progressListener.onProgress(0.55f) }
-                }
-                // Container decode (MediaCodec): persist the full decode to
-                // the cache when we start from the beginning, so reruns skip it.
-                else -> {
-                    val sink = if (fingerprint != null && source.resumeStartMs == 0L) {
-                        cache!!.newSink(fingerprint)
-                    } else {
-                        null
-                    }
-                    try {
-                        val count = AndroidAudioDecoder(context).decodeChunks(
-                            uri = sourceUri,
-                            targetSampleRate = EXPECTED_SAMPLE_RATE,
-                            progressListener = progressListener,
-                            startAtMs = source.resumeStartMs,
-                            onResolvedStartMs = onResolvedStartMs,
-                            onSamples = { samples ->
-                                sink?.write(samples)
-                                consume(samples)
-                            },
-                        )
-                        sink?.finish()
-                        count
-                    } catch (e: Throwable) {
-                        sink?.abort()
-                        throw e
-                    }
+            // Non-suspend producer callback: offer into the bounded queue and
+            // poll while full so cancellation still lands (ensureActive).
+            fun sendSamples(samples: FloatArray) {
+                currentContext.ensureActive()
+                decodedSamples.addAndGet(samples.size.toLong())
+                while (!vadQueue.offer(samples)) {
+                    currentContext.ensureActive()
+                    Thread.sleep(1)
                 }
             }
-            check(reportedSamples == decodedSamples) { "Decoder sample count mismatch" }
 
-            if (vad != null) {
-                if (vadWindowSize > 0) {
-                    vadWindow.fill(0f, vadWindowSize)
-                    vad.acceptWaveform(vadWindow)
+            val sourceUri = Uri.parse(source.uri)
+            try {
+                val reportedSamples = when {
+                    // Decode-cache hit: the 16 kHz mono PCM is already on disk, so
+                    // the container (e.g. software AAC, ~30 s per 12 min) is skipped.
+                    cachedFile != null -> {
+                        onResolvedStartMs(source.resumeStartMs)
+                        cachedFile.inputStream().use { input ->
+                            WaveDecoder.decodeChunks(
+                                input = input,
+                                targetSampleRate = EXPECTED_SAMPLE_RATE,
+                                onChunk = { currentContext.ensureActive() },
+                                onProgress = { decodedProgress ->
+                                    progressListener.onProgress(0.05f + 0.45f * decodedProgress)
+                                },
+                                startAtMs = source.resumeStartMs,
+                                onSamples = ::sendSamples,
+                            )
+                        }.also { progressListener.onProgress(0.55f) }
+                    }
+                    // Plain WAV sources decode fast already; no cache layer.
+                    source.displayName.endsWith(".wav", ignoreCase = true) -> {
+                        onResolvedStartMs(source.resumeStartMs)
+                        context.contentResolver.openInputStream(sourceUri).use { input ->
+                            requireNotNull(input) { "Cannot open selected audio" }
+                            WaveDecoder.decodeChunks(
+                                input = input,
+                                targetSampleRate = EXPECTED_SAMPLE_RATE,
+                                onChunk = { currentContext.ensureActive() },
+                                onProgress = { decodedProgress ->
+                                    progressListener.onProgress(0.05f + 0.45f * decodedProgress)
+                                },
+                                startAtMs = source.resumeStartMs,
+                                onSamples = ::sendSamples,
+                            )
+                        }.also { progressListener.onProgress(0.55f) }
+                    }
+                    // Container decode (MediaCodec): persist the full decode to
+                    // the cache when we start from the beginning, so reruns skip it.
+                    else -> {
+                        val sink = if (fingerprint != null && source.resumeStartMs == 0L) {
+                            cache!!.newSink(fingerprint)
+                        } else {
+                            null
+                        }
+                        try {
+                            val count = AndroidAudioDecoder(context).decodeChunks(
+                                uri = sourceUri,
+                                targetSampleRate = EXPECTED_SAMPLE_RATE,
+                                progressListener = progressListener,
+                                startAtMs = source.resumeStartMs,
+                                onResolvedStartMs = onResolvedStartMs,
+                                onSamples = { samples ->
+                                    sink?.write(samples)
+                                    sendSamples(samples)
+                                },
+                            )
+                            sink?.finish()
+                            count
+                        } catch (e: Throwable) {
+                            sink?.abort()
+                            throw e
+                        }
+                    }
                 }
-                vad.flush()
-                drainVad(vad, segmentBuffer, decodedSamples, forceInactive = true)
-            } else {
-                segmentBuffer.updateSpeechActive(false)
+                check(reportedSamples == decodedSamples.get()) { "Decoder sample count mismatch" }
+            } finally {
+                vadDone.set(true)
             }
-            segmentBuffer.finish()
-            decodedSamples
+            vadJob.join()
+            decodedSamples.get()
         } finally {
             vad?.release()
         }
@@ -494,6 +540,8 @@ class SenseVoiceAsrEngine(
     companion object {
         private const val EXPECTED_SAMPLE_RATE = 16_000
         private const val DECODED_AUDIO_CACHE_DIR = "decoded-audio"
+        private const val VAD_QUEUE_CAPACITY = 16
+        private const val VAD_POLL_TIMEOUT_MS = 200L
         private const val VAD_WINDOW_SIZE = 512
         private const val VAD_MAX_SPEECH_SECONDS = 29
         private const val VAD_HISTORY_SECONDS = 2

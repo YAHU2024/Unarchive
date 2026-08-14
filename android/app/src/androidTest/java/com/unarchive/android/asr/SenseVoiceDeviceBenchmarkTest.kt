@@ -185,6 +185,49 @@ class SenseVoiceDeviceBenchmarkTest {
             .appendText("\n$line\n")
     }
 
+    /**
+     * User-scale sample (~12 min): M4A first run (decode + cache write), M4A
+     * cache hit, and the WAV baseline, to compare against real Bilibili runs.
+     */
+    @Test
+    fun benchmarkTwelveMinuteSample() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val m4a = File(context.cacheDir, "bench-12min.m4a")
+        val wav = File(context.cacheDir, "bench-12min.wav")
+        if (!m4a.isFile || !wav.isFile) {
+            Log.w(TAG, "12-minute samples not deployed; skipping")
+            return
+        }
+        val reportFile = File(context.filesDir, "bench-results.txt")
+        val fingerprint = "bench-12min-fp"
+
+        fun run(label: String, displayName: String, uri: String, fp: String?) {
+            val engine = SenseVoiceAsrEngine(context)
+            val startedAt = SystemClock.elapsedRealtime()
+            val output = runBlocking {
+                engine.transcribe(
+                    source = AudioSource(displayName = displayName, uri = uri, contentFingerprint = fp),
+                    config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA, numThreads = null, parallelWorkers = 1),
+                    progressListener = AsrProgressListener {},
+                )
+            }
+            val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+            val t = output.timings
+            val line = String.format(
+                "%s: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d model=%d decode=%d recognize=%d commit=%d",
+                label, output.audioDurationMs, elapsedMs,
+                if (output.audioDurationMs > 0) elapsedMs.toDouble() / output.audioDurationMs else 0.0,
+                output.segments.size, t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
+            )
+            Log.i(TAG, line)
+            reportFile.appendText("\n$line\n")
+        }
+
+        run("12m-m4a-first", m4a.name, FileProvider.getUriForFile(context, AUTHORITY, m4a).toString(), fingerprint)
+        run("12m-m4a-cached", m4a.name, FileProvider.getUriForFile(context, AUTHORITY, m4a).toString(), fingerprint)
+        run("12m-wav", wav.name, FileProvider.getUriForFile(context, AUTHORITY, wav).toString(), null)
+    }
+
     private companion object {
         const val TAG = "UnarchiveBench"
         const val SAMPLE_NAME = "bench-long.wav"
