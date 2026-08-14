@@ -17,7 +17,7 @@
 [![Gradio](https://img.shields.io/badge/UI-Gradio%206.x-FF7C00?logo=gradio&logoColor=white)](https://www.gradio.app/)
 [![Playwright](https://img.shields.io/badge/Browser-Playwright-2EAD33)](https://playwright.dev/)
 [![faster-whisper](https://img.shields.io/badge/ASR-faster--whisper-000)](https://github.com/SYSTRAN/faster-whisper)
-[![License](https://img.shields.io/badge/License-MIT-green)]()
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue)](LICENSE)
 
 <br>
 
@@ -71,7 +71,7 @@ graph LR
 - 摘要与结构分析已合并为一次请求，长稿完整分块且不再静默截断；生产默认使用 `deepseek-v4-flash`，固定收藏夹四视频真实重处理 4/4 成功落卡，总耗时约 313 秒，已通过 12 分钟目标。
 - 小红书目前只有未实现的适配器桩，不属于已支持平台。
 
-后续优先级和验收门槛见 [项目路线图](PLAN.md)。
+后续优先级和验收门槛维护在项目的私有开发文档中。
 
 ### 📋 知识卡片示例
 
@@ -170,7 +170,14 @@ graph LR
 - Two-round live API checks passed for all four cards: Feishu deduplicated 4/4 documents per round, while ima skipped 4/4 entries per round from target-specific local state without duplicate writes.
 - Xiaohongshu is only an unimplemented adapter stub and is not a supported platform.
 
-See the [project roadmap](PLAN.md) for priorities and acceptance gates.
+Priorities and acceptance gates are maintained in the project's private development documents.
+
+### License
+
+Unarchive is licensed under the [GNU General Public License v3.0](LICENSE).
+Third-party components retain their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the current inventory and
+Android release-artifact restrictions.
 
 ### 📋 Knowledge Card Example
 

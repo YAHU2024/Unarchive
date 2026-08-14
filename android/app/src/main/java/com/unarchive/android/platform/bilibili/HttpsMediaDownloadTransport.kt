@@ -1,0 +1,61 @@
+package com.unarchive.android.platform.bilibili
+
+import java.io.FileOutputStream
+import java.net.URL
+import javax.net.ssl.HttpsURLConnection
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
+
+class HttpsMediaDownloadTransport(
+    private val connectTimeoutMs: Int = 15_000,
+    private val readTimeoutMs: Int = 30_000,
+    private val followRedirects: Boolean = false,
+) : MediaDownloadTransport {
+    override suspend fun download(request: MediaDownloadRequest): Long = withContext(Dispatchers.IO) {
+        val connection = URL(request.url).openConnection() as? HttpsURLConnection
+            ?: throw IllegalArgumentException("download URL must use HTTPS")
+        try {
+            connection.instanceFollowRedirects = followRedirects
+            connection.connectTimeout = connectTimeoutMs
+            connection.readTimeout = readTimeoutMs
+            connection.requestMethod = "GET"
+            request.headers.forEach(connection::setRequestProperty)
+            val status = connection.responseCode
+            require(status == HttpsURLConnection.HTTP_OK) {
+                "download server returned HTTP $status"
+            }
+            val contentLength = connection.contentLengthLong.takeIf { it >= 0 }
+            require(contentLength == null || contentLength <= request.maximumBytes) {
+                "download exceeds the size limit"
+            }
+
+            var downloaded = 0L
+            connection.inputStream.use { input ->
+                FileOutputStream(request.destination, false).use { output ->
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        downloaded += count
+                        require(downloaded <= request.maximumBytes) {
+                            "download exceeds the size limit"
+                        }
+                        output.write(buffer, 0, count)
+                        request.progressListener.onProgress(downloaded, contentLength)
+                    }
+                    output.fd.sync()
+                }
+            }
+            downloaded
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private companion object {
+        const val BUFFER_SIZE = 64 * 1024
+    }
+}
