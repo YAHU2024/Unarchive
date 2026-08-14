@@ -56,6 +56,11 @@ object ParallelWorkers {
     ): Int {
         val capped = requested.coerceIn(1, MAX_WORKERS)
         if (memoryClassMb < SINGLE_WORKER_MEMORY_CLASS_MB) return 1
+        // Unknown CPU layout (Process.getExclusiveCores() returns empty on many
+        // OEM ROMs, e.g. OPPO PHQ110): stay conservative. Running the requested
+        // workers with 4 threads each oversubscribes the efficiency cores and
+        // collapses per-segment RTF (~0.25 vs 0.08 measured).
+        if (exclusiveCoreCount == 0) return 1
         if (exclusiveCoreCount in 1..MIN_BIG_CORES_FOR_PARALLEL - 1) return 1
         return capped
     }
@@ -83,10 +88,16 @@ object AsrThreadDefaults {
     ): Int {
         val exclusive = exclusiveCores?.size ?: 0
         if (exclusive > 0) return exclusive.coerceAtMost(MAX_THREADS)
-        return availableProcessors.coerceIn(1, MAX_THREADS)
+        // Unknown layout (Process.getExclusiveCores() returns empty on many OEM
+        // ROMs, e.g. OPPO PHQ110): fall back to a conservative 2 threads.
+        // Measured 4 threads worse than 2 (RTF 0.071 vs 0.063 on the 742 s
+        // sample) because the VAD thread and thermal throttling oversubscribe
+        // an 8-core phone.
+        return availableProcessors.coerceIn(1, UNKNOWN_LAYOUT_THREADS)
     }
 
     const val MAX_THREADS = 4
+    const val UNKNOWN_LAYOUT_THREADS = 2
 }
 
 data class TranscriptSegment(

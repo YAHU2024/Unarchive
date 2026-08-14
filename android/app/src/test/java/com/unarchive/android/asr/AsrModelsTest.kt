@@ -37,8 +37,10 @@ class AsrModelsTest {
         // Request beyond the sane ceiling is capped.
         assertEquals(4, ParallelWorkers.infer(8, 512, exclusiveCoreCount = 4))
         assertEquals(1, ParallelWorkers.infer(1, 512, exclusiveCoreCount = 4))
-        // Unknown core layout (pre-API-33): fall back to the request.
-        assertEquals(2, ParallelWorkers.infer(2, 512, exclusiveCoreCount = 0))
+        // Unknown core layout (pre-API-33 or OEM returns empty, e.g. OPPO
+        // PHQ110): conservative single worker instead of the request.
+        assertEquals(1, ParallelWorkers.infer(2, 512, exclusiveCoreCount = 0))
+        assertEquals(1, ParallelWorkers.infer(4, 384, exclusiveCoreCount = 0))
     }
 
     @Test
@@ -54,8 +56,9 @@ class AsrModelsTest {
 
     @Test
     fun threadDefaultsFallBackToProcessorCountWithoutExclusiveInfo() {
-        assertEquals(4, AsrThreadDefaults.infer(8, null))
-        assertEquals(4, AsrThreadDefaults.infer(8, IntArray(0)))
+        // Unknown CPU layout (OEM returns empty): conservative 2 threads.
+        assertEquals(2, AsrThreadDefaults.infer(8, null))
+        assertEquals(2, AsrThreadDefaults.infer(8, IntArray(0)))
         assertEquals(2, AsrThreadDefaults.infer(2, null))
         assertEquals(1, AsrThreadDefaults.infer(1, null))
     }

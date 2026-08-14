@@ -1,6 +1,7 @@
 package com.unarchive.android.asr
 
 import android.os.Build
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.FileProvider
@@ -226,6 +227,76 @@ class SenseVoiceDeviceBenchmarkTest {
         run("12m-m4a-first", m4a.name, FileProvider.getUriForFile(context, AUTHORITY, m4a).toString(), fingerprint)
         run("12m-m4a-cached", m4a.name, FileProvider.getUriForFile(context, AUTHORITY, m4a).toString(), fingerprint)
         run("12m-wav", wav.name, FileProvider.getUriForFile(context, AUTHORITY, wav).toString(), null)
+    }
+
+    /**
+     * Prints the device's actual CPU-layout facts so the thread/worker
+     * inference logic can be validated against real hardware (OPPO PHQ110
+     * reported workers=2 in logs although it has 2 big cores).
+     */
+    @Test
+    fun probeDeviceCapabilities() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val exclusive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Process.getExclusiveCores()
+        } else {
+            IntArray(0)
+        }
+        val activityManager = context.getSystemService(android.app.ActivityManager::class.java)
+        Log.i(
+            TAG,
+            "PROBE abis=${Build.SUPPORTED_ABIS.joinToString()} " +
+                "availableProcessors=${Runtime.getRuntime().availableProcessors()} " +
+                "exclusiveCores=${exclusive.toList()} " +
+                "memoryClass=${activityManager?.memoryClass}",
+        )
+        File(context.filesDir, "bench-results.txt")
+            .appendText("\nPROBE abis=${Build.SUPPORTED_ABIS.joinToString()} " +
+                "availableProcessors=${Runtime.getRuntime().availableProcessors()} " +
+                "exclusiveCores=${exclusive.toList()} memoryClass=${activityManager?.memoryClass}\n")
+    }
+
+    /**
+     * Post-fix A/B on the 12-minute sample via the cached (pure-ASR) path:
+     * confirms the conservative worker inference (1 worker on unknown CPU
+     * layouts) and compares thread counts under real conditions.
+     */
+    @Test
+    fun benchmarkAfterFixConfigs() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val m4a = File(context.cacheDir, "bench-12min.m4a")
+        if (!m4a.isFile) return
+        val reportFile = File(context.filesDir, "bench-results.txt")
+        val fingerprint = "bench-12min-fp"
+        val uri = FileProvider.getUriForFile(context, AUTHORITY, m4a).toString()
+
+        fun run(label: String, config: AsrConfig) {
+            val engine = SenseVoiceAsrEngine(context)
+            val startedAt = SystemClock.elapsedRealtime()
+            val output = runBlocking {
+                engine.transcribe(
+                    source = AudioSource(displayName = m4a.name, uri = uri, contentFingerprint = fingerprint),
+                    config = config,
+                    progressListener = AsrProgressListener {},
+                )
+            }
+            val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+            val t = output.timings
+            val line = String.format(
+                "%s: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d model=%d decode=%d recognize=%d commit=%d",
+                label, output.audioDurationMs, elapsedMs,
+                if (output.audioDurationMs > 0) elapsedMs.toDouble() / output.audioDurationMs else 0.0,
+                output.segments.size, t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
+            )
+            Log.i(TAG, line)
+            reportFile.appendText("\n$line\n")
+        }
+
+        // Default config: parallelWorkers default 2 must be inferred down to 1
+        // (exclusiveCores=[] on this device), threads auto (=4 by fallback).
+        run("postfix-1w-auto", AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA))
+        run("postfix-1w-2t", AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA, numThreads = 2, parallelWorkers = 1))
+        run("postfix-1w-4t", AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA, numThreads = 4, parallelWorkers = 1))
     }
 
     private companion object {

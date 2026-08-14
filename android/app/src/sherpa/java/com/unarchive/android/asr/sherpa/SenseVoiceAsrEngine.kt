@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
+import android.util.Log
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
@@ -80,11 +81,17 @@ class SenseVoiceAsrEngine(
             memoryClassMb = memoryClassMb(context),
             exclusiveCoreCount = exclusiveCores().size,
         )
+        log(
+            "transcribe start fingerprint=${source.contentFingerprint?.take(8)} " +
+                "resumeMs=${source.resumeStartMs} workers=$workers threads=${config.numThreads}",
+        )
         val modelLoadStartMs = SystemClock.elapsedRealtime()
         val recognizers = List(workers) { createRecognizer(modelFiles, config) }
         val modelLoadMs = SystemClock.elapsedRealtime() - modelLoadStartMs
+        log("model load done ms=$modelLoadMs recognizers=$workers")
         val transcripts = mutableListOf<TranscriptSegment>()
         val timeOffsetMs = AtomicLong(source.resumeStartMs)
+        val segmentCounter = AtomicLong(0)
         try {
             coroutineScope {
                 val currentContext = coroutineContext
@@ -95,7 +102,20 @@ class SenseVoiceAsrEngine(
                     workerCount = workers,
                     process = { workerIndex, segment ->
                         currentContext.ensureActive()
-                        recognizeSegment(recognizers[workerIndex], segment, timeOffsetMs.get())
+                        val segmentStartMs = SystemClock.elapsedRealtime()
+                        val recognized = recognizeSegment(
+                            recognizers[workerIndex],
+                            segment,
+                            timeOffsetMs.get(),
+                        )
+                        log(
+                            "segment done idx=${segmentCounter.incrementAndGet()} " +
+                                "rawMs=${segment.rawStartSample * 1_000L / EXPECTED_SAMPLE_RATE}-" +
+                                "${segment.rawEndSample * 1_000L / EXPECTED_SAMPLE_RATE} " +
+                                "lenSamples=${segment.samples.size} sub=${recognized.size} " +
+                                "ms=${SystemClock.elapsedRealtime() - segmentStartMs}",
+                        )
+                        recognized
                     },
                     consume = { _, recognized ->
                         val commitStartMs = SystemClock.elapsedRealtime()
@@ -124,7 +144,9 @@ class SenseVoiceAsrEngine(
                                 )
                             }
                         }
-                        commitMsRef.addAndGet(SystemClock.elapsedRealtime() - commitStartMs)
+                        val commitMs = SystemClock.elapsedRealtime() - commitStartMs
+                        commitMsRef.addAndGet(commitMs)
+                        log("commit batch segments=${recognized.size} ms=$commitMs totalMs=${commitMsRef.get()}")
                     },
                 )
                 val segmentBuffer = StreamingSpeechSegmentBuffer(
@@ -161,6 +183,12 @@ class SenseVoiceAsrEngine(
                 val recognizeAndCommitMs = SystemClock.elapsedRealtime() - recognizeStartMs
                 val commitMs = commitMsRef.get()
                 progressListener.onProgress(1f)
+                val totalMs = SystemClock.elapsedRealtime() - totalStartMs
+                log(
+                    "transcribe done totalMs=$totalMs modelMs=$modelLoadMs decodeMs=$decodeMs " +
+                        "recognizeMs=${(recognizeAndCommitMs - commitMs).coerceAtLeast(0)} " +
+                        "commitMs=$commitMs segments=${transcripts.size}",
+                )
                 AsrOutput(
                     segments = transcripts,
                     audioDurationMs = audioDurationMs,
@@ -169,7 +197,7 @@ class SenseVoiceAsrEngine(
                         decodeMs = decodeMs,
                         recognitionMs = (recognizeAndCommitMs - commitMs).coerceAtLeast(0),
                         commitMs = commitMs,
-                        totalMs = SystemClock.elapsedRealtime() - totalStartMs,
+                        totalMs = totalMs,
                     ),
                 )
             }
@@ -215,10 +243,17 @@ class SenseVoiceAsrEngine(
             val decodedSamples = AtomicLong(0)
 
             val vadJob = launch(Dispatchers.IO) {
+                // VAD can afford to be slow; recognition is what the user
+                // waits for. Lower the VAD thread priority so its ~100 s of
+                // native calls do not starve the recognizer workers on the
+                // same big cores.
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
                 val vadContext = coroutineContext
+                val vadStartMs = SystemClock.elapsedRealtime()
                 val vadWindow = FloatArray(VAD_WINDOW_SIZE)
                 var vadWindowSize = 0
                 var receivedSamples = 0L
+                var vadCalls = 0L
                 fun consume(samples: FloatArray) {
                     vadContext.ensureActive()
                     if (vad == null) {
@@ -247,6 +282,7 @@ class SenseVoiceAsrEngine(
                         offset += count
                         if (vadWindowSize == VAD_WINDOW_SIZE) {
                             vad.acceptWaveform(vadWindow)
+                            vadCalls++
                             drainVad(vad, segmentBuffer, receivedSamples)
                             vadWindowSize = 0
                         }
@@ -270,6 +306,7 @@ class SenseVoiceAsrEngine(
                     if (vadWindowSize > 0) {
                         vadWindow.fill(0f, vadWindowSize)
                         vad.acceptWaveform(vadWindow)
+                        vadCalls++
                     }
                     vad.flush()
                     drainVad(vad, segmentBuffer, receivedSamples, forceInactive = true)
@@ -277,6 +314,10 @@ class SenseVoiceAsrEngine(
                     segmentBuffer.updateSpeechActive(false)
                 }
                 segmentBuffer.finish()
+                log(
+                    "vad thread done ms=${SystemClock.elapsedRealtime() - vadStartMs} " +
+                        "samples=$receivedSamples calls=$vadCalls",
+                )
             }
 
             val fingerprint = source.contentFingerprint
@@ -306,11 +347,13 @@ class SenseVoiceAsrEngine(
             }
 
             val sourceUri = Uri.parse(source.uri)
+            val decodeStartMs = SystemClock.elapsedRealtime()
             try {
                 val reportedSamples = when {
                     // Decode-cache hit: the 16 kHz mono PCM is already on disk, so
                     // the container (e.g. software AAC, ~30 s per 12 min) is skipped.
                     cachedFile != null -> {
+                        log("decode path=cache start")
                         onResolvedStartMs(source.resumeStartMs)
                         cachedFile.inputStream().use { input ->
                             WaveDecoder.decodeChunks(
@@ -327,6 +370,7 @@ class SenseVoiceAsrEngine(
                     }
                     // Plain WAV sources decode fast already; no cache layer.
                     source.displayName.endsWith(".wav", ignoreCase = true) -> {
+                        log("decode path=wav start")
                         onResolvedStartMs(source.resumeStartMs)
                         context.contentResolver.openInputStream(sourceUri).use { input ->
                             requireNotNull(input) { "Cannot open selected audio" }
@@ -345,6 +389,7 @@ class SenseVoiceAsrEngine(
                     // Container decode (MediaCodec): persist the full decode to
                     // the cache when we start from the beginning, so reruns skip it.
                     else -> {
+                        log("decode path=mediacodec start resumeMs=${source.resumeStartMs}")
                         val sink = if (fingerprint != null && source.resumeStartMs == 0L) {
                             cache!!.newSink(fingerprint)
                         } else {
@@ -375,6 +420,7 @@ class SenseVoiceAsrEngine(
                 vadDone.set(true)
             }
             vadJob.join()
+            log("decode done ms=${SystemClock.elapsedRealtime() - decodeStartMs} samples=$decodedSamples")
             decodedSamples.get()
         } finally {
             vad?.release()
@@ -537,7 +583,12 @@ class SenseVoiceAsrEngine(
             IntArray(0)
         }
 
+    private fun log(message: String) {
+        Log.i(TAG, message)
+    }
+
     companion object {
+        private const val TAG = "UnarchiveEngine"
         private const val EXPECTED_SAMPLE_RATE = 16_000
         private const val DECODED_AUDIO_CACHE_DIR = "decoded-audio"
         private const val VAD_QUEUE_CAPACITY = 16
