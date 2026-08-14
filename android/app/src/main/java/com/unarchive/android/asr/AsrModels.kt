@@ -24,16 +24,24 @@ data class AsrConfig(
      * count by device RAM class.
      */
     val parallelWorkers: Int = DEFAULT_PARALLEL_WORKERS,
+    /**
+     * Silero VAD max speech duration per segment. Smaller values yield finer
+     * chunks (and smoother progress) but more per-segment context padding
+     * overhead; default 30 s.
+     */
+    val vadMaxSpeechSeconds: Int = DEFAULT_VAD_MAX_SPEECH_SECONDS,
 ) {
     init {
         require(sampleRateHz > 0) { "sampleRateHz must be positive" }
         require(contextPaddingMs >= 0) { "contextPaddingMs cannot be negative" }
         require(numThreads == null || numThreads > 0) { "numThreads must be positive" }
         require(parallelWorkers > 0) { "parallelWorkers must be positive" }
+        require(vadMaxSpeechSeconds > 0) { "vadMaxSpeechSeconds must be positive" }
     }
 
     companion object {
         const val DEFAULT_PARALLEL_WORKERS = 2
+        const val DEFAULT_VAD_MAX_SPEECH_SECONDS = 30
     }
 }
 

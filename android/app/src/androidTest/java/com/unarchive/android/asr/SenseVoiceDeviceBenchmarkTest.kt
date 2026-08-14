@@ -299,6 +299,48 @@ class SenseVoiceDeviceBenchmarkTest {
         run("postfix-1w-4t", AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA, numThreads = 4, parallelWorkers = 1))
     }
 
+    /**
+     * VAD max-speech A/B on the 12-minute sample (cached path): measures total
+     * time and per-segment recognition cost for 30/10/5/2/1 s chunks so the
+     * "stall" vs "finer chunks" trade-off is driven by data.
+     */
+    @Test
+    fun benchmarkVadMaxSpeech() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val m4a = File(context.cacheDir, "bench-12min.m4a")
+        if (!m4a.isFile) return
+        val reportFile = File(context.filesDir, "bench-results.txt")
+        val fingerprint = "bench-12min-fp"
+        val uri = FileProvider.getUriForFile(context, AUTHORITY, m4a).toString()
+
+        for (maxSeconds in intArrayOf(30, 10, 5, 2, 1)) {
+            val engine = SenseVoiceAsrEngine(context)
+            val startedAt = SystemClock.elapsedRealtime()
+            val output = runBlocking {
+                engine.transcribe(
+                    source = AudioSource(displayName = m4a.name, uri = uri, contentFingerprint = fingerprint),
+                    config = AsrConfig(
+                        AsrEngineKind.SENSE_VOICE_SHERPA,
+                        numThreads = 2,
+                        parallelWorkers = 1,
+                        vadMaxSpeechSeconds = maxSeconds,
+                    ),
+                    progressListener = AsrProgressListener {},
+                )
+            }
+            val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+            val t = output.timings
+            val line = String.format(
+                "vad-%ds: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d model=%d decode=%d recognize=%d commit=%d",
+                maxSeconds, output.audioDurationMs, elapsedMs,
+                if (output.audioDurationMs > 0) elapsedMs.toDouble() / output.audioDurationMs else 0.0,
+                output.segments.size, t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
+            )
+            Log.i(TAG, line)
+            reportFile.appendText("\n$line\n")
+        }
+    }
+
     private companion object {
         const val TAG = "UnarchiveBench"
         const val SAMPLE_NAME = "bench-long.wav"

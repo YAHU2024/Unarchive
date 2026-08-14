@@ -225,7 +225,7 @@ class SenseVoiceAsrEngine(
                     minSilenceDuration = 0.5f,
                     minSpeechDuration = 0.25f,
                     windowSize = VAD_WINDOW_SIZE,
-                    maxSpeechDuration = VAD_MAX_SPEECH_SECONDS.toFloat(),
+                    maxSpeechDuration = config.vadMaxSpeechSeconds.toFloat(),
                 ),
                 sampleRate = EXPECTED_SAMPLE_RATE,
                 numThreads = 1,
@@ -594,7 +594,6 @@ class SenseVoiceAsrEngine(
         private const val VAD_QUEUE_CAPACITY = 16
         private const val VAD_POLL_TIMEOUT_MS = 200L
         private const val VAD_WINDOW_SIZE = 512
-        private const val VAD_MAX_SPEECH_SECONDS = 29
         private const val VAD_HISTORY_SECONDS = 2
         private const val MAX_SEGMENT_SECONDS = 30
         /** Segments at or above this length get re-split at internal pauses. */
