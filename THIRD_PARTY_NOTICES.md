@@ -56,6 +56,15 @@ transitive notices, build a corresponding-source package, and retain the model
 attribution above in the app's about screen. Do not commit credentials or
 downloaded models.
 
+As of 2026-08-14 the Android APK bundles the full license texts under
+`android/app/src/main/assets/licenses/` (Apache-2.0, ONNX Runtime MIT, FunASR
+Model License v1.1, Silero VAD MIT) plus an in-APK `THIRD_PARTY_NOTICES.md`
+summary, and exposes them in-app via the "查看开源许可" button in the Models
+section. Release-time SBOM generation is scripted at
+`android/scripts/generate_sbom.ps1` (Gradle CycloneDX plugin). Signing
+keystore custody is documented privately; release builds without
+`android/keystore.properties` are unsigned for local validation.
+
 ## Upstream application provenance
 
 SubtitleEditforAndroid is GPL-3.0 reference material

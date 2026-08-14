@@ -33,6 +33,21 @@ cd android
 .\gradlew.bat testDebugUnitTest assembleDebug
 ```
 
+The APK bundles third-party license texts under
+`app/src/main/assets/licenses/` and exposes them in-app via the "查看开源许可"
+button in the Models section. Release signing reads
+`android/keystore.properties` (git-ignored; see the private keystore custody
+notes); absent that file, release builds are unsigned for local validation.
+Release-time SBOM generation:
+
+```powershell
+.\android\scripts\generate_sbom.ps1
+```
+
+This writes a CycloneDX SBOM of the Android dependencies (Gradle
+`org.cyclonedx.bom` plugin) plus a reference `pip freeze` under the
+git-ignored `release-artifacts/` directory.
+
 Without the ignored local sherpa AAR, the UI uses `PreviewAsrEngine` to validate
 audio selection, progress, cancellation, and result rendering. With the AAR and
 bundled models present, SenseVoice uses the real CPU recognizer from the private
