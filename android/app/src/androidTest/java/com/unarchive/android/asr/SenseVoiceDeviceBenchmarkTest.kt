@@ -7,6 +7,11 @@ import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unarchive.android.asr.sherpa.SenseVoiceAsrEngine
+import com.unarchive.android.checkpoint.AudioSourceFingerprint
+import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
+import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
+import com.unarchive.android.checkpoint.TranscriptionSourceIdentity
+import com.unarchive.android.result.VideoResultKey
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -56,9 +61,12 @@ class SenseVoiceDeviceBenchmarkTest {
             val elapsedMs = SystemClock.elapsedRealtime() - startedAt
             val audioMs = output.audioDurationMs
             val rtf = if (audioMs > 0) elapsedMs.toDouble() / audioMs else 0.0
+            val t = output.timings
             val line = String.format(
-                "%s: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d",
+                "%s: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
+                    "model=%d decode=%d recognize=%d commit=%d",
                 label, audioMs, elapsedMs, rtf, output.segments.size,
+                t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
             )
             Log.i(TAG, line)
             report.appendLine(line)
@@ -66,6 +74,139 @@ class SenseVoiceDeviceBenchmarkTest {
         val reportFile = File(context.filesDir, "bench-results.txt")
         reportFile.writeText(report.toString())
         Log.i(TAG, "BENCH DONE\n$report")
+
+        // MediaCodec decode-path comparison: the same audio as M4A/AAC goes
+        // through AndroidAudioDecoder instead of the WAV decoder, matching the
+        // Bilibili pipeline.
+        val m4a = File(context.cacheDir, "bench-long.m4a")
+        if (m4a.isFile) {
+            val m4aUri = FileProvider.getUriForFile(context, AUTHORITY, m4a)
+            val engine = SenseVoiceAsrEngine(context)
+            val startedAt = SystemClock.elapsedRealtime()
+            val output = runBlocking {
+                engine.transcribe(
+                    source = AudioSource(displayName = m4a.name, uri = m4aUri.toString()),
+                    config = AsrConfig(
+                        AsrEngineKind.SENSE_VOICE_SHERPA,
+                        numThreads = null,
+                        parallelWorkers = 1,
+                    ),
+                    progressListener = AsrProgressListener {},
+                )
+            }
+            val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+            val t = output.timings
+            val line = String.format(
+                "m4a/auto1w: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
+                    "model=%d decode=%d recognize=%d commit=%d",
+                output.audioDurationMs, elapsedMs,
+                if (output.audioDurationMs > 0) {
+                    elapsedMs.toDouble() / output.audioDurationMs
+                } else {
+                    0.0
+                },
+                output.segments.size,
+                t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
+            )
+            Log.i(TAG, line)
+            reportFile.appendText("\n$line\n")
+
+            // Same M4A without VAD: isolates VAD processing on the decode
+            // thread from the codec decode itself.
+            val engineNoVad = SenseVoiceAsrEngine(context)
+            val noVadStart = SystemClock.elapsedRealtime()
+            val noVad = runBlocking {
+                engineNoVad.transcribe(
+                    source = AudioSource(displayName = m4a.name, uri = m4aUri.toString()),
+                    config = AsrConfig(
+                        AsrEngineKind.SENSE_VOICE_SHERPA,
+                        numThreads = null,
+                        parallelWorkers = 1,
+                        enableVad = false,
+                    ),
+                    progressListener = AsrProgressListener {},
+                )
+            }
+            val noVadElapsed = SystemClock.elapsedRealtime() - noVadStart
+            val nt = noVad.timings
+            val noVadLine = String.format(
+                "m4a-novad/auto1w: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
+                    "model=%d decode=%d recognize=%d commit=%d",
+                noVad.audioDurationMs, noVadElapsed,
+                if (noVad.audioDurationMs > 0) {
+                    noVadElapsed.toDouble() / noVad.audioDurationMs
+                } else {
+                    0.0
+                },
+                noVad.segments.size,
+                nt.modelLoadMs, nt.decodeMs, nt.recognitionMs, nt.commitMs,
+            )
+            Log.i(TAG, noVadLine)
+            reportFile.appendText("$noVadLine\n")
+        }
+    }
+
+    /**
+     * Measures the checkpoint commit overhead of the real pipeline path: the
+     * same engine run through LocalAudioCheckpointRunner, which reconciles
+     * and persists a checkpoint file per committed segment. The engine's
+     * commitMs timing therefore includes the file I/O the raw benchmark
+     * bypasses.
+     */
+    @Test
+    fun benchmarkCheckpointCommitOverhead() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val sample = File(context.cacheDir, SAMPLE_NAME)
+        check(sample.isFile) { "Sample missing: ${sample.absolutePath} (push it to app cache)" }
+        val uri = FileProvider.getUriForFile(context, AUTHORITY, sample)
+        val repository = FileTranscriptionCheckpointRepository(
+            File(context.filesDir, "bench-checkpoints"),
+        )
+        val runner = LocalAudioCheckpointRunner(
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AndroidAsrEngineProvider(context),
+                clock = MonotonicClock(SystemClock::elapsedRealtime),
+            ),
+            repository = repository,
+        )
+        val identity = TranscriptionSourceIdentity(
+            key = VideoResultKey("bench", "commit-overhead"),
+            canonicalUrl = "bench://commit-overhead",
+            byteCount = sample.length(),
+            modifiedAtEpochMs = sample.lastModified(),
+            contentFingerprint = AudioSourceFingerprint.calculate(sample),
+        )
+        val startedAt = SystemClock.elapsedRealtime()
+        val result = runBlocking {
+            runner.run(
+                source = AudioSource(displayName = SAMPLE_NAME, uri = uri.toString()),
+                sourceIdentity = identity,
+                config = AsrConfig(
+                    AsrEngineKind.SENSE_VOICE_SHERPA,
+                    numThreads = null,
+                    parallelWorkers = 1,
+                ),
+                progressListener = AsrProgressListener {},
+            )
+        }
+        val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+        val benchmark = result.benchmark
+        val t = benchmark.timings
+        val line = String.format(
+            "checkpoint-run: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d " +
+                "model=%d decode=%d recognize=%d commit=%d",
+            benchmark.audioDurationMs, elapsedMs,
+            if (benchmark.audioDurationMs > 0) {
+                elapsedMs.toDouble() / benchmark.audioDurationMs
+            } else {
+                0.0
+            },
+            benchmark.segments.size,
+            t.modelLoadMs, t.decodeMs, t.recognitionMs, t.commitMs,
+        )
+        Log.i(TAG, line)
+        File(context.filesDir, "bench-results.txt")
+            .appendText("\n$line\n")
     }
 
     private companion object {

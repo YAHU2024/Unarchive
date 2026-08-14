@@ -46,6 +46,8 @@ data class SingleVideoResult(
     val reusedDownload: Boolean,
     val storedResult: StoredVideoResult? = null,
     val resumedFromCheckpoint: Boolean = false,
+    /** Wall-clock time spent in each pipeline stage (diagnostics). */
+    val stageTimingsMs: Map<SingleVideoStage, Long> = emptyMap(),
 )
 
 fun interface SingleVideoProgressListener {
@@ -59,6 +61,8 @@ class SingleVideoPipeline(
     private val resultRepository: VideoResultRepository? = null,
     private val checkpointRepository: TranscriptionCheckpointRepository? = null,
     private val wallClockEpochMs: () -> Long = System::currentTimeMillis,
+    /** Monotonic-ish wall clock for stage timing diagnostics. */
+    private val stageClockMs: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun run(
         input: String,
@@ -167,7 +171,24 @@ class SingleVideoPipeline(
         checkpointRepository?.delete(key)
         checkpointListener(0)
         progressListener.update(SingleVideoStage.COMPLETE, 1f)
-        return pipelineResult.copy(storedResult = storedResult)
+        return pipelineResult.copy(
+            storedResult = storedResult,
+            stageTimingsMs = stageTimings(),
+        )
+    }
+
+    // --- stage timing diagnostics ---
+
+    private var lastStage: SingleVideoStage? = null
+    private var lastStageStartMs = 0L
+    private val stageElapsedMs = mutableMapOf<SingleVideoStage, Long>()
+
+    private fun stageTimings(): Map<SingleVideoStage, Long> {
+        val now = stageClockMs()
+        lastStage?.let { stage ->
+            stageElapsedMs[stage] = stageElapsedMs.getOrDefault(stage, 0L) + (now - lastStageStartMs)
+        }
+        return stageElapsedMs.toMap()
     }
 
     private suspend fun runBenchmark(
@@ -254,6 +275,15 @@ class SingleVideoPipeline(
     }
 
     private fun SingleVideoProgressListener.update(stage: SingleVideoStage, progress: Float) {
+        if (stage != lastStage) {
+            val now = stageClockMs()
+            lastStage?.let { previous ->
+                stageElapsedMs[previous] =
+                    stageElapsedMs.getOrDefault(previous, 0L) + (now - lastStageStartMs)
+            }
+            lastStage = stage
+            lastStageStartMs = now
+        }
         onProgress(SingleVideoProgress(stage, progress.coerceIn(0f, 1f)))
     }
 }

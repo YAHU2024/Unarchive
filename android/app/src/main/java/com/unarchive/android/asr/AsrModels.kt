@@ -100,9 +100,19 @@ data class TranscriptSegment(
     }
 }
 
+/** Wall-clock breakdown of one engine transcription run (ms). */
+data class AsrTimings(
+    val modelLoadMs: Long = 0,
+    val decodeMs: Long = 0,
+    val recognitionMs: Long = 0,
+    val commitMs: Long = 0,
+    val totalMs: Long = 0,
+)
+
 data class AsrOutput(
     val segments: List<TranscriptSegment>,
     val audioDurationMs: Long,
+    val timings: AsrTimings = AsrTimings(),
 ) {
     init {
         require(audioDurationMs >= 0) { "audioDurationMs cannot be negative" }

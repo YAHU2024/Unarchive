@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
@@ -21,6 +22,7 @@ import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrOutput
 import com.unarchive.android.asr.AsrProgressListener
 import com.unarchive.android.asr.AsrThreadDefaults
+import com.unarchive.android.asr.AsrTimings
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.ParallelWorkers
 import com.unarchive.android.asr.SegmentParallelizer
@@ -65,18 +67,22 @@ class SenseVoiceAsrEngine(
         coroutineContext.ensureActive()
         progressListener.onProgress(0.05f)
 
+        val totalStartMs = SystemClock.elapsedRealtime()
         val workers = ParallelWorkers.infer(
             requested = config.parallelWorkers,
             memoryClassMb = memoryClassMb(context),
             exclusiveCoreCount = exclusiveCores().size,
         )
+        val modelLoadStartMs = SystemClock.elapsedRealtime()
         val recognizers = List(workers) { createRecognizer(modelFiles, config) }
+        val modelLoadMs = SystemClock.elapsedRealtime() - modelLoadStartMs
         val transcripts = mutableListOf<TranscriptSegment>()
         val timeOffsetMs = AtomicLong(source.resumeStartMs)
         try {
             coroutineScope {
                 val currentContext = coroutineContext
                 val audioDurationMsRef = AtomicLong(0)
+                val commitMsRef = AtomicLong(0)
                 val parallelizer = SegmentParallelizer<BufferedSpeechSegment, List<TranscriptSegment>>(
                     scope = this,
                     workerCount = workers,
@@ -85,6 +91,7 @@ class SenseVoiceAsrEngine(
                         recognizeSegment(recognizers[workerIndex], segment, timeOffsetMs.get())
                     },
                     consume = { _, recognized ->
+                        val commitStartMs = SystemClock.elapsedRealtime()
                         recognized.forEach { transcript ->
                             transcripts.add(transcript)
                             source.onSegmentCompleted(
@@ -110,6 +117,7 @@ class SenseVoiceAsrEngine(
                                 )
                             }
                         }
+                        commitMsRef.addAndGet(SystemClock.elapsedRealtime() - commitStartMs)
                     },
                 )
                 val segmentBuffer = StreamingSpeechSegmentBuffer(
@@ -128,6 +136,7 @@ class SenseVoiceAsrEngine(
                     currentContext.ensureActive()
                     parallelizer.submit(segment)
                 }
+                val decodeStartMs = SystemClock.elapsedRealtime()
                 val audioDurationSamples = streamAudio(
                     source = source,
                     config = config,
@@ -136,14 +145,25 @@ class SenseVoiceAsrEngine(
                     progressListener = progressListener,
                     onResolvedStartMs = { timeOffsetMs.set(it) },
                 )
+                val decodeMs = SystemClock.elapsedRealtime() - decodeStartMs
                 coroutineContext.ensureActive()
                 val audioDurationMs = audioDurationSamples * 1_000L / EXPECTED_SAMPLE_RATE
                 audioDurationMsRef.set(audioDurationMs)
+                val recognizeStartMs = SystemClock.elapsedRealtime()
                 parallelizer.finish()
+                val recognizeAndCommitMs = SystemClock.elapsedRealtime() - recognizeStartMs
+                val commitMs = commitMsRef.get()
                 progressListener.onProgress(1f)
                 AsrOutput(
                     segments = transcripts,
                     audioDurationMs = audioDurationMs,
+                    timings = AsrTimings(
+                        modelLoadMs = modelLoadMs,
+                        decodeMs = decodeMs,
+                        recognitionMs = (recognizeAndCommitMs - commitMs).coerceAtLeast(0),
+                        commitMs = commitMs,
+                        totalMs = SystemClock.elapsedRealtime() - totalStartMs,
+                    ),
                 )
             }
         } finally {

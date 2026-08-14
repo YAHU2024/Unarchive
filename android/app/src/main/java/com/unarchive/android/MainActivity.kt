@@ -237,6 +237,18 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 result = videoResult?.benchmark
                 storedResults = resultRepository.list()
                 selectedStoredResult = videoResult?.storedResult
+                android.util.Log.i(
+                    "UnarchivePipeline",
+                    "video done: " +
+                        (videoResult?.stageTimingsMs?.entries
+                            ?.filter { it.value > 0 }
+                            ?.sortedByDescending { it.value }
+                            ?.joinToString { "${it.key.name}=${it.value}ms" } ?: "") +
+                        " | engine=" + videoResult?.benchmark?.timings?.let {
+                        "model=${it.modelLoadMs}ms decode=${it.decodeMs}ms " +
+                            "recognize=${it.recognitionMs}ms commit=${it.commitMs}ms"
+                    },
+                )
                 status = if (videoResult?.resumedFromCheckpoint == true) {
                     "Recognition complete. Saved transcription resumed and result saved locally."
                 } else {
@@ -558,8 +570,19 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
             Text("Processing: ${benchmark.processingDurationMs} ms")
             Text("Audio: ${benchmark.audioDurationMs} ms")
             Text("RTF: ${benchmark.realTimeFactor?.let { String.format(Locale.US, "%.3f", it) } ?: "n/a"}")
+            EngineTimingsText(benchmark.timings)
             benchmark.segments.forEach { segment ->
                 Text("[${segment.startMs.asTimestamp()} - ${segment.endMs.asTimestamp()}] ${segment.text}")
+            }
+        }
+
+        videoResult?.let { video ->
+            val stageText = video.stageTimingsMs.entries
+                .filter { it.value > 0 }
+                .sortedByDescending { it.value }
+                .joinToString(" / ") { "${it.key.displayText}: ${it.value} ms" }
+            if (stageText.isNotBlank()) {
+                Text("Stage timings: $stageText", style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -576,6 +599,22 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EngineTimingsText(timings: com.unarchive.android.asr.AsrTimings) {
+    val parts = listOf(
+        "model ${timings.modelLoadMs} ms" to timings.modelLoadMs,
+        "decode ${timings.decodeMs} ms" to timings.decodeMs,
+        "recognize ${timings.recognitionMs} ms" to timings.recognitionMs,
+        "commit ${timings.commitMs} ms" to timings.commitMs,
+    ).filter { it.second > 0 }
+    if (parts.isNotEmpty()) {
+        Text(
+            "Engine: ${parts.joinToString(" / ") { it.first }}",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
