@@ -152,6 +152,54 @@ class StreamingSpeechSegmentBufferTest {
         assertTrue(emitted.all { it.startSample >= 90L })
     }
 
+    @Test
+    fun subsequentSegmentsNeverOverlapPreviousPaddedWindow() {
+        // Streaming emission guarantees a later segment's padded window starts
+        // at or after the previous padded end, so recognition context never
+        // covers the neighbouring speech.
+        val emitted = mutableListOf<BufferedSpeechSegment>()
+        val buffer = buffer(context = 5, maximum = 40, history = 8, emitted = emitted)
+        buffer.append(samples(0, 10))
+        buffer.updateSpeechActive(true)
+        buffer.append(samples(10, 15))
+        buffer.addSpeechRange(10, 15)
+        buffer.updateSpeechActive(false)
+        buffer.append(samples(15, 25)) // separation >= context -> emit first
+        buffer.updateSpeechActive(true)
+        buffer.append(samples(25, 28))
+        buffer.addSpeechRange(26, 28)
+        buffer.updateSpeechActive(false)
+        buffer.append(samples(28, 40))
+        buffer.finish()
+
+        assertEquals(2, emitted.size)
+        val first = emitted[0]
+        assertEquals(5L to 20L, first.startSample to first.endSample)
+        assertEquals(10L to 15L, first.rawStartSample to first.rawEndSample)
+        val second = emitted[1]
+        // Clamped start (earliest available + context) >= previous padded end.
+        assertTrue(second.startSample >= first.endSample)
+        assertEquals(26L to 28L, second.rawStartSample to second.rawEndSample)
+    }
+
+    @Test
+    fun keepsFullContextPaddingForFirstSegment() {
+        val emitted = mutableListOf<BufferedSpeechSegment>()
+        val buffer = buffer(context = 5, maximum = 40, history = 8, emitted = emitted)
+        buffer.append(samples(0, 10))
+        buffer.updateSpeechActive(true)
+        buffer.append(samples(10, 20))
+        buffer.addSpeechRange(12, 18)
+        buffer.updateSpeechActive(false)
+        buffer.append(samples(20, 30))
+        buffer.finish()
+
+        assertEquals(1, emitted.size)
+        val segment = emitted.single()
+        assertEquals(7L to 23L, segment.startSample to segment.endSample)
+        assertEquals(12L to 18L, segment.rawStartSample to segment.rawEndSample)
+    }
+
     private fun buffer(
         context: Int,
         maximum: Int,

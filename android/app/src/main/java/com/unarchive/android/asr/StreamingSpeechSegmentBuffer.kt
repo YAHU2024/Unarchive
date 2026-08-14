@@ -8,7 +8,7 @@ class StreamingSpeechSegmentBuffer(
 ) {
     private val chunks = ArrayDeque<AudioChunk>()
     private var totalSamples = 0L
-    private var pendingRange: SampleRange? = null
+    private var pendingRange: PendingRange? = null
     private var speechActive = false
     private var activeRetainStart: Long? = null
 
@@ -53,16 +53,28 @@ class StreamingSpeechSegmentBuffer(
         val clampedStart = maxOf(startSample, earliestAvailable + contextSamples)
         if (clampedStart >= endSample) return
 
-        val padded = SampleRange(
+        // Fixed context padding on both sides. Streaming emission guarantees
+        // the window never reaches the neighbouring speech: a segment is only
+        // released after `contextSamples` of separation arrive, and a later
+        // range is clamped to start at or after the released padded end, so
+        // padding covers silence only.
+        val padded = PendingRange(
+            rawStart = clampedStart,
+            rawEnd = endSample,
             start = (clampedStart - contextSamples).coerceAtLeast(0L),
             end = endSample + contextSamples,
         )
         val current = pendingRange
         pendingRange = when {
             current == null -> padded
-            padded.start <= current.end -> SampleRange(current.start, maxOf(current.end, padded.end))
+            padded.start <= current.end -> PendingRange(
+                rawStart = current.rawStart,
+                rawEnd = maxOf(current.rawEnd, padded.rawEnd),
+                start = current.start,
+                end = maxOf(current.end, padded.end),
+            )
             else -> {
-                emitRange(current.copy(end = minOf(current.end, totalSamples)))
+                emitRange(current, end = minOf(current.end, totalSamples))
                 padded
             }
         }
@@ -86,7 +98,7 @@ class StreamingSpeechSegmentBuffer(
         val availableEnd = minOf(current.end, totalSamples)
         val enoughSeparation = totalSamples >= current.end + contextSamples
         if (force || (!speechActive && enoughSeparation)) {
-            emitRange(SampleRange(current.start, availableEnd))
+            emitRange(current, end = availableEnd)
             pendingRange = null
             trimReleasedAudio()
         }
@@ -98,25 +110,25 @@ class StreamingSpeechSegmentBuffer(
             totalSamples >= current.start + maximumSegmentSamples
         ) {
             val end = current.start + maximumSegmentSamples
-            emitRange(SampleRange(current.start, end))
-            current = SampleRange(end, current.end)
+            emitRange(current, end = end)
+            current = current.advanceStart(end)
             pendingRange = current
         }
     }
 
-    private fun emitRange(range: SampleRange) {
-        if (range.end <= range.start) return
-        val size = (range.end - range.start).toInt()
+    private fun emitRange(range: PendingRange, end: Long) {
+        if (end <= range.start) return
+        val size = (end - range.start).toInt()
         require(size <= maximumSegmentSamples) { "Speech segment exceeded the configured maximum" }
         val availableStart = chunks.firstOrNull()?.availableStart ?: totalSamples
-        require(range.start >= availableStart && range.end <= totalSamples) {
+        require(range.start >= availableStart && end <= totalSamples) {
             "Speech segment audio is no longer available " +
-                "(range=$range availableStart=$availableStart totalSamples=$totalSamples)"
+                "(range=${range.start}-$end availableStart=$availableStart totalSamples=$totalSamples)"
         }
         val samples = FloatArray(size)
         chunks.forEach { chunk ->
             val copyStart = maxOf(range.start, chunk.availableStart)
-            val copyEnd = minOf(range.end, chunk.end)
+            val copyEnd = minOf(end, chunk.end)
             if (copyEnd > copyStart) {
                 chunk.samples.copyInto(
                     destination = samples,
@@ -126,8 +138,19 @@ class StreamingSpeechSegmentBuffer(
                 )
             }
         }
-        onSegment(BufferedSpeechSegment(range.start, range.end, samples))
-        trimBefore(range.end)
+        // Raw (speech-only) portion of this emitted block.
+        val rawStart = maxOf(range.rawStart, range.start)
+        val rawEnd = minOf(range.rawEnd, end)
+        onSegment(
+            BufferedSpeechSegment(
+                startSample = range.start,
+                endSample = end,
+                samples = samples,
+                rawStartSample = rawStart,
+                rawEndSample = rawEnd,
+            ),
+        )
+        trimBefore(end)
     }
 
     private fun trimReleasedAudio() {
@@ -158,7 +181,14 @@ class StreamingSpeechSegmentBuffer(
         )
     }
 
-    private data class SampleRange(val start: Long, val end: Long)
+    private data class PendingRange(
+        val rawStart: Long,
+        val rawEnd: Long,
+        val start: Long,
+        val end: Long,
+    ) {
+        fun advanceStart(newStart: Long): PendingRange = PendingRange(rawStart, rawEnd, newStart, end)
+    }
 
     private class AudioChunk(
         val start: Long,
@@ -179,4 +209,7 @@ data class BufferedSpeechSegment(
     val startSample: Long,
     val endSample: Long,
     val samples: FloatArray,
+    /** VAD speech boundary excluding recognition context padding. */
+    val rawStartSample: Long,
+    val rawEndSample: Long,
 )
