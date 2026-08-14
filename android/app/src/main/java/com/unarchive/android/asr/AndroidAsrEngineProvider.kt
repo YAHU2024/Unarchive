@@ -7,6 +7,7 @@ class AndroidAsrEngineProvider(
     private val context: Context,
 ) : AsrEngineProvider {
     override fun create(kind: AsrEngineKind): AsrEngine {
+        requireAvailable(kind)
         if (kind != AsrEngineKind.SENSE_VOICE_SHERPA || !BuildConfig.SHERPA_ENABLED) {
             return PreviewAsrEngine(kind)
         }
@@ -23,5 +24,16 @@ class AndroidAsrEngineProvider(
     companion object {
         private const val SENSE_VOICE_ENGINE_CLASS =
             "com.unarchive.android.asr.sherpa.SenseVoiceAsrEngine"
+
+        /**
+         * Rejects declared-but-unimplemented engines so callers never silently
+         * fall back to a preview stub. Runs before any [Context] use, so it is
+         * directly unit-testable without a device context.
+         */
+        fun requireAvailable(kind: AsrEngineKind) {
+            if (!kind.available) {
+                throw IllegalStateException("ASR engine ${kind.name} is declared but not implemented yet")
+            }
+        }
     }
 }

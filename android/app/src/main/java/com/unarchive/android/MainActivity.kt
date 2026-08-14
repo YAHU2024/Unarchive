@@ -333,9 +333,15 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                 RadioButton(
                     selected = engine == selectedEngine,
                     onClick = { selectedEngine = engine },
-                    enabled = runningJob == null,
+                    enabled = engine.available && runningJob == null,
                 )
-                Text(engine.displayName)
+                Text(
+                    if (engine.available) {
+                        engine.displayName
+                    } else {
+                        "${engine.displayName}（开发中，暂不可用）"
+                    },
+                )
             }
         }
 

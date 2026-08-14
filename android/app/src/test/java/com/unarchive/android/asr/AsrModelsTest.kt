@@ -1,7 +1,9 @@
 package com.unarchive.android.asr
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AsrModelsTest {
@@ -26,5 +28,12 @@ class AsrModelsTest {
 
         val segment = TranscriptSegment(startMs = 1, endMs = 2, text = "valid")
         assertEquals("valid", segment.text)
+    }
+
+    @Test
+    fun onlySenseVoiceIsMarkedAvailable() {
+        assertTrue(AsrEngineKind.SENSE_VOICE_SHERPA.available)
+        assertFalse(AsrEngineKind.WHISPER_SHERPA.available)
+        assertFalse(AsrEngineKind.WHISPER_CPP.available)
     }
 }

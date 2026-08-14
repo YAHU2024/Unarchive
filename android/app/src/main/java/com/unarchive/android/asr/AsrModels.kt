@@ -1,9 +1,13 @@
 package com.unarchive.android.asr
 
-enum class AsrEngineKind(val displayName: String) {
-    SENSE_VOICE_SHERPA("SenseVoice int8 / sherpa-onnx"),
-    WHISPER_SHERPA("Whisper / sherpa-onnx"),
-    WHISPER_CPP("Whisper / whisper.cpp"),
+enum class AsrEngineKind(
+    val displayName: String,
+    /** False when the engine is a declared option with no working implementation yet. */
+    val available: Boolean,
+) {
+    SENSE_VOICE_SHERPA("SenseVoice int8 / sherpa-onnx", available = true),
+    WHISPER_SHERPA("Whisper / sherpa-onnx", available = false),
+    WHISPER_CPP("Whisper / whisper.cpp", available = false),
 }
 
 data class AsrConfig(
