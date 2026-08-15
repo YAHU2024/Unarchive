@@ -26,6 +26,11 @@ data class StoredVideoResult(
     val segments: List<TranscriptSegment>,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
+    /**
+     * Signature of the AsrConfig that produced this result. Blank for results
+     * saved before this field existed; such results are never reused as-is.
+     */
+    val configSignature: String = "",
 ) {
     val transcript: String
         get() = segments.joinToString(separator = "\n") { it.text }
@@ -44,6 +49,7 @@ data class StoredVideoResult(
         fun fromPipeline(
             result: SingleVideoResult,
             nowEpochMs: Long,
+            configSignature: String,
             createdAtEpochMs: Long = nowEpochMs,
         ) = StoredVideoResult(
             key = VideoResultKey(result.metadata.id.platform, result.metadata.id.value),
@@ -57,6 +63,7 @@ data class StoredVideoResult(
             segments = result.benchmark.segments,
             createdAtEpochMs = createdAtEpochMs,
             updatedAtEpochMs = nowEpochMs,
+            configSignature = configSignature,
         )
     }
 }

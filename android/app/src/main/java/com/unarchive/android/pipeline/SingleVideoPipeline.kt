@@ -7,6 +7,7 @@ import com.unarchive.android.asr.BenchmarkResult
 import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.CompletedAsrSegment
 import com.unarchive.android.asr.TranscriptSegment
+import com.unarchive.android.asr.signature
 import com.unarchive.android.checkpoint.AmbiguousCheckpointTail
 import com.unarchive.android.checkpoint.AudioSourceFingerprint
 import com.unarchive.android.checkpoint.CheckpointTailReconciler
@@ -47,6 +48,8 @@ data class SingleVideoResult(
     val reusedDownload: Boolean,
     val storedResult: StoredVideoResult? = null,
     val resumedFromCheckpoint: Boolean = false,
+    /** True when an unchanged stored result was returned without re-transcribing. */
+    val reusedResult: Boolean = false,
     /** Wall-clock time spent in each pipeline stage (diagnostics). */
     val stageTimingsMs: Map<SingleVideoStage, Long> = emptyMap(),
 )
@@ -84,6 +87,43 @@ class SingleVideoPipeline(
         progressListener.update(SingleVideoStage.RESOLVING_AUDIO, 0.15f)
         val stream = platformAdapter.resolveAudio(metadata)
         val key = VideoResultKey(metadata.id.platform, metadata.id.value)
+        // Result-level short-circuit: if this video was fully transcribed with
+        // the exact same ASR config and the user did not force a refresh, the
+        // stored result is authoritative — re-running VAD over the whole audio
+        // (~50 s on a 12-minute video) and re-recognizing is pure waste.
+        if (!forceRefreshAudio) {
+            val stored = resultRepository?.find(key)
+            if (
+                stored != null &&
+                stored.configSignature.isNotBlank() &&
+                stored.configSignature == config.signature()
+            ) {
+                Log.i(TAG, "reusing stored result for $key (config unchanged)")
+                progressListener.update(SingleVideoStage.COMPLETE, 1f)
+                // Touch updatedAt so the list order reflects the last access,
+                // but skip the download + VAD + recognition entirely.
+                val refreshed = resultRepository
+                    ?.save(stored.copy(updatedAtEpochMs = wallClockEpochMs()))
+                    ?: stored
+                return SingleVideoResult(
+                    metadata = metadata,
+                    benchmark = BenchmarkResult(
+                        engine = stored.engine,
+                        processingDurationMs = stored.processingDurationMs,
+                        audioDurationMs = stored.audioDurationMs,
+                        realTimeFactor = if (stored.audioDurationMs > 0) {
+                            stored.processingDurationMs.toDouble() / stored.audioDurationMs
+                        } else {
+                            null
+                        },
+                        segments = stored.segments,
+                    ),
+                    reusedDownload = true,
+                    storedResult = refreshed,
+                    reusedResult = true,
+                )
+            }
+        }
         if (forceRefreshAudio) checkpointRepository?.delete(key)
         progressListener.update(SingleVideoStage.CHECKING_AUDIO_CACHE, 0.18f)
         var downloadStarted = false
@@ -170,6 +210,7 @@ class SingleVideoPipeline(
                 StoredVideoResult.fromPipeline(
                     result = pipelineResult,
                     nowEpochMs = now,
+                    configSignature = config.signature(),
                     createdAtEpochMs = repository.find(key)?.createdAtEpochMs ?: now,
                 ),
             )

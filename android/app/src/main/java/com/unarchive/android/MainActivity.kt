@@ -262,10 +262,14 @@ private fun UnarchiveScreen(initialAudio: Uri?, initialVideoReference: String?) 
                             "recognize=${it.recognitionMs}ms commit=${it.commitMs}ms"
                     },
                 )
-                status = if (videoResult?.resumedFromCheckpoint == true) {
-                    "Recognition complete. Saved transcription resumed and result saved locally."
-                } else {
-                    videoCompletionStatus(
+                status = when {
+                    videoResult?.reusedResult == true -> {
+                        "已使用上次结果（配置未变，未重新转写）。"
+                    }
+                    videoResult?.resumedFromCheckpoint == true -> {
+                        "Recognition complete. Saved transcription resumed and result saved locally."
+                    }
+                    else -> videoCompletionStatus(
                         reusedDownload = videoResult?.reusedDownload == true,
                         forceRefreshAudio = forceRefreshAudio,
                     )

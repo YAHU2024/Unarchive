@@ -11,6 +11,7 @@ import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.CompletedAsrSegment
 import com.unarchive.android.asr.MonotonicClock
 import com.unarchive.android.asr.TranscriptSegment
+import com.unarchive.android.asr.signature
 import com.unarchive.android.checkpoint.TranscriptionCheckpoint
 import com.unarchive.android.checkpoint.TranscriptionCheckpointRepository
 import com.unarchive.android.platform.AudioDownloader
@@ -244,6 +245,169 @@ class SingleVideoPipelineTest {
 
         assertEquals(listOf("checkpoint", "result", "delete"), events)
         assertEquals(listOf(0, 1, 0), checkpointCounts)
+    }
+    @Test
+    fun reusesStoredResultWhenConfigUnchanged() = runTest {
+        val audio = temporaryFolder.newFile("audio.m4a")
+        val repository = InMemoryResultRepository()
+        repository.save(
+            StoredVideoResult(
+                key = VideoResultKey("bilibili", "BV1PS42197aM"),
+                canonicalUrl = "https://www.bilibili.com/video/BV1PS42197aM",
+                title = "Test",
+                ownerName = "UP",
+                videoDurationSeconds = 1,
+                engine = AsrEngineKind.SENSE_VOICE_SHERPA,
+                processingDurationMs = 42,
+                audioDurationMs = 1_000,
+                segments = listOf(TranscriptSegment(0, 1_000, "cached")),
+                createdAtEpochMs = 1,
+                updatedAtEpochMs = 2,
+                configSignature = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA).signature(),
+            ),
+        )
+        var downloads = 0
+        var transcriptions = 0
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _, _ ->
+                downloads++
+                DownloadedAudio(audio, 0, reused = true)
+            },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ): AsrOutput {
+                            transcriptions++
+                            return AsrOutput(emptyList(), 0)
+                        }
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+            resultRepository = repository,
+        )
+
+        val result = pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
+        )
+
+        assertEquals(0, downloads)
+        assertEquals(0, transcriptions)
+        assertTrue(result.reusedResult)
+        assertEquals("cached", result.benchmark.segments.single().text)
+    }
+
+    @Test
+    fun doesNotReuseStoredResultWhenConfigChanged() = runTest {
+        val audio = temporaryFolder.newFile("audio.m4a")
+        val repository = InMemoryResultRepository()
+        repository.save(
+            StoredVideoResult(
+                key = VideoResultKey("bilibili", "BV1PS42197aM"),
+                canonicalUrl = "https://www.bilibili.com/video/BV1PS42197aM",
+                title = "Test",
+                ownerName = "UP",
+                videoDurationSeconds = 1,
+                engine = AsrEngineKind.SENSE_VOICE_SHERPA,
+                processingDurationMs = 42,
+                audioDurationMs = 1_000,
+                segments = listOf(TranscriptSegment(0, 1_000, "old")),
+                createdAtEpochMs = 1,
+                updatedAtEpochMs = 2,
+                configSignature = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA).signature(),
+            ),
+        )
+        var transcriptions = 0
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _, _ -> DownloadedAudio(audio, 0, reused = true) },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ): AsrOutput {
+                            transcriptions++
+                            return AsrOutput(listOf(TranscriptSegment(0, 1_000, "fresh")), 1_000)
+                        }
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+            resultRepository = repository,
+        )
+
+        val result = pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA, numThreads = 2),
+            progressListener = SingleVideoProgressListener {},
+        )
+
+        assertEquals(1, transcriptions)
+        assertTrue(!result.reusedResult)
+        assertEquals("fresh", result.benchmark.segments.single().text)
+    }
+
+    @Test
+    fun doesNotReuseLegacyStoredResultWithoutSignature() = runTest {
+        val audio = temporaryFolder.newFile("audio.m4a")
+        val repository = InMemoryResultRepository()
+        repository.save(
+            StoredVideoResult(
+                key = VideoResultKey("bilibili", "BV1PS42197aM"),
+                canonicalUrl = "https://www.bilibili.com/video/BV1PS42197aM",
+                title = "Test",
+                ownerName = "UP",
+                videoDurationSeconds = 1,
+                engine = AsrEngineKind.SENSE_VOICE_SHERPA,
+                processingDurationMs = 42,
+                audioDurationMs = 1_000,
+                segments = listOf(TranscriptSegment(0, 1_000, "legacy")),
+                createdAtEpochMs = 1,
+                updatedAtEpochMs = 2,
+            ),
+        )
+        var transcriptions = 0
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _, _ -> DownloadedAudio(audio, 0, reused = true) },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ): AsrOutput {
+                            transcriptions++
+                            return AsrOutput(emptyList(), 0)
+                        }
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+            resultRepository = repository,
+        )
+
+        pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
+        )
+
+        assertEquals(1, transcriptions)
     }
 }
 

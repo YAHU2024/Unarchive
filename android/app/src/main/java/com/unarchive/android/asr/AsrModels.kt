@@ -46,6 +46,26 @@ data class AsrConfig(
 }
 
 /**
+ * Hash of every ASR-relevant configuration knob, used to decide whether a
+ * stored result can be reused as-is on rerun.
+ */
+fun AsrConfig.signature(): String {
+    val source = listOf(
+        engine.name,
+        language,
+        sampleRateHz.toString(),
+        enableVad.toString(),
+        contextPaddingMs.toString(),
+        numThreads?.toString() ?: "auto",
+        parallelWorkers.toString(),
+        vadMaxSpeechSeconds.toString(),
+    ).joinToString("|")
+    return java.security.MessageDigest.getInstance("SHA-256")
+        .digest(source.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+}
+
+/**
  * Caps the requested parallel recognizer count by device capabilities.
  *
  * Every recognizer instance re-loads the SenseVoice model (~230 MB) into

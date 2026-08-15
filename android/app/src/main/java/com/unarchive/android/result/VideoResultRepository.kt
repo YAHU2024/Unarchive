@@ -85,6 +85,7 @@ private fun StoredVideoResult.toJson() = JSONObject()
     .put("audio_duration_ms", audioDurationMs)
     .put("created_at_epoch_ms", createdAtEpochMs)
     .put("updated_at_epoch_ms", updatedAtEpochMs)
+    .put("config_signature", configSignature)
     .put(
         "segments",
         JSONArray().apply {
@@ -126,5 +127,8 @@ private fun JSONObject.toStoredVideoResult(): StoredVideoResult {
         segments = segments,
         createdAtEpochMs = getLong("created_at_epoch_ms"),
         updatedAtEpochMs = getLong("updated_at_epoch_ms"),
+        // optString: results saved before this field existed parse as blank
+        // and are never reused as-is.
+        configSignature = optString("config_signature", ""),
     )
 }
