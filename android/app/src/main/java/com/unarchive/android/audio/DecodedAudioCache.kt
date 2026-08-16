@@ -43,17 +43,54 @@ class DecodedAudioCache(private val cacheDirectory: File) {
      * to publish it atomically, or [Pcm16WavSink.abort] to discard it.
      */
     fun newSink(fingerprint: String): Pcm16WavSink {
+        val (part, target) = newEntryFiles(fingerprint)
+        return Pcm16WavSink(part, target)
+    }
+
+    /** Atomic file target for a decoder that writes a complete WAV itself. */
+    fun newFileSink(fingerprint: String): AtomicCacheFileSink {
+        val (part, target) = newEntryFiles(fingerprint)
+        return AtomicCacheFileSink(part, target)
+    }
+
+    private fun newEntryFiles(fingerprint: String): Pair<File, File> {
         val directory = File(cacheDirectory, fingerprint)
         if (!directory.exists() && !directory.mkdirs()) {
             throw IOException("Cannot create decoded-audio cache: $directory")
         }
         require(directory.isDirectory) { "Cache path is not a directory: $directory" }
-        val part = File(directory, ".decoded-${UUID.randomUUID()}.wav.part")
-        return Pcm16WavSink(part, cachedFile(fingerprint))
+        return File(directory, ".decoded-${UUID.randomUUID()}.wav.part") to cachedFile(fingerprint)
     }
 
     companion object {
         private const val WAV_HEADER_SIZE = 44L
+    }
+}
+
+/** Publishes a complete externally-written cache file atomically. */
+class AtomicCacheFileSink internal constructor(
+    val partFile: File,
+    private val targetFile: File,
+) {
+    private var finished = false
+
+    fun finish(): File {
+        check(!finished) { "AtomicCacheFileSink is already finished" }
+        check(partFile.isFile) { "Decoded-audio partial file is missing: $partFile" }
+        finished = true
+        try {
+            publishAtomically(partFile, targetFile)
+        } catch (error: Throwable) {
+            partFile.delete()
+            throw error
+        }
+        return targetFile
+    }
+
+    fun abort() {
+        if (finished) return
+        finished = true
+        partFile.delete()
     }
 }
 
@@ -100,12 +137,7 @@ class Pcm16WavSink internal constructor(
         writeLe32(dataBytes.toInt())
         output.fd.sync()
         output.close()
-        if (!partFile.renameTo(targetFile)) {
-            targetFile.delete()
-            if (!partFile.renameTo(targetFile)) {
-                throw IOException("Cannot publish decoded-audio cache: $partFile")
-            }
-        }
+        publishAtomically(partFile, targetFile)
     }
 
     /** Discards the partial file without publishing. */
@@ -147,5 +179,14 @@ class Pcm16WavSink internal constructor(
         )
 
         val RIFF_HEADER: ByteArray = riffHeader()
+    }
+}
+
+private fun publishAtomically(partFile: File, targetFile: File) {
+    if (!partFile.renameTo(targetFile)) {
+        targetFile.delete()
+        if (!partFile.renameTo(targetFile)) {
+            throw IOException("Cannot publish decoded-audio cache: $partFile")
+        }
     }
 }

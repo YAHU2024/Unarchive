@@ -180,7 +180,8 @@ fun ModelManagementSection(
 
         Text(
             "模型版权：SenseVoice（FunASR / 阿里巴巴，FunASR Model License v1.1）；" +
-                "Silero VAD（Silero Team，MIT）；sherpa-onnx（Apache-2.0）。",
+                "Silero VAD（Silero Team，MIT）；sherpa-onnx（Apache-2.0）；" +
+                "FFmpeg / FFmpegKit（LGPL-3.0）。",
             style = MaterialTheme.typography.bodySmall,
         )
 
@@ -208,6 +209,19 @@ private fun loadLicenses(context: android.content.Context): String {
     for (name in names) {
         val text = context.assets.open("$directory/$name").bufferedReader().use { it.readText() }
         builder.append("===== $name =====\n\n").append(text).append("\n\n")
+    }
+    val ffmpegLicenseResource = context.resources.getIdentifier(
+        "license",
+        "raw",
+        context.packageName,
+    )
+    if (ffmpegLicenseResource != 0) {
+        val ffmpegLicense = context.resources.openRawResource(ffmpegLicenseResource)
+            .bufferedReader()
+            .use { it.readText() }
+        builder.append("===== ffmpeg-lgpl-3.0.txt =====\n\n")
+            .append(ffmpegLicense)
+            .append("\n")
     }
     return builder.toString()
 }

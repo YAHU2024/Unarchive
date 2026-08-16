@@ -50,6 +50,39 @@ class DecodedAudioCacheTest {
     }
 
     @Test
+    fun publishesCompleteExternalFileAtomically() {
+        val cache = DecodedAudioCache(tempDir())
+        val target = cache.cachedFile("external")
+        val sink = cache.newFileSink("external")
+        sink.partFile.writeBytes(ByteArray(46) { it.toByte() })
+
+        val published = sink.finish()
+
+        assertEquals(target, published)
+        assertTrue(target.isFile)
+        assertEquals(46L, target.length())
+        assertFalse(sink.partFile.exists())
+    }
+
+    @Test
+    fun abortingExternalFilePreservesPublishedTarget() {
+        val cache = DecodedAudioCache(tempDir())
+        val original = cache.newSink("external-abort")
+        original.write(floatArrayOf(0.5f))
+        original.finish()
+        val target = cache.cachedFile("external-abort")
+        val originalLength = target.length()
+
+        val replacement = cache.newFileSink("external-abort")
+        replacement.partFile.writeBytes(ByteArray(100))
+        replacement.abort()
+
+        assertTrue(target.isFile)
+        assertEquals(originalLength, target.length())
+        assertFalse(replacement.partFile.exists())
+    }
+
+    @Test
     fun writtenWavRoundTripsThroughWaveDecoder() {
         val cache = DecodedAudioCache(tempDir())
         val sink = cache.newSink("fp3")

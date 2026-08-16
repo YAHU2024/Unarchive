@@ -17,6 +17,7 @@ import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.unarchive.android.audio.AndroidAudioDecoder
 import com.unarchive.android.audio.DecodedAudioCache
+import com.unarchive.android.audio.FfmpegAudioDecoder
 import com.unarchive.android.audio.WaveDecoder
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngine
@@ -36,6 +37,7 @@ import com.unarchive.android.asr.CompletedAsrSegment
 import com.unarchive.android.asr.StreamingSpeechSegmentBuffer
 import com.unarchive.android.asr.TranscriptSegment
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
@@ -386,32 +388,69 @@ class SenseVoiceAsrEngine(
                             )
                         }.also { progressListener.onProgress(0.55f) }
                     }
-                    // Container decode (MediaCodec): persist the full decode to
-                    // the cache when we start from the beginning, so reruns skip it.
+                    // Container decode: FFmpeg writes the normalized WAV in one
+                    // fast native pass. Any load/format failure falls back to
+                    // MediaCodec, preserving the existing compatibility path.
                     else -> {
-                        log("decode path=mediacodec start resumeMs=${source.resumeStartMs}")
-                        val sink = if (fingerprint != null && source.resumeStartMs == 0L) {
-                            cache!!.newSink(fingerprint)
+                        val ffmpegFile = if (fingerprint != null && source.resumeStartMs == 0L) {
+                            try {
+                                log("decode path=ffmpeg start")
+                                FfmpegAudioDecoder(context).decodeToCache(
+                                    uri = sourceUri,
+                                    cache = cache!!,
+                                    fingerprint = fingerprint,
+                                    targetSampleRate = EXPECTED_SAMPLE_RATE,
+                                ).also { log("decode path=ffmpeg done bytes=${it.length()}") }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Throwable) {
+                                log(
+                                    "decode path=ffmpeg failed fallback=mediacodec " +
+                                        "error=${error::class.java.simpleName}:${error.message}",
+                                )
+                                null
+                            }
                         } else {
                             null
                         }
-                        try {
-                            val count = AndroidAudioDecoder(context).decodeChunks(
-                                uri = sourceUri,
-                                targetSampleRate = EXPECTED_SAMPLE_RATE,
-                                progressListener = progressListener,
-                                startAtMs = source.resumeStartMs,
-                                onResolvedStartMs = onResolvedStartMs,
-                                onSamples = { samples ->
-                                    sink?.write(samples)
-                                    sendSamples(samples)
-                                },
-                            )
-                            sink?.finish()
-                            count
-                        } catch (e: Throwable) {
-                            sink?.abort()
-                            throw e
+                        if (ffmpegFile != null) {
+                            onResolvedStartMs(0)
+                            ffmpegFile.inputStream().use { input ->
+                                WaveDecoder.decodeChunks(
+                                    input = input,
+                                    targetSampleRate = EXPECTED_SAMPLE_RATE,
+                                    onChunk = { currentContext.ensureActive() },
+                                    onProgress = { decodedProgress ->
+                                        progressListener.onProgress(0.05f + 0.45f * decodedProgress)
+                                    },
+                                    onSamples = ::sendSamples,
+                                )
+                            }.also { progressListener.onProgress(0.55f) }
+                        } else {
+                            log("decode path=mediacodec start resumeMs=${source.resumeStartMs}")
+                            val sink = if (fingerprint != null && source.resumeStartMs == 0L) {
+                                cache!!.newSink(fingerprint)
+                            } else {
+                                null
+                            }
+                            try {
+                                val count = AndroidAudioDecoder(context).decodeChunks(
+                                    uri = sourceUri,
+                                    targetSampleRate = EXPECTED_SAMPLE_RATE,
+                                    progressListener = progressListener,
+                                    startAtMs = source.resumeStartMs,
+                                    onResolvedStartMs = onResolvedStartMs,
+                                    onSamples = { samples ->
+                                        sink?.write(samples)
+                                        sendSamples(samples)
+                                    },
+                                )
+                                sink?.finish()
+                                count
+                            } catch (e: Throwable) {
+                                sink?.abort()
+                                throw e
+                            }
                         }
                     }
                 }

@@ -68,6 +68,12 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // Extract .so on install instead of mapping them inside the APK:
+            // APK-internal RELRO fails for the large FFmpeg libs
+            // ("can't enable GNU RELRO protection ... Out of memory").
+            useLegacyPackaging = true
+        }
         resources {
             excludes += setOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
@@ -95,6 +101,10 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     defaultConfig {
         buildConfigField("boolean", "SHERPA_ENABLED", sherpaEnabled.toString())
     }
@@ -120,6 +130,14 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // tar.bz2 extraction for on-device model downloads (SenseVoice archive).
     implementation("org.apache.commons:commons-compress:1.28.0")
+    // Fast container decode: the software c2.android.aac decoder is only
+    // ~7-10x realtime on the PHQ110, while FFmpeg 8.1.7 decoded the same
+    // normalized 742 s sample in 0.59-0.63 s with an identical sample count.
+    // Community-maintained fork (dev.ffmpegkit-maintained, original retired
+    // 2025-01); min build contains FFmpeg's built-in AAC decoder.
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.7")
+    // ffmpeg-kit runtime dependency (its AAR does not pull it transitively).
+    implementation("com.arthenica:smart-exception-java:0.2.1")
     if (sherpaEnabled) {
         implementation(files(sherpaAar))
     }

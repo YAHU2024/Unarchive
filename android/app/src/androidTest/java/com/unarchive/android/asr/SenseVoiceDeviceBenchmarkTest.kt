@@ -7,16 +7,26 @@ import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import com.unarchive.android.asr.sherpa.SenseVoiceAsrEngine
+import com.unarchive.android.audio.AndroidAudioDecoder
+import com.unarchive.android.audio.DecodedAudioCache
+import com.unarchive.android.audio.FfmpegAudioDecoder
+import com.unarchive.android.audio.WaveDecoder
 import com.unarchive.android.checkpoint.AudioSourceFingerprint
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.checkpoint.TranscriptionSourceIdentity
 import com.unarchive.android.result.VideoResultKey
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.abs
 
 /**
  * On-device RTF benchmark for the SenseVoice engine.
@@ -256,6 +266,181 @@ class SenseVoiceDeviceBenchmarkTest {
                 "exclusiveCores=${exclusive.toList()} memoryClass=${activityManager?.memoryClass}\n")
     }
 
+    /** Product-equivalent decoder A/B: M4A -> atomic 16 kHz mono PCM16 WAV. */
+    @Test
+    fun benchmarkNormalizedContainerDecoders() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val reportFile = File(context.filesDir, "bench-results.txt")
+        val outputRoot = File(context.cacheDir, "decoder-bench")
+        check(outputRoot.isDirectory || outputRoot.mkdirs()) {
+            "Cannot create decoder benchmark directory: $outputRoot"
+        }
+
+        fun report(label: String, elapsedMs: Long, output: File, sampleCount: Long) {
+            val audioMs = sampleCount * 1_000L / BENCH_SAMPLE_RATE
+            val line = String.format(
+                "%s: elapsedMs=%d audioMs=%d rtf=%.3f samples=%d bytes=%d",
+                label,
+                elapsedMs,
+                audioMs,
+                if (audioMs > 0) elapsedMs.toDouble() / audioMs else 0.0,
+                sampleCount,
+                output.length(),
+            )
+            Log.i(TAG, line)
+            reportFile.appendText("\n$line\n")
+        }
+
+        fun reportFailure(label: String, error: Throwable) {
+            val message = error.message.orEmpty().lineSequence().take(6).joinToString(" | ")
+            val line = "$label: FAILED ${error::class.java.simpleName}: $message"
+            Log.e(TAG, line, error)
+            reportFile.appendText("\n$line\n")
+        }
+
+        fun validateSampleCount(label: String, sampleCount: Long, referenceSamples: Long?) {
+            if (referenceSamples == null) return
+            val delta = abs(sampleCount - referenceSamples)
+            check(delta <= REFERENCE_SAMPLE_TOLERANCE) {
+                "$label sample count differs from reference WAV: " +
+                    "actual=$sampleCount reference=$referenceSamples delta=$delta"
+            }
+        }
+
+        fun runMediaCodec(label: String, source: File, referenceSamples: Long?): Long {
+            val cache = DecodedAudioCache(File(outputRoot, "mediacodec"))
+            val fingerprint = "mediacodec-$label"
+            val output = cache.cachedFile(fingerprint)
+            cache.invalidate(output)
+            val sink = cache.newSink(fingerprint)
+            try {
+                val startedAt = SystemClock.elapsedRealtime()
+                val reportedSamples = runBlocking {
+                    AndroidAudioDecoder(context).decodeChunks(
+                        uri = FileProvider.getUriForFile(context, AUTHORITY, source),
+                        targetSampleRate = BENCH_SAMPLE_RATE,
+                        progressListener = AsrProgressListener {},
+                        onSamples = sink::write,
+                    )
+                }
+                sink.finish()
+                val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                val validatedSamples = countNormalizedSamples(output)
+                check(reportedSamples == validatedSamples) {
+                    "MediaCodec sample mismatch: reported=$reportedSamples validated=$validatedSamples"
+                }
+                requireNonEmptyNormalizedSamples(output, validatedSamples)
+                validateSampleCount("MediaCodec $label", validatedSamples, referenceSamples)
+                report("decode-mediacodec-$label", elapsedMs, output, validatedSamples)
+                return validatedSamples
+            } catch (error: Throwable) {
+                sink.abort()
+                throw error
+            }
+        }
+
+        fun runFfmpeg(label: String, source: File, referenceSamples: Long?): Long {
+            val output = File(outputRoot, "ffmpeg-$label.wav")
+            val part = File(outputRoot, ".ffmpeg-$label.wav.part")
+            check(!output.exists() || output.delete()) { "Cannot clear FFmpeg output: $output" }
+            check(!part.exists() || part.delete()) { "Cannot clear FFmpeg partial output: $part" }
+
+            var published = false
+            try {
+                val startedAt = SystemClock.elapsedRealtime()
+                val session = FFmpegKit.executeWithArguments(
+                    arrayOf(
+                        "-hide_banner",
+                        "-nostdin",
+                        "-y",
+                        "-benchmark",
+                        "-i", source.absolutePath,
+                        "-map", "0:a:0",
+                        "-vn",
+                        "-ac", "1",
+                        "-ar", BENCH_SAMPLE_RATE.toString(),
+                        "-c:a", "pcm_s16le",
+                        "-f", "wav",
+                        part.absolutePath,
+                    ),
+                )
+                check(ReturnCode.isSuccess(session.returnCode)) {
+                    val tail = session.allLogsAsString.orEmpty().takeLast(2_000)
+                    "FFmpeg failed for $label: returnCode=${session.returnCode}\n$tail"
+                }
+                check(part.isFile && part.length() > WAV_HEADER_BYTES) {
+                    "FFmpeg produced no PCM WAV for $label"
+                }
+                check(part.renameTo(output)) { "Cannot publish FFmpeg benchmark output: $part" }
+                published = true
+                val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                val validatedSamples = countNormalizedSamples(output)
+                requireNonEmptyNormalizedSamples(output, validatedSamples)
+                validateSampleCount("FFmpeg $label", validatedSamples, referenceSamples)
+                report("decode-ffmpeg-$label", elapsedMs, output, validatedSamples)
+                return validatedSamples
+            } finally {
+                if (!published) part.delete()
+            }
+        }
+
+        for ((label, source, required) in listOf(
+            Triple("bench-12min", File(context.cacheDir, "bench-12min.m4a"), true),
+            Triple("real-bili", File(context.cacheDir, "real-bili.m4a"), false),
+        )) {
+            if (!source.isFile) {
+                Log.w(TAG, "Decoder sample missing; skipping: ${source.absolutePath}")
+                check(!required) { "Required decoder sample missing: ${source.absolutePath}" }
+                continue
+            }
+            val referenceSamples = File(context.cacheDir, "$label.wav")
+                .takeIf { it.isFile }
+                ?.let(::countNormalizedSamples)
+            val failures = mutableListOf<Throwable>()
+            for ((decoderName, run) in listOf(
+                "mediacodec" to { runMediaCodec(label, source, referenceSamples) },
+                "ffmpeg" to { runFfmpeg(label, source, referenceSamples) },
+            )) {
+                runCatching { run() }
+                    .onFailure { error ->
+                        reportFailure("decode-$decoderName-$label", error)
+                        failures.add(error)
+                    }
+            }
+            if (required && failures.isNotEmpty()) {
+                val error = AssertionError("Required decoder benchmark failed for $label")
+                failures.forEach(error::addSuppressed)
+                throw error
+            }
+        }
+    }
+
+    /** Cancelling native FFmpeg must not publish or retain a partial cache. */
+    @Test
+    fun cancelFfmpegDecodeDiscardsPartialCache() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "bench-12min.m4a")
+        check(source.isFile) { "Required decoder sample missing: ${source.absolutePath}" }
+        val fingerprint = "cancel-${SystemClock.elapsedRealtimeNanos()}"
+        val cache = DecodedAudioCache(File(context.cacheDir, "ffmpeg-cancel-bench"))
+        val target = cache.cachedFile(fingerprint)
+        val job = launch {
+            FfmpegAudioDecoder(context).decodeToCache(
+                uri = FileProvider.getUriForFile(context, AUTHORITY, source),
+                cache = cache,
+                fingerprint = fingerprint,
+                targetSampleRate = BENCH_SAMPLE_RATE,
+            )
+        }
+
+        delay(50)
+        job.cancelAndJoin()
+
+        check(!target.exists()) { "Cancelled FFmpeg decode published a cache file" }
+        val partials = target.parentFile?.listFiles { file -> file.name.endsWith(".part") }.orEmpty()
+        check(partials.isEmpty()) { "Cancelled FFmpeg decode left partial files: ${partials.toList()}" }
+    }
+
     /**
      * Post-fix A/B on the 12-minute sample via the cached (pure-ASR) path:
      * confirms the conservative worker inference (1 worker on unknown CPU
@@ -341,9 +526,114 @@ class SenseVoiceDeviceBenchmarkTest {
         }
     }
 
+    /**
+     * Same normalized 12-minute PCM for both paths, isolating Silero VAD from
+     * container decoding. Full timestamped transcripts are saved separately
+     * so a speedup cannot be accepted without checking content retention.
+     */
+    @Test
+    fun benchmarkVadVsContinuousSegmentation() {
+        val configs = listOf(
+            "silero-vad" to AsrConfig(
+                AsrEngineKind.SENSE_VOICE_SHERPA,
+                enableVad = true,
+                numThreads = 2,
+                parallelWorkers = 1,
+                vadMaxSpeechSeconds = 10,
+            ),
+            "continuous-30s" to AsrConfig(
+                AsrEngineKind.SENSE_VOICE_SHERPA,
+                enableVad = false,
+                numThreads = 2,
+                parallelWorkers = 1,
+            ),
+        )
+
+        for ((label, config) in configs) {
+            runVadBenchmark(label, config)
+        }
+    }
+
+    private fun runVadBenchmark(label: String, config: AsrConfig) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val wav = File(context.cacheDir, "bench-12min.wav")
+        check(wav.isFile) { "Required VAD benchmark sample missing: ${wav.absolutePath}" }
+        val uri = FileProvider.getUriForFile(context, AUTHORITY, wav).toString()
+        val reportFile = File(context.filesDir, "bench-results.txt")
+        val engine = SenseVoiceAsrEngine(context)
+        val startedAt = SystemClock.elapsedRealtime()
+        val output = runBlocking {
+            engine.transcribe(
+                source = AudioSource(displayName = wav.name, uri = uri),
+                config = config,
+                progressListener = AsrProgressListener {},
+            )
+        }
+        val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+        val transcript = output.segments.joinToString("\n") {
+            "${it.startMs}\t${it.endMs}\t${it.text}"
+        }
+        val transcriptFile = File(context.filesDir, "bench-transcript-$label.txt")
+        transcriptFile.writeText(transcript)
+        val textChars = output.segments.sumOf { it.text.length }
+        val coveredMs = output.segments.sumOf { it.endMs - it.startMs }
+        val timings = output.timings
+        val line = String.format(
+            "vad-ab-%s: audioMs=%d elapsedMs=%d rtf=%.3f segments=%d chars=%d " +
+                "coveredMs=%d model=%d decode=%d recognize=%d commit=%d transcript=%s",
+            label,
+            output.audioDurationMs,
+            elapsedMs,
+            if (output.audioDurationMs > 0) elapsedMs.toDouble() / output.audioDurationMs else 0.0,
+            output.segments.size,
+            textChars,
+            coveredMs,
+            timings.modelLoadMs,
+            timings.decodeMs,
+            timings.recognitionMs,
+            timings.commitMs,
+            transcriptFile.name,
+        )
+        Log.i(TAG, line)
+        reportFile.appendText("\n$line\n")
+    }
+
     private companion object {
         const val TAG = "UnarchiveBench"
         const val SAMPLE_NAME = "bench-long.wav"
         const val AUTHORITY = "com.unarchive.android.fileprovider"
+        const val BENCH_SAMPLE_RATE = 16_000
+        const val WAV_HEADER_BYTES = 44L
+        const val REFERENCE_SAMPLE_TOLERANCE = BENCH_SAMPLE_RATE / 4L
+
+        fun requireNonEmptyNormalizedSamples(file: File, sampleCount: Long) {
+            var nonZeroSamples = 0L
+            var peak = 0f
+            file.inputStream().use { input ->
+                WaveDecoder.decodeChunks(
+                    input = input,
+                    targetSampleRate = BENCH_SAMPLE_RATE,
+                    onSamples = { samples ->
+                        samples.forEach { sample ->
+                            val magnitude = abs(sample)
+                            if (magnitude > 0.00001f) nonZeroSamples++
+                            if (magnitude > peak) peak = magnitude
+                        }
+                    },
+                )
+            }
+            check(sampleCount > 0 && nonZeroSamples > 0 && peak > 0.0001f) {
+                "Decoded WAV contains no non-zero PCM: " +
+                    "file=${file.name} samples=$sampleCount peak=$peak"
+            }
+        }
+
+        fun countNormalizedSamples(file: File): Long = file.inputStream().use { input ->
+            WaveDecoder.decodeChunks(
+                input = input,
+                targetSampleRate = BENCH_SAMPLE_RATE,
+                onSamples = {},
+            )
+        }
     }
 }

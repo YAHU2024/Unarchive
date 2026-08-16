@@ -33,6 +33,8 @@ packages.
 | --- | --- | --- |
 | AndroidX Activity, Compose, Material3, Lifecycle | Android UI/runtime | Apache-2.0; include AndroidX notices in release materials. |
 | Kotlin and kotlinx.coroutines | Language/runtime and async work | Apache-2.0; include Kotlin and coroutine notices. |
+| FFmpegKit Maintained / FFmpeg 8.1.7 | Fast Android container/audio decode | LGPL-3.0; the AAR bundles the full license and source notice under `res/raw/`. Source: https://github.com/ffmpegkit-maintained/ffmpeg. |
+| smart-exception Java/common 0.2.1 | FFmpegKit runtime support | BSD-3-Clause (Copyright 2019-2020 Taner Sener); ship the full license text. |
 | JUnit | Android unit tests | Eclipse Public License 1.0; test-only and not shipped in the release APK. |
 | org.json | Android unit-test JSON support | Public domain / JSON license terms; retain upstream notice when redistributed. |
 | Gradle wrapper | Build tooling | Apache-2.0; the wrapper is tracked for building, not an application runtime dependency. |
@@ -56,11 +58,12 @@ transitive notices, build a corresponding-source package, and retain the model
 attribution above in the app's about screen. Do not commit credentials or
 downloaded models.
 
-As of 2026-08-14 the Android APK bundles the full license texts under
+As of 2026-08-16 the Android APK bundles the full license texts under
 `android/app/src/main/assets/licenses/` (Apache-2.0, ONNX Runtime MIT, FunASR
-Model License v1.1, Silero VAD MIT) plus an in-APK `THIRD_PARTY_NOTICES.md`
-summary, and exposes them in-app via the "查看开源许可" button in the Models
-section. Release-time SBOM generation is scripted at
+Model License v1.1, Silero VAD MIT, smart-exception BSD-3-Clause) plus an
+in-APK `THIRD_PARTY_NOTICES.md` summary. FFmpegKit also bundles FFmpeg's
+LGPL-3.0 and source notice under `res/raw/`; all are exposed in-app via the
+"查看开源许可" button in the Models section. Release-time SBOM generation is scripted at
 `android/scripts/generate_sbom.ps1` (Gradle CycloneDX plugin). Signing
 keystore custody is documented privately; release builds without
 `android/keystore.properties` are unsigned for local validation.
