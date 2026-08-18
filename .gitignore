@@ -39,6 +39,7 @@ Thumbs.db
 
 # CodeBuddy (project data, not source)
 .codebuddy/
+.workbuddy/
 
 # Private development documents
 .plan.md
