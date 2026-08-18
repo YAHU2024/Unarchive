@@ -1,6 +1,7 @@
 package com.unarchive.android.pipeline
 
 import com.unarchive.android.asr.AsrConfig
+import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrProgressListener
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
@@ -23,11 +24,12 @@ import com.unarchive.android.platform.VideoPlatformAdapter
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.result.VideoResultKey
 import com.unarchive.android.result.VideoResultRepository
-import android.util.Log
+import com.unarchive.android.log.AppLogger
 
 enum class SingleVideoStage {
     RESOLVING_REFERENCE,
     FETCHING_METADATA,
+    FETCHING_SUBTITLE,
     RESOLVING_AUDIO,
     CHECKING_AUDIO_CACHE,
     DOWNLOADING_AUDIO,
@@ -84,9 +86,81 @@ class SingleVideoPipeline(
         val reference = platformAdapter.resolveReference(input)
         progressListener.update(SingleVideoStage.FETCHING_METADATA, 0.08f)
         val metadata = platformAdapter.fetchMetadata(reference)
+        val key = VideoResultKey(metadata.id.platform, metadata.id.value)
+
+        // Subtitle short-circuit: prefer the platform's official CC/AI
+        // subtitles when present, skipping the audio download and local ASR.
+        progressListener.update(SingleVideoStage.FETCHING_SUBTITLE, 0.12f)
+        if (!forceRefreshAudio) {
+            val stored = resultRepository?.find(key)
+            if (stored != null && stored.configSignature == SUBTITLE_CONFIG_SIGNATURE) {
+                AppLogger.info(TAG, "复用已保存的字幕结果：$key")
+                progressListener.update(SingleVideoStage.COMPLETE, 1f)
+                val refreshed = resultRepository
+                    ?.save(stored.copy(updatedAtEpochMs = wallClockEpochMs()))
+                    ?: stored
+                return SingleVideoResult(
+                    metadata = metadata,
+                    benchmark = BenchmarkResult(
+                        engine = stored.engine,
+                        processingDurationMs = stored.processingDurationMs,
+                        audioDurationMs = stored.audioDurationMs,
+                        realTimeFactor = if (stored.audioDurationMs > 0) {
+                            stored.processingDurationMs.toDouble() / stored.audioDurationMs
+                        } else {
+                            null
+                        },
+                        segments = stored.segments,
+                    ),
+                    reusedDownload = true,
+                    storedResult = refreshed,
+                    reusedResult = true,
+                )
+            }
+        }
+
+        val subtitleStartedAt = stageClockMs()
+        val subtitles = platformAdapter.fetchSubtitles(metadata)
+        val subtitleFetchMs = (stageClockMs() - subtitleStartedAt).coerceAtLeast(0)
+        if (subtitles != null) {
+            AppLogger.info(TAG, "使用 ${subtitles.size} 条字幕：$key")
+            val segments = subtitles
+                .map { TranscriptSegment(it.startMs, it.endMs, it.text) }
+                .sortedWith(compareBy(TranscriptSegment::startMs, TranscriptSegment::endMs))
+            val benchmark = BenchmarkResult(
+                engine = AsrEngineKind.BILIBILI_SUBTITLE,
+                processingDurationMs = subtitleFetchMs,
+                audioDurationMs = metadata.durationSeconds * 1_000,
+                realTimeFactor = null,
+                segments = segments,
+            )
+            val pipelineResult = SingleVideoResult(
+                metadata = metadata,
+                benchmark = benchmark,
+                reusedDownload = false,
+            )
+            val storedResult = resultRepository?.let { repository ->
+                val now = wallClockEpochMs()
+                repository.save(
+                    StoredVideoResult.fromPipeline(
+                        result = pipelineResult,
+                        nowEpochMs = now,
+                        configSignature = SUBTITLE_CONFIG_SIGNATURE,
+                        createdAtEpochMs = repository.find(key)?.createdAtEpochMs ?: now,
+                    ),
+                )
+            }
+            checkpointRepository?.delete(key)
+            progressListener.update(SingleVideoStage.COMPLETE, 1f)
+            return pipelineResult.copy(
+                storedResult = storedResult,
+                stageTimingsMs = stageTimings(),
+            )
+        }
+
+        // No subtitles available — fall back to local ASR.
         progressListener.update(SingleVideoStage.RESOLVING_AUDIO, 0.15f)
         val stream = platformAdapter.resolveAudio(metadata)
-        val key = VideoResultKey(metadata.id.platform, metadata.id.value)
         // Result-level short-circuit: if this video was fully transcribed with
         // the exact same ASR config and the user did not force a refresh, the
         // stored result is authoritative — re-running VAD over the whole audio
@@ -98,7 +172,7 @@ class SingleVideoPipeline(
                 stored.configSignature.isNotBlank() &&
                 stored.configSignature == config.signature()
             ) {
-                Log.i(TAG, "reusing stored result for $key (config unchanged)")
+                AppLogger.info(TAG, "复用已保存结果：$key（配置未变）")
                 progressListener.update(SingleVideoStage.COMPLETE, 1f)
                 // Touch updatedAt so the list order reflects the last access,
                 // but skip the download + VAD + recognition entirely.
@@ -328,16 +402,24 @@ class SingleVideoPipeline(
             lastStage?.let { previous ->
                 val elapsed = now - lastStageStartMs
                 stageElapsedMs[previous] = stageElapsedMs.getOrDefault(previous, 0L) + elapsed
-                Log.i(TAG, "stage done prev=$previous ms=$elapsed")
+                AppLogger.info(TAG, "阶段完成 $previous 耗时=${elapsed}ms")
             }
             lastStage = stage
             lastStageStartMs = now
-            Log.i(TAG, "stage enter $stage")
+            AppLogger.info(TAG, "进入阶段 $stage")
         }
         onProgress(SingleVideoProgress(stage, progress.coerceIn(0f, 1f)))
     }
 
     companion object {
         private const val TAG = "UnarchivePipeline"
+
+        /**
+         * Fixed config signature for subtitle-sourced results. Deliberately
+         * distinct from any `AsrConfig.signature()` (a 64-char SHA-256 hex), so
+         * subtitle results never collide with local-ASR results under the same
+         * result key.
+         */
+        private const val SUBTITLE_CONFIG_SIGNATURE = "bilibili-subtitle"
     }
 }

@@ -126,8 +126,13 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // QR code rendering for Bilibili scan-to-login.
+    implementation("com.google.zxing:core:3.5.3")
     // tar.bz2 extraction for on-device model downloads (SenseVoice archive).
     implementation("org.apache.commons:commons-compress:1.28.0")
     // Fast container decode: the software c2.android.aac decoder is only

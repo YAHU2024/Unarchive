@@ -19,6 +19,7 @@ import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.DownloadedAudio
 import com.unarchive.android.platform.PlatformVideoId
+import com.unarchive.android.platform.SubtitleSegment
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.VideoPlatformAdapter
 import com.unarchive.android.platform.VideoReference
@@ -409,9 +410,102 @@ class SingleVideoPipelineTest {
 
         assertEquals(1, transcriptions)
     }
+
+    @Test
+    fun usesPlatformSubtitlesAndSkipsAudioDownloadAndAsr() = runTest {
+        val stages = mutableListOf<SingleVideoStage>()
+        var downloads = 0
+        var transcriptions = 0
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(
+                subtitles = listOf(
+                    SubtitleSegment(0, 1_000, "第一句"),
+                    SubtitleSegment(1_000, 2_000, "第二句"),
+                ),
+            ),
+            audioDownloader = AudioDownloader { _, _, _, _ ->
+                downloads++
+                DownloadedAudio(temporaryFolder.newFile("audio.m4a"), 0, reused = false)
+            },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ): AsrOutput {
+                            transcriptions++
+                            return AsrOutput(emptyList(), 0)
+                        }
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+        )
+
+        val result = pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener { stages += it.stage },
+        )
+
+        assertEquals(0, downloads)
+        assertEquals(0, transcriptions)
+        assertEquals(AsrEngineKind.BILIBILI_SUBTITLE, result.benchmark.engine)
+        assertEquals(listOf("第一句", "第二句"), result.benchmark.segments.map { it.text })
+        assertTrue(SingleVideoStage.FETCHING_SUBTITLE in stages)
+        assertTrue(SingleVideoStage.TRANSCRIBING !in stages)
+        assertEquals(SingleVideoStage.COMPLETE, stages.last())
+    }
+
+    @Test
+    fun persistsSubtitleResultWithDistinctSignature() = runTest {
+        val repository = InMemoryResultRepository()
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = FakePlatformAdapter(
+                subtitles = listOf(SubtitleSegment(0, 1_000, "字幕")),
+            ),
+            audioDownloader = AudioDownloader { _, _, _, _ ->
+                DownloadedAudio(temporaryFolder.newFile("audio.m4a"), 0, reused = true)
+            },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ) = AsrOutput(emptyList(), 0)
+                    }
+                },
+                clock = SequenceClock(0, 1),
+            ),
+            resultRepository = repository,
+            wallClockEpochMs = SequenceEpochClock(1_000, 2_000)::next,
+        )
+
+        pipeline.run(
+            input = "BV1PS42197aM",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
+        )
+
+        val stored = repository.list().single()
+        assertEquals(AsrEngineKind.BILIBILI_SUBTITLE, stored.engine)
+        assertEquals("字幕", stored.segments.single().text)
+        assertEquals(1_000L, stored.createdAtEpochMs)
+        assertTrue(stored.configSignature != AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA).signature())
+    }
 }
 
-private class FakePlatformAdapter : VideoPlatformAdapter {
+private class FakePlatformAdapter(
+    private val subtitles: List<SubtitleSegment>? = null,
+) : VideoPlatformAdapter {
     override val platform = "bilibili"
 
     override fun parseReference(input: String) = canonicalReference()
@@ -444,6 +538,8 @@ private class FakePlatformAdapter : VideoPlatformAdapter {
         mimeType = "video/mp4",
         codecs = null,
     )
+
+    override suspend fun fetchSubtitles(metadata: VideoMetadata): List<SubtitleSegment>? = subtitles
 
     private fun canonicalReference() = VideoReference.Canonical(
         PlatformVideoId(platform, "BV1PS42197aM"),

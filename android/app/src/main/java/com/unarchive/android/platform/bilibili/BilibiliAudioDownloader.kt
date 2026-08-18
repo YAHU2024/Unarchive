@@ -1,5 +1,6 @@
 package com.unarchive.android.platform.bilibili
 
+import com.unarchive.android.log.AppLogger
 import com.unarchive.android.platform.AudioDownloader
 import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.DownloadProgressListener
@@ -58,6 +59,7 @@ class BilibiliAudioDownloader(
             destination.length() in 1..maximumBytes &&
             cachedMetadata?.isReusable(metadata, destination.length(), now, cacheLifetimeMs) == true
         ) {
+            AppLogger.info(TAG, "音频缓存复用 视频=${metadata.id.value} 大小=${destination.length()}字节")
             return DownloadedAudio(destination, destination.length(), reused = true)
         }
 
@@ -103,6 +105,7 @@ class BilibiliAudioDownloader(
                     metadataPartial = metadataPartial,
                     metadataDestination = cacheMetadataFile,
                 )
+                AppLogger.info(TAG, "音频下载完成 视频=${metadata.id.value} 大小=${byteCount}字节")
                 return DownloadedAudio(destination, byteCount, reused = false)
             } catch (error: CancellationException) {
                 partial.delete()
@@ -176,6 +179,7 @@ class BilibiliAudioDownloader(
     }
 
     private companion object {
+        const val TAG = "AudioDownload"
         const val PLATFORM = "bilibili"
         val BVID_PATTERN = Regex("BV[0-9A-Za-z]{10}")
         val DOWNLOAD_HEADERS = BilibiliHeaders.media

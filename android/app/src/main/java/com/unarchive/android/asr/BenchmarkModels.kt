@@ -1,5 +1,7 @@
 package com.unarchive.android.asr
 
+import com.unarchive.android.log.AppLogger
+
 data class ResourceSnapshot(
     val peakResidentMemoryBytes: Long? = null,
     val batteryDeltaPercent: Float? = null,
@@ -35,6 +37,7 @@ class BenchmarkRunner(
         require(engine.kind == config.engine) {
             "Engine provider returned ${engine.kind} for ${config.engine}"
         }
+        AppLogger.info(TAG, "基准测试开始 引擎=${engine.kind.name} 音频=${source.displayName}")
 
         val startedAt = clock.elapsedRealtimeMs()
         val output = engine.transcribe(source, config, progressListener)
@@ -45,6 +48,13 @@ class BenchmarkRunner(
             .takeIf { it > 0 }
             ?.let { elapsedMs.toDouble() / it }
 
+        AppLogger.info(
+            TAG,
+            "基准测试完成 引擎=${engine.kind.name} 耗时=${elapsedMs}ms " +
+                "音频=${output.audioDurationMs}ms 段数=${segments.size} " +
+                "实时率=${realTimeFactor?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "n/a"}",
+        )
+
         return BenchmarkResult(
             engine = engine.kind,
             processingDurationMs = elapsedMs,
@@ -53,5 +63,9 @@ class BenchmarkRunner(
             segments = segments,
             timings = output.timings,
         )
+    }
+
+    companion object {
+        private const val TAG = "AsrBenchmark"
     }
 }

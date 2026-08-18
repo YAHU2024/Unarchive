@@ -1,5 +1,6 @@
 package com.unarchive.android.asr
 
+import com.unarchive.android.log.AppLogger
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
@@ -15,6 +16,10 @@ class PreviewAsrEngine(
     ): AsrOutput {
         require(source.uri.isNotBlank()) { "Audio source URI cannot be blank" }
         require(config.engine == kind) { "Config engine must match the active engine" }
+        AppLogger.warn(
+            "PreviewAsrEngine",
+            "原生语音识别未接入（缺少 sherpa AAR），当前为模拟转写：${source.displayName}",
+        )
 
         repeat(10) { step ->
             coroutineContext.ensureActive()
