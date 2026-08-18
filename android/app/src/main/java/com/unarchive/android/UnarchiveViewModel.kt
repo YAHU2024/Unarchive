@@ -39,6 +39,10 @@ import com.unarchive.android.pipeline.SingleVideoStage
 import com.unarchive.android.pipeline.BatchRunSummary
 import com.unarchive.android.pipeline.BatchUnavailableException
 import com.unarchive.android.pipeline.BatchVideoProcessor
+import com.unarchive.android.pipeline.BatchManifest
+import com.unarchive.android.pipeline.BatchManifestItem
+import com.unarchive.android.pipeline.BatchManifestRepository
+import com.unarchive.android.pipeline.BatchItemState
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliApi
@@ -92,6 +96,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     )
     private val favoritesRepository = BilibiliFavoritesRepository(bilibiliApi)
     private val batchProcessor = BatchVideoProcessor()
+    private val batchManifestRepository = BatchManifestRepository(File(context.filesDir, "batch"))
     private val audioCacheDirectory = File(context.cacheDir, "bilibili-audio")
     private val audioDownloader = BilibiliAudioDownloader(audioCacheDirectory)
     private val videoPipeline = SingleVideoPipeline(
@@ -155,12 +160,17 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
     var batchSummary by mutableStateOf<BatchRunSummary?>(null)
         private set
+    var batchManifestItems by mutableStateOf<List<BatchManifestItem>>(emptyList())
+        private set
+    var batchRecoveryAvailable by mutableStateOf(false)
+        private set
 
     var runningJob by mutableStateOf<Job?>(null)
         private set
     var generateJob by mutableStateOf<Job?>(null)
         private set
     private var favoritesJob: Job? = null
+    private var activeBatchManifest: BatchManifest? = null
 
     private var lastProgressEmitMs = 0L
 
@@ -169,6 +179,21 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val savedAudioUri = prefs.getString("last_audio_uri", null)?.let(Uri::parse)
         selectedAudio = savedAudioUri
         selectedAudioName = savedAudioUri?.let { context.displayName(it) }
+        batchManifestRepository.load()?.let { manifest ->
+            if (manifest.unfinished()) {
+                val recovered = manifest.copy(
+                    items = manifest.items.map { item ->
+                        if (item.state == BatchItemState.RUNNING) item.copy(state = BatchItemState.QUEUED) else item
+                    },
+                )
+                activeBatchManifest = if (recovered != manifest) batchManifestRepository.save(recovered) else manifest
+                batchManifestItems = recovered.items
+                batchRecoveryAvailable = true
+                AppLogger.info(TAG, "发现可恢复批次 batchId=${recovered.batchId} folderId=${recovered.folderId}")
+            } else {
+                batchManifestRepository.delete()
+            }
+        }
         AppLogger.info(TAG, "视图模型已初始化")
     }
 
@@ -260,6 +285,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         favoriteVideos = emptyList()
         selectedFavoriteVideoIds = emptySet()
         batchSummary = null
+        batchManifestItems = emptyList()
+        batchRecoveryAvailable = false
+        activeBatchManifest = null
+        batchManifestRepository.delete()
         AppLogger.info(TAG, "B站已退出登录")
     }
 
@@ -294,7 +323,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             selectedFavoriteFolderId = folder.id
             favoriteVideos = emptyList()
             selectedFavoriteVideoIds = emptySet()
-            batchSummary = null
+                batchSummary = null
             try {
                 favoriteVideos = favoritesRepository.fetchVideos(folder.id)
                 val initiallyUnavailable = favoriteVideos.count { !it.isAvailable }
@@ -351,6 +380,20 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearFavoriteVideoSelection() {
         selectedFavoriteVideoIds = emptySet()
     }
+
+    fun abandonBatchRecovery() {
+        val manifest = activeBatchManifest ?: return
+        batchManifestRepository.delete()
+        activeBatchManifest = null
+        batchManifestItems = emptyList()
+        batchRecoveryAvailable = false
+        AppLogger.warn(TAG, "用户放弃批次 batchId=${manifest.batchId} folderId=${manifest.folderId}")
+        status = "已放弃未完成批次。"
+    }
+
+    fun resumeBatch() = runStoredBatch(setOf(BatchItemState.QUEUED, BatchItemState.CANCELLED))
+
+    fun retryFailedBatch() = runStoredBatch(setOf(BatchItemState.FAILED))
 
     fun selectStoredResult(stored: StoredVideoResult) {
         selectedStoredResult = stored
@@ -431,14 +474,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             status = "请先选择至少一个可用视频。"
             return
         }
-        val previousStoredResult = selectedStoredResult
         val config = currentAsrConfig()
-        result = null
-        videoResult = null
-        selectedStoredResult = null
-        progress = 0f
-        checkpointSegmentCount = 0
-        batchSummary = null
         val folderId = selectedFavoriteFolderId.orEmpty()
         AppLogger.info(
             TAG,
@@ -446,27 +482,79 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 "available=${favoriteVideos.count(BilibiliFavoriteVideo::isAvailable)} " +
                 "unavailable=${favoriteVideos.count { !it.isAvailable }} selected=${items.size}",
         )
+        val now = System.currentTimeMillis()
+        val manifest = BatchManifest(
+            batchId = java.util.UUID.randomUUID().toString(),
+            folderId = folderId,
+            configSignature = config.signature(),
+            createdAtEpochMs = now,
+            updatedAtEpochMs = now,
+            items = items.map { item ->
+                BatchManifestItem(item.videoId!!.value, item.canonicalUrl!!, item.title, BatchItemState.QUEUED, updatedAtEpochMs = now)
+            },
+        )
+        batchManifestRepository.save(manifest)
+        activeBatchManifest = manifest
+        batchManifestItems = manifest.items
+        batchRecoveryAvailable = false
+        runBatchManifest(manifest, setOf(BatchItemState.QUEUED))
+    }
+
+    private fun runStoredBatch(targetStates: Set<BatchItemState>) {
+        val manifest = activeBatchManifest
+        if (manifest == null) {
+            status = "没有可恢复的批次。"
+            return
+        }
+        if (manifest.configSignature != currentAsrConfig().signature()) {
+            AppLogger.warn(TAG, "批次配置不匹配，拒绝恢复 batchId=${manifest.batchId}")
+            status = "批次配置已变化，无法恢复。请重新创建批次。"
+            return
+        }
+        if (selectedFavoriteFolderId != manifest.folderId) {
+            status = "请先重新加载该收藏夹后再恢复批次。"
+            return
+        }
+        val items = favoriteVideos.filter { video ->
+            video.isAvailable && video.videoId?.value in manifest.items.filter { it.state in targetStates }.map { it.videoId }
+        }
+        if (items.isEmpty()) {
+            status = "没有可恢复的项目。"
+            return
+        }
+        batchRecoveryAvailable = false
+        runBatchManifest(manifest, targetStates)
+    }
+
+    private fun runBatchManifest(manifest: BatchManifest, targetStates: Set<BatchItemState>) {
+        val config = currentAsrConfig()
+        val items = favoriteVideos.filter { video ->
+            video.isAvailable && video.videoId?.value in manifest.items.filter { it.state in targetStates }.map { it.videoId }
+        }
+        result = null
+        videoResult = null
+        selectedStoredResult = null
+        progress = 0f
+        checkpointSegmentCount = 0
+        batchSummary = null
         runningJob = viewModelScope.launch {
             try {
                 val summary = batchProcessor.run(
                     items = items,
                     itemId = { it.videoId!!.value },
-                    batchContext = "folderId=$folderId",
+                    batchId = manifest.batchId,
+                    batchContext = "folderId=${manifest.folderId}",
                     shouldSkip = { item ->
                         resultRepository.find(VideoResultKey("bilibili", item.videoId!!.value))?.let {
                             it.configSignature == config.signature() || it.configSignature == "bilibili-subtitle"
                         } == true
                     },
+                    onItemState = { item, state, errorMessage, apiCode ->
+                        persistBatchItemState(item, state, errorMessage, apiCode)
+                    },
                     process = { item, index, total ->
                         val single = try {
-                            executeVideo(
-                                reference = item.canonicalUrl!!,
-                                forceRefreshAudio = false,
-                                config = config,
-                                statusPrefix = "批量 ${index + 1}/$total：",
-                                progressBase = index.toFloat() / total,
-                                progressSpan = 1f / total,
-                            )
+                            executeVideo(item.canonicalUrl!!, false, config, "批量 ${index + 1}/$total：", index.toFloat() / total, 1f / total)
                         } catch (error: BilibiliApiException) {
                             if (!error.isTerminalUnavailable) throw error
                             val reason = unavailableReason(error)
@@ -480,21 +568,36 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     },
                 )
                 batchSummary = summary
-                status = "批量完成：成功 ${summary.succeeded}，跳过 ${summary.skipped}，" +
-                    "不可用 ${summary.unavailable}，失败 ${summary.failed}。"
-                AppLogger.info(TAG, "批量结果已展示 batchId=${summary.batchId}")
+                status = "批量完成：成功 ${summary.succeeded}，跳过 ${summary.skipped}，不可用 ${summary.unavailable}，失败 ${summary.failed}。"
+                if (activeBatchManifest?.unfinished() != true) {
+                    batchManifestRepository.delete()
+                    activeBatchManifest = null
+                    batchManifestItems = emptyList()
+                    batchRecoveryAvailable = false
+                } else {
+                    batchRecoveryAvailable = true
+                }
             } catch (_: CancellationException) {
-                selectedStoredResult = previousStoredResult
-                status = "批量处理已取消。已完成的视频结果已保留。"
-                AppLogger.warn(TAG, "批量处理已取消")
+                status = "批量处理已取消。可从批次清单恢复。"
+                batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
             } catch (error: Exception) {
-                selectedStoredResult = previousStoredResult
                 status = error.message ?: "批量处理失败。"
                 AppLogger.error(TAG, "批量处理失败：${error.message}")
+                batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
             } finally {
                 runningJob = null
             }
         }
+    }
+
+    private fun persistBatchItemState(item: BilibiliFavoriteVideo, state: BatchItemState, errorMessage: String?, apiCode: Int?) {
+        val current = activeBatchManifest ?: return
+        val updated = current.withItem(
+            BatchManifestItem(item.videoId!!.value, item.canonicalUrl!!, item.title, state, errorMessage, apiCode),
+        )
+        activeBatchManifest = batchManifestRepository.save(updated)
+        batchManifestItems = updated.items
+        AppLogger.info(TAG, "批次 manifest 已保存 batchId=${updated.batchId} videoId=${item.videoId.value} state=$state")
     }
 
     private fun markFavoriteVideoUnavailable(videoId: String, reason: String) {

@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.log.AppLogger
 import com.unarchive.android.log.LogLevel
+import com.unarchive.android.pipeline.BatchItemState
 
 @Composable
 internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
@@ -60,6 +61,30 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Unarchive", style = MaterialTheme.typography.headlineMedium)
+
+        if (vm.batchRecoveryAvailable) {
+            Text("发现未完成批次", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "批次 ${vm.batchManifestItems.size} 项，恢复前请先重新加载对应收藏夹。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    enabled = vm.runningJob == null,
+                    onClick = { vm.resumeBatch() },
+                ) { Text("恢复排队项") }
+                if (vm.batchManifestItems.any { it.state == BatchItemState.FAILED }) {
+                    OutlinedButton(
+                        enabled = vm.runningJob == null,
+                        onClick = { vm.retryFailedBatch() },
+                    ) { Text("重试失败项") }
+                }
+                OutlinedButton(
+                    enabled = vm.runningJob == null,
+                    onClick = { vm.abandonBatchRecovery() },
+                ) { Text("放弃批次") }
+            }
+        }
 
         Text("B站视频测试", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
@@ -176,6 +201,21 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        vm.batchManifestItems
+            .filter { it.state == BatchItemState.FAILED || it.state == BatchItemState.UNAVAILABLE || it.state == BatchItemState.CANCELLED }
+            .forEach { item ->
+                Text(
+                    "${item.videoId} · ${batchStateText(item.state)}${item.errorMessage?.let { "：$it" } ?: ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (item.state == BatchItemState.UNAVAILABLE) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
         HorizontalDivider()
         Text("本地音频测试", style = MaterialTheme.typography.titleMedium)
@@ -228,6 +268,13 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
 
         MiniLogStrip(onOpenLogs = onOpenLogs)
     }
+}
+
+private fun batchStateText(state: BatchItemState): String = when (state) {
+    BatchItemState.FAILED -> "失败"
+    BatchItemState.UNAVAILABLE -> "不可用"
+    BatchItemState.CANCELLED -> "已取消"
+    else -> state.name
 }
 
 @Composable
