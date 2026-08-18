@@ -4,6 +4,9 @@ import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.TranscriptSegment
 import com.unarchive.android.pipeline.SingleVideoResult
 
+/** Platform marker for locally benchmarked audio results (no upstream video). */
+const val LOCAL_AUDIO_PLATFORM = "local-audio"
+
 data class VideoResultKey(
     val platform: String,
     val videoId: String,

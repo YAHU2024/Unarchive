@@ -7,7 +7,7 @@ class VideoCompletionStatusTest {
     @Test
     fun reportsCacheReuse() {
         assertEquals(
-            "Recognition complete. Audio cache reused and result saved locally.",
+            "识别完成。已复用音频缓存，结果已保存到本地。",
             videoCompletionStatus(reusedDownload = true, forceRefreshAudio = false),
         )
     }
@@ -15,7 +15,7 @@ class VideoCompletionStatusTest {
     @Test
     fun reportsExplicitRedownload() {
         assertEquals(
-            "Recognition complete. Audio redownloaded and result saved locally.",
+            "识别完成。已重新下载音频，结果已保存到本地。",
             videoCompletionStatus(reusedDownload = false, forceRefreshAudio = true),
         )
     }
@@ -23,7 +23,7 @@ class VideoCompletionStatusTest {
     @Test
     fun reportsOrdinaryDownload() {
         assertEquals(
-            "Recognition complete. Audio downloaded and result saved locally.",
+            "识别完成。音频已下载，结果已保存到本地。",
             videoCompletionStatus(reusedDownload = false, forceRefreshAudio = false),
         )
     }

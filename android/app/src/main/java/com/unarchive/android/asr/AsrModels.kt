@@ -4,17 +4,37 @@ enum class AsrEngineKind(
     val displayName: String,
     /** False when the engine is a declared option with no working implementation yet. */
     val available: Boolean,
+    /**
+     * True when this entry is a local ASR engine the user can pick in the
+     * benchmark engine selector. Non-ASR result sources (e.g. platform CC
+     * subtitles) are stored under this enum but must not appear in that
+     * selector.
+     */
+    val selectable: Boolean = true,
+    /**
+     * Coarse user-facing bucket shown in history / result listings instead of
+     * the technical engine name: 本地 / 云端 / 官方字幕.
+     */
+    val category: String,
 ) {
-    SENSE_VOICE_SHERPA("SenseVoice int8 / sherpa-onnx", available = true),
-    WHISPER_SHERPA("Whisper / sherpa-onnx", available = false),
-    WHISPER_CPP("Whisper / whisper.cpp", available = false),
+    SENSE_VOICE_SHERPA("SenseVoice int8 / sherpa-onnx", available = true, category = "本地"),
+    WHISPER_SHERPA("Whisper / sherpa-onnx", available = false, category = "本地"),
+    WHISPER_CPP("Whisper / whisper.cpp", available = false, category = "本地"),
+    SILICONFLOW_CLOUD("SiliconFlow SenseVoice / 云端", available = true, category = "云端"),
+    BILIBILI_SUBTITLE("B站官方字幕", available = true, selectable = false, category = "官方字幕"),
 }
 
 data class AsrConfig(
     val engine: AsrEngineKind,
     val language: String = "auto",
     val sampleRateHz: Int = 16_000,
-    val enableVad: Boolean = true,
+    /**
+     * Silero VAD speech detection. Defaulted OFF because the sherpa-onnx Vad
+     * native calls (`acceptWaveform` / `empty`) intermittently segfault
+     * (null-pointer, `DefaultDispatch` thread) during long runs, killing the
+     * app. Kept available for opt-in once the upstream bug is resolved.
+     */
+    val enableVad: Boolean = false,
     val contextPaddingMs: Int = 500,
     /** ONNX Runtime intra-op threads; null selects the device-aware default. */
     val numThreads: Int? = null,
