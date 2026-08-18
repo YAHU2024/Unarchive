@@ -49,6 +49,14 @@ class BatchManifestTest {
         assertEquals(false, manifest.unfinished())
     }
 
+    @Test
+    fun folderTitleIsOptionalAndRoundTrips() {
+        val repository = BatchManifestRepository(temporaryFolder.newFolder("titled-batch"))
+        val manifest = sampleManifest().copy(folderTitle = "我的收藏夹")
+        repository.save(manifest)
+        assertEquals("我的收藏夹", repository.load()?.folderTitle)
+    }
+
     private fun sampleManifest() = BatchManifest(
         batchId = "batch",
         folderId = "7",

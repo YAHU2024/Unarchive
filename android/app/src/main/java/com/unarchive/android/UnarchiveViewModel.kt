@@ -17,6 +17,7 @@ import com.unarchive.android.analyzer.CardAnalyzer
 import com.unarchive.android.asr.AndroidAsrEngineProvider
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngineKind
+import com.unarchive.android.asr.AsrEngineSelection
 import com.unarchive.android.asr.AsrProgressListener
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
@@ -53,6 +54,7 @@ import com.unarchive.android.platform.bilibili.BilibiliFavoritesRepository
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
 import com.unarchive.android.platform.bilibili.HttpsTextTransport
 import com.unarchive.android.platform.bilibili.isTerminalUnavailable
+import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.result.FileVideoResultRepository
 import com.unarchive.android.result.LOCAL_AUDIO_PLATFORM
 import com.unarchive.android.result.StoredVideoResult
@@ -129,7 +131,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var selectedAudioName by mutableStateOf<String?>(null)
         private set
 
-    var selectedEngine by mutableStateOf(AsrEngineKind.SENSE_VOICE_SHERPA)
+    var selectedEngine by mutableStateOf(loadPersistedEngine())
     var selectedThreads by mutableStateOf<Int?>(null)
     var selectedEnableVad by mutableStateOf(false)
     var selectedVadMaxSeconds by mutableIntStateOf(AsrConfig.DEFAULT_VAD_MAX_SPEECH_SECONDS)
@@ -165,6 +167,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var batchRecoveryAvailable by mutableStateOf(false)
         private set
 
+    val recoveryBatchFolderLabel: String
+        get() = activeBatchManifest?.folderTitle?.takeIf { it.isNotBlank() }
+            ?: activeBatchManifest?.folderId
+            ?: "未知"
+
     var runningJob by mutableStateOf<Job?>(null)
         private set
     var generateJob by mutableStateOf<Job?>(null)
@@ -176,6 +183,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         AppLogger.attachFileSink(File(context.filesDir, "logs"))
+        AppLogger.info(TAG, "识别引擎已恢复为 ${selectedEngine.name}（${selectedEngine.category}）")
         val savedAudioUri = prefs.getString("last_audio_uri", null)?.let(Uri::parse)
         selectedAudio = savedAudioUri
         selectedAudioName = savedAudioUri?.let { context.displayName(it) }
@@ -189,7 +197,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 activeBatchManifest = if (recovered != manifest) batchManifestRepository.save(recovered) else manifest
                 batchManifestItems = recovered.items
                 batchRecoveryAvailable = true
-                AppLogger.info(TAG, "发现可恢复批次 batchId=${recovered.batchId} folderId=${recovered.folderId}")
+                AppLogger.info(
+                    TAG,
+                    "发现可恢复批次 batchId=${recovered.batchId} folderId=${recovered.folderId} " +
+                        "manifestVersion=${recovered.schemaVersion} reason=unfinished",
+                )
             } else {
                 batchManifestRepository.delete()
             }
@@ -226,7 +238,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setEngine(engine: AsrEngineKind) {
+        if (!engine.available || !engine.selectable) {
+            AppLogger.warn(TAG, "忽略不可选识别引擎 ${engine.name}")
+            return
+        }
         selectedEngine = engine
+        prefs.edit().putString(PREF_SELECTED_ENGINE, engine.name).apply()
         AppLogger.info(TAG, "引擎已切换为 ${engine.name}")
     }
 
@@ -387,7 +404,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         activeBatchManifest = null
         batchManifestItems = emptyList()
         batchRecoveryAvailable = false
-        AppLogger.warn(TAG, "用户放弃批次 batchId=${manifest.batchId} folderId=${manifest.folderId}")
+        AppLogger.warn(
+            TAG,
+            "用户放弃批次 batchId=${manifest.batchId} folderId=${manifest.folderId} " +
+                "manifestVersion=${manifest.schemaVersion} reason=user_abandon",
+        )
         status = "已放弃未完成批次。"
     }
 
@@ -486,6 +507,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val manifest = BatchManifest(
             batchId = java.util.UUID.randomUUID().toString(),
             folderId = folderId,
+            folderTitle = favoriteFolders.firstOrNull { it.id == folderId }?.title,
             configSignature = config.signature(),
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
@@ -507,30 +529,33 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         if (manifest.configSignature != currentAsrConfig().signature()) {
-            AppLogger.warn(TAG, "批次配置不匹配，拒绝恢复 batchId=${manifest.batchId}")
+            AppLogger.warn(
+                TAG,
+                "批次配置不匹配，拒绝恢复 batchId=${manifest.batchId} folderId=${manifest.folderId} " +
+                    "manifestVersion=${manifest.schemaVersion} reason=config_mismatch",
+            )
             status = "批次配置已变化，无法恢复。请重新创建批次。"
             return
         }
-        if (selectedFavoriteFolderId != manifest.folderId) {
-            status = "请先重新加载该收藏夹后再恢复批次。"
-            return
-        }
-        val items = favoriteVideos.filter { video ->
-            video.isAvailable && video.videoId?.value in manifest.items.filter { it.state in targetStates }.map { it.videoId }
-        }
-        if (items.isEmpty()) {
+        if (manifest.items.none { it.state in targetStates }) {
             status = "没有可恢复的项目。"
             return
         }
         batchRecoveryAvailable = false
+        AppLogger.info(
+            TAG,
+            "用户确认恢复批次 batchId=${manifest.batchId} folderId=${manifest.folderId} " +
+                "manifestVersion=${manifest.schemaVersion} targetStates=${targetStates.joinToString(",")} " +
+                "reason=user_confirm",
+        )
         runBatchManifest(manifest, targetStates)
     }
 
     private fun runBatchManifest(manifest: BatchManifest, targetStates: Set<BatchItemState>) {
         val config = currentAsrConfig()
-        val items = favoriteVideos.filter { video ->
-            video.isAvailable && video.videoId?.value in manifest.items.filter { it.state in targetStates }.map { it.videoId }
-        }
+        val items = manifest.items
+            .filter { it.state in targetStates }
+            .map { it.toFavoriteVideo(manifest.folderId) }
         result = null
         videoResult = null
         selectedStoredResult = null
@@ -597,7 +622,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         )
         activeBatchManifest = batchManifestRepository.save(updated)
         batchManifestItems = updated.items
-        AppLogger.info(TAG, "批次 manifest 已保存 batchId=${updated.batchId} videoId=${item.videoId.value} state=$state")
+        AppLogger.info(
+            TAG,
+            "批次 manifest 已保存 batchId=${updated.batchId} folderId=${updated.folderId} " +
+                "manifestVersion=${updated.schemaVersion} videoId=${item.videoId.value} state=$state " +
+                "reason=state_transition",
+        )
     }
 
     private fun markFavoriteVideoUnavailable(videoId: String, reason: String) {
@@ -829,5 +859,18 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     companion object {
         private const val TAG = "UnarchiveViewModel"
+        private const val PREF_SELECTED_ENGINE = "selected_asr_engine"
     }
+
+    private fun loadPersistedEngine(): AsrEngineKind = prefs.getString(PREF_SELECTED_ENGINE, null)
+        .let(AsrEngineSelection::fromPersistedName)
+
+    private fun BatchManifestItem.toFavoriteVideo(folderId: String): BilibiliFavoriteVideo =
+        BilibiliFavoriteVideo(
+            folderId = folderId,
+            title = title,
+            videoId = PlatformVideoId("bilibili", videoId),
+            durationSeconds = null,
+            author = "",
+        )
 }

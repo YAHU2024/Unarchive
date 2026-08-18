@@ -22,6 +22,7 @@ data class BatchManifest(
     val schemaVersion: Int = SCHEMA_VERSION,
     val batchId: String,
     val folderId: String,
+    val folderTitle: String? = null,
     val configSignature: String,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
@@ -92,6 +93,7 @@ private fun BatchManifest.toJson() = JSONObject()
     .put("schema_version", schemaVersion)
     .put("batch_id", batchId)
     .put("folder_id", folderId)
+    .put("folder_title", folderTitle)
     .put("config_signature", configSignature)
     .put("created_at_epoch_ms", createdAtEpochMs)
     .put("updated_at_epoch_ms", updatedAtEpochMs)
@@ -129,6 +131,7 @@ private fun JSONObject.toManifest(): BatchManifest {
         schemaVersion = getInt("schema_version"),
         batchId = getString("batch_id"),
         folderId = getString("folder_id"),
+        folderTitle = optString("folder_title").takeIf { it.isNotBlank() },
         configSignature = getString("config_signature"),
         createdAtEpochMs = getLong("created_at_epoch_ms"),
         updatedAtEpochMs = getLong("updated_at_epoch_ms"),

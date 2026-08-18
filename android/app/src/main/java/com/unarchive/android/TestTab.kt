@@ -65,7 +65,7 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         if (vm.batchRecoveryAvailable) {
             Text("发现未完成批次", style = MaterialTheme.typography.titleMedium)
             Text(
-                "批次 ${vm.batchManifestItems.size} 项，恢复前请先重新加载对应收藏夹。",
+                "批次 ${vm.batchManifestItems.size} 项（收藏夹 ${vm.recoveryBatchFolderLabel}），可直接恢复。",
                 style = MaterialTheme.typography.bodySmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
