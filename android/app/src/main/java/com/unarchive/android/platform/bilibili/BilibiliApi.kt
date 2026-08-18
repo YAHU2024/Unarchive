@@ -1,18 +1,30 @@
 package com.unarchive.android.platform.bilibili
 
+import com.unarchive.android.log.AppLogger
 import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.PlatformVideoId
+import com.unarchive.android.platform.SubtitleSegment
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.VideoStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import org.json.JSONArray
 import org.json.JSONObject
 
 fun interface TextTransport {
     suspend fun get(url: String, headers: Map<String, String>): String
 }
 
-class BilibiliApi(private val transport: TextTransport) {
+class BilibiliApi(
+    private val transport: TextTransport,
+    private val subtitleTransport: TextTransport = HttpsSubtitleTransport(),
+    private val cookieHeader: () -> String = { "" },
+) {
+    /** Adds the login `Cookie` header when a session is present. */
+    private fun headers(base: Map<String, String>): Map<String, String> {
+        val cookie = cookieHeader()
+        return if (cookie.isBlank()) base else base + ("Cookie" to cookie)
+    }
     suspend fun fetchMetadata(id: PlatformVideoId): VideoMetadata {
         require(id.platform == PLATFORM) { "Unsupported platform: ${id.platform}" }
         val identityQuery = when {
@@ -21,7 +33,7 @@ class BilibiliApi(private val transport: TextTransport) {
             else -> throw IllegalArgumentException("Unsupported Bilibili video ID")
         }
         val root = responseRoot(
-            transport.get("$API_BASE/x/web-interface/view?$identityQuery", DEFAULT_HEADERS),
+            transport.get("$API_BASE/x/web-interface/view?$identityQuery", headers(DEFAULT_HEADERS)),
             "metadata",
         )
         val data = root.requiredObject("data", "Bilibili metadata is missing")
@@ -42,6 +54,123 @@ class BilibiliApi(private val transport: TextTransport) {
         )
     }
 
+    /**
+     * Fetches the video's CC/AI subtitles, or returns null when there are none
+     * or they cannot be fetched.
+     *
+     * Two sources, in order: the view endpoint's `data.subtitle.list` (human
+     * CC subtitles, no login needed), then `/x/player/wbi/v2`'s
+     * `data.subtitle.subtitles` (AI subtitles, requires a login session). The
+     * chosen track's JSON is downloaded and its `body[].{from,to,content}`
+     * cues (seconds) are mapped to millisecond segments.
+     *
+     * All failures are swallowed and reported as null so callers fall back to
+     * local ASR instead of surfacing a hard error.
+     */
+    suspend fun fetchSubtitles(metadata: VideoMetadata): List<SubtitleSegment>? {
+        require(metadata.id.platform == PLATFORM && BVID_PATTERN.matches(metadata.id.value)) {
+            "Bilibili subtitle fetch requires a canonical BV ID"
+        }
+        return try {
+            fetchSubtitlesOrNull(metadata)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun fetchSubtitlesOrNull(metadata: VideoMetadata): List<SubtitleSegment>? {
+        val viewUrl = "$API_BASE/x/web-interface/view?bvid=${encode(metadata.id.value)}"
+        val root = responseRoot(transport.get(viewUrl, headers(DEFAULT_HEADERS)), "subtitle")
+        val data = root.optJSONObject("data") ?: return null
+
+        // Source 1: human-uploaded CC subtitles (no login needed).
+        // The view endpoint only returns subtitle metadata for AI tracks
+        // (real `subtitle_url` is empty); drop those and fall through to
+        // wbi/v2, which is the authoritative source for download URLs.
+        var tracks = data.optJSONObject("subtitle")?.optJSONArray("list")
+        if (tracks != null && tracks.length() > 0) {
+            val withUrl = JSONArray()
+            for (i in 0 until tracks.length()) {
+                val track = tracks.optJSONObject(i) ?: continue
+                if (track.optString("subtitle_url").isNotBlank()) withUrl.put(track)
+            }
+            tracks = if (withUrl.length() > 0) withUrl else null
+        }
+        // Source 2: AI subtitles from wbi/v2 (requires a login session).
+        if (tracks == null || tracks.length() == 0) {
+            val aid = data.optLong("aid", -1)
+            if (aid > 0) tracks = fetchWbiSubtitleTracks(aid, metadata.cid)
+            AppLogger.info("BilibiliApi", "wbi/v2 后的字幕轨数：${tracks?.length() ?: 0}")
+        }
+        if (tracks == null || tracks.length() == 0) return null
+
+        val subtitleUrl = selectSubtitleUrl(tracks) ?: return null
+        val normalized = if (subtitleUrl.startsWith("//")) "https:$subtitleUrl" else subtitleUrl
+
+        val body = subtitleTransport.get(normalized, headers(BilibiliHeaders.api))
+        val items = runCatching { JSONObject(body).optJSONArray("body") }.getOrNull() ?: return null
+        if (items.length() == 0) return null
+
+        val segments = mutableListOf<SubtitleSegment>()
+        for (index in 0 until items.length()) {
+            val item = items.optJSONObject(index) ?: continue
+            val text = item.optString("content", "").trim()
+            if (text.isEmpty()) continue
+            val startMs = (item.optDouble("from", 0.0) * 1_000).toLong().coerceAtLeast(0)
+            val endMs = (item.optDouble("to", 0.0) * 1_000).toLong()
+            if (endMs <= startMs) continue
+            segments += SubtitleSegment(startMs, endMs, text)
+        }
+        return segments.takeIf { it.isNotEmpty() }
+    }
+
+    /** Queries `/x/player/wbi/v2` (WBI-signed) for AI subtitle tracks. */
+    private suspend fun fetchWbiSubtitleTracks(aid: Long, cid: Long): JSONArray? {
+        val keys = fetchWbiKeys() ?: return null
+        val mixinKey = WbiSigner.mixinKey(keys.first, keys.second)
+        val query = WbiSigner.sign(
+            params = mapOf("aid" to aid.toString(), "cid" to cid.toString()),
+            mixinKey = mixinKey,
+            wts = System.currentTimeMillis() / 1_000,
+        )
+        val root = responseRoot(
+            transport.get("$API_BASE/x/player/wbi/v2?$query", headers(DEFAULT_HEADERS)),
+            "subtitle",
+        )
+        return root.optJSONObject("data")
+            ?.optJSONObject("subtitle")
+            ?.optJSONArray("subtitles")
+    }
+
+    /** Fetches the WBI signing keys from `/x/web-interface/nav`. */
+    private suspend fun fetchWbiKeys(): Pair<String, String>? {
+        val root = responseRoot(
+            transport.get("$API_BASE/x/web-interface/nav", headers(DEFAULT_HEADERS)),
+            "wbi keys",
+        )
+        val nav = root.optJSONObject("data")
+        AppLogger.info("BilibiliApi", "登录状态=${nav?.optBoolean("isLogin")}，用户名=${nav?.optString("uname")}")
+        val wbiImg = nav?.optJSONObject("wbi_img") ?: return null
+        val imgUrl = wbiImg.optString("img_url")
+        val subUrl = wbiImg.optString("sub_url")
+        if (imgUrl.isBlank() || subUrl.isBlank()) return null
+        val imgKey = imgUrl.substringAfterLast('/').substringBefore('.')
+        val subKey = subUrl.substringAfterLast('/').substringBefore('.')
+        return imgKey to subKey
+    }
+
+    private fun selectSubtitleUrl(tracks: JSONArray): String? {
+        var first: String? = null
+        for (index in 0 until tracks.length()) {
+            val track = tracks.optJSONObject(index) ?: continue
+            val url = track.optString("subtitle_url", "").takeIf(String::isNotBlank) ?: continue
+            val lan = track.optString("lan", "")
+            if (first == null) first = url
+            if (lan.startsWith("zh") || lan.startsWith("ai-zh")) return url
+        }
+        return first
+    }
+
     suspend fun resolveAudio(metadata: VideoMetadata): AudioStream {
         require(metadata.id.platform == PLATFORM && BVID_PATTERN.matches(metadata.id.value)) {
             "Bilibili audio resolution requires a canonical BV ID"
@@ -49,7 +178,7 @@ class BilibiliApi(private val transport: TextTransport) {
         require(metadata.cid > 0) { "Bilibili audio resolution requires a valid cid" }
         val query = "bvid=${encode(metadata.id.value)}&cid=${metadata.cid}&fnval=16&fnver=0&fourk=1"
         val root = responseRoot(
-            transport.get("$API_BASE/x/player/playurl?$query", PLAYURL_HEADERS),
+            transport.get("$API_BASE/x/player/playurl?$query", headers(PLAYURL_HEADERS)),
             "audio stream",
         )
         val audio = root.optJSONObject("data")
@@ -87,7 +216,7 @@ class BilibiliApi(private val transport: TextTransport) {
         require(metadata.cid > 0) { "Bilibili video resolution requires a valid cid" }
         val query = "bvid=${encode(metadata.id.value)}&cid=${metadata.cid}&fnval=16&fnver=0&fourk=1"
         val root = responseRoot(
-            transport.get("$API_BASE/x/player/playurl?$query", PLAYURL_HEADERS),
+            transport.get("$API_BASE/x/player/playurl?$query", headers(PLAYURL_HEADERS)),
             "video stream",
         )
         val video = root.optJSONObject("data")

@@ -5,6 +5,7 @@
     <application
         android:allowBackup="false"
         android:label="Unarchive ASR Lab"
+        android:largeHeap="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.Unarchive">
         <activity

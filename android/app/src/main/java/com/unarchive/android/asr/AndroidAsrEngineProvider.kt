@@ -5,9 +5,15 @@ import com.unarchive.android.BuildConfig
 
 class AndroidAsrEngineProvider(
     private val context: Context,
+    private val siliconFlowKeyStore: SiliconFlowKeyStore = SiliconFlowKeyStore(context),
 ) : AsrEngineProvider {
     override fun create(kind: AsrEngineKind): AsrEngine {
         requireAvailable(kind)
+        if (kind == AsrEngineKind.SILICONFLOW_CLOUD) {
+            val apiKey = siliconFlowKeyStore.get()
+                ?: throw IllegalStateException("请先在上方配置 SiliconFlow API Key")
+            return CloudAsrEngine(context, SiliconFlowAsrClient(apiKey))
+        }
         if (kind != AsrEngineKind.SENSE_VOICE_SHERPA || !BuildConfig.SHERPA_ENABLED) {
             return PreviewAsrEngine(kind)
         }

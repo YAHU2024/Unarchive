@@ -5,6 +5,7 @@ import com.unarchive.android.platform.VideoReference
 import com.unarchive.android.platform.VideoMetadata
 import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.VideoStream
+import com.unarchive.android.platform.SubtitleSegment
 
 class BilibiliPlatformAdapter(
     private val redirectResolver: BilibiliRedirectResolver = BilibiliRedirectResolver(
@@ -30,4 +31,7 @@ class BilibiliPlatformAdapter(
 
     override suspend fun resolveVideo(metadata: VideoMetadata): VideoStream =
         api.resolveVideo(metadata)
+
+    override suspend fun fetchSubtitles(metadata: VideoMetadata): List<SubtitleSegment>? =
+        api.fetchSubtitles(metadata)
 }

@@ -1,6 +1,7 @@
 package com.unarchive.android.platform.bilibili
 
 import com.unarchive.android.platform.PlatformVideoId
+import com.unarchive.android.platform.SubtitleSegment
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -80,6 +81,104 @@ class BilibiliApiTest {
                 runTest { api.resolveAudio(sampleMetadata()) }
             }
         }
+    }
+
+    @Test
+    fun fetchesChineseCcSubtitleAndMapsSecondsToMilliseconds() = runTest {
+        var subtitleUrl = ""
+        val api = BilibiliApi(
+            TextTransport { _, _ ->
+                """{"code":0,"data":{"subtitle":{"list":[
+                    {"lan":"en","lan_doc":"英语","subtitle_url":"//aisubtitle.hdslb.com/en.json"},
+                    {"lan":"zh-CN","lan_doc":"中文（自动生成）","subtitle_url":"//aisubtitle.hdslb.com/zh.json"}
+                ]}}}"""
+            },
+            TextTransport { url, _ ->
+                subtitleUrl = url
+                """{"body":[{"from":0.0,"to":2.5,"content":"第一句"},{"from":2.5,"to":5.0,"content":"第二句"}]}"""
+            },
+        )
+
+        val result = api.fetchSubtitles(sampleMetadata())
+
+        assertEquals("https://aisubtitle.hdslb.com/zh.json", subtitleUrl)
+        assertEquals(2, result?.size)
+        assertEquals(SubtitleSegment(0, 2_500, "第一句"), result!![0])
+        assertEquals(SubtitleSegment(2_500, 5_000, "第二句"), result[1])
+    }
+
+    @Test
+    fun fetchesAiSubtitleViaWbiV2WhenViewHasNoCc() = runTest {
+        var subtitleUrl = ""
+        val api = BilibiliApi(
+            TextTransport { url, _ ->
+                when {
+                    url.contains("/x/web-interface/view") ->
+                        """{"code":0,"data":{"aid":515345690,"cid":825851971,"subtitle":{"list":[]}}}"""
+                    url.contains("/x/web-interface/nav") ->
+                        """{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}"""
+                    url.contains("/x/player/wbi/v2") ->
+                        """{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"ai-zh","subtitle_url":"//aisubtitle.hdslb.com/ai.json"}]}}}"""
+                    else -> throw IllegalArgumentException("unexpected url: $url")
+                }
+            },
+            TextTransport { url, _ ->
+                subtitleUrl = url
+                """{"body":[{"from":0.0,"to":3.0,"content":"AI字幕"}]}"""
+            },
+        )
+
+        val result = api.fetchSubtitles(sampleMetadata())
+
+        assertEquals("https://aisubtitle.hdslb.com/ai.json", subtitleUrl)
+        assertEquals(SubtitleSegment(0, 3_000, "AI字幕"), result?.single())
+    }
+
+    @Test
+    fun returnsNullWhenNoSubtitlesAnywhere() = runTest {
+        val api = BilibiliApi(
+            TextTransport { url, _ ->
+                when {
+                    url.contains("/x/web-interface/view") ->
+                        """{"code":0,"data":{"aid":1,"cid":1,"subtitle":{"list":[]}}}"""
+                    url.contains("/x/web-interface/nav") ->
+                        """{"code":0,"data":{"wbi_img":{"img_url":"https://x/i.png","sub_url":"https://x/s.png"}}}"""
+                    url.contains("/x/player/wbi/v2") ->
+                        """{"code":0,"data":{"subtitle":{"subtitles":[]}}}"""
+                    else -> throw IllegalArgumentException("unexpected url: $url")
+                }
+            },
+        )
+
+        assertEquals(null, api.fetchSubtitles(sampleMetadata()))
+    }
+
+    @Test
+    fun returnsNullWhenSubtitleDownloadFails() = runTest {
+        val api = BilibiliApi(
+            TextTransport { _, _ ->
+                """{"code":0,"data":{"subtitle":{"list":[{"lan":"zh-CN","subtitle_url":"//aisubtitle.hdslb.com/zh.json"}]}}}"""
+            },
+            TextTransport { _, _ -> throw IllegalArgumentException("boom") },
+        )
+
+        assertEquals(null, api.fetchSubtitles(sampleMetadata()))
+    }
+
+    @Test
+    fun clampsNegativeSubtitleStartToZero() = runTest {
+        val api = BilibiliApi(
+            TextTransport { _, _ ->
+                """{"code":0,"data":{"subtitle":{"list":[{"lan":"zh-CN","subtitle_url":"//aisubtitle.hdslb.com/zh.json"}]}}}"""
+            },
+            TextTransport { _, _ ->
+                """{"body":[{"from":-0.5,"to":2.0,"content":"开头"}]}"""
+            },
+        )
+
+        val result = api.fetchSubtitles(sampleMetadata())
+
+        assertEquals(SubtitleSegment(0, 2_000, "开头"), result?.single())
     }
 
     private suspend fun sampleMetadata() =
