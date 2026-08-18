@@ -36,9 +36,14 @@ import com.unarchive.android.pipeline.SingleVideoPipeline
 import com.unarchive.android.pipeline.SingleVideoProgressListener
 import com.unarchive.android.pipeline.SingleVideoResult
 import com.unarchive.android.pipeline.SingleVideoStage
+import com.unarchive.android.pipeline.BatchRunSummary
+import com.unarchive.android.pipeline.BatchVideoProcessor
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliApi
+import com.unarchive.android.platform.bilibili.BilibiliFavoriteFolder
+import com.unarchive.android.platform.bilibili.BilibiliFavoriteVideo
+import com.unarchive.android.platform.bilibili.BilibiliFavoritesRepository
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
 import com.unarchive.android.platform.bilibili.HttpsTextTransport
 import com.unarchive.android.result.FileVideoResultRepository
@@ -77,10 +82,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         FileTranscriptionCheckpointRepository(File(context.filesDir, "transcription-checkpoints"))
     private val localAudioRunner = LocalAudioCheckpointRunner(runner, checkpointRepository)
     val authStore = BilibiliAuthStore(context)
+    private val bilibiliApi = BilibiliApi(HttpsTextTransport(), cookieHeader = authStore::cookieHeader)
     val loginClient = BilibiliLoginClient()
     val platformAdapter = BilibiliPlatformAdapter(
-        api = BilibiliApi(HttpsTextTransport(), cookieHeader = authStore::cookieHeader),
+        api = bilibiliApi,
     )
+    private val favoritesRepository = BilibiliFavoritesRepository(bilibiliApi)
+    private val batchProcessor = BatchVideoProcessor()
     private val audioCacheDirectory = File(context.cacheDir, "bilibili-audio")
     private val audioDownloader = BilibiliAudioDownloader(audioCacheDirectory)
     private val videoPipeline = SingleVideoPipeline(
@@ -132,10 +140,24 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var selectedStoredResult by mutableStateOf(storedResults.firstOrNull())
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
 
+    var favoriteFolders by mutableStateOf<List<BilibiliFavoriteFolder>>(emptyList())
+        private set
+    var selectedFavoriteFolderId by mutableStateOf<String?>(null)
+        private set
+    var favoriteVideos by mutableStateOf<List<BilibiliFavoriteVideo>>(emptyList())
+        private set
+    var selectedFavoriteVideoIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+    var favoritesLoading by mutableStateOf(false)
+        private set
+    var batchSummary by mutableStateOf<BatchRunSummary?>(null)
+        private set
+
     var runningJob by mutableStateOf<Job?>(null)
         private set
     var generateJob by mutableStateOf<Job?>(null)
         private set
+    private var favoritesJob: Job? = null
 
     private var lastProgressEmitMs = 0L
 
@@ -229,7 +251,83 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun onLoggedOut() {
         loggedIn = false
+        favoritesJob?.cancel()
+        favoriteFolders = emptyList()
+        selectedFavoriteFolderId = null
+        favoriteVideos = emptyList()
+        selectedFavoriteVideoIds = emptySet()
+        batchSummary = null
         AppLogger.info(TAG, "B站已退出登录")
+    }
+
+    fun loadFavoriteFolders() {
+        if (favoritesLoading) return
+        favoritesJob?.cancel()
+        favoritesJob = viewModelScope.launch {
+            favoritesLoading = true
+            try {
+                favoriteFolders = favoritesRepository.fetchFolders()
+                selectedFavoriteFolderId = null
+                favoriteVideos = emptyList()
+                selectedFavoriteVideoIds = emptySet()
+                batchSummary = null
+                status = if (favoriteFolders.isEmpty()) "未找到收藏夹。" else "已获取 ${favoriteFolders.size} 个收藏夹。"
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                status = "获取收藏夹失败：${error.message ?: "请确认登录状态后重试"}"
+                AppLogger.warn(TAG, "获取收藏夹失败：${error.message}")
+            } finally {
+                favoritesLoading = false
+                favoritesJob = null
+            }
+        }
+    }
+
+    fun loadFavoriteVideos(folder: BilibiliFavoriteFolder) {
+        favoritesJob?.cancel()
+        favoritesJob = viewModelScope.launch {
+            favoritesLoading = true
+            selectedFavoriteFolderId = folder.id
+            favoriteVideos = emptyList()
+            selectedFavoriteVideoIds = emptySet()
+            batchSummary = null
+            try {
+                favoriteVideos = favoritesRepository.fetchVideos(folder.id)
+                status = "已获取收藏夹“${folder.title}”中的 ${favoriteVideos.size} 个视频。"
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                status = "获取收藏夹视频失败：${error.message ?: "请稍后重试"}"
+                AppLogger.warn(TAG, "获取收藏夹视频失败：${error.message}")
+            } finally {
+                favoritesLoading = false
+                favoritesJob = null
+            }
+        }
+    }
+
+    fun selectFavoriteVideo(video: BilibiliFavoriteVideo) {
+        val url = video.canonicalUrl ?: return
+        videoReference = url
+        status = "已选择：${video.title}，点击“处理视频”开始。"
+    }
+
+    fun toggleFavoriteVideo(video: BilibiliFavoriteVideo) {
+        val id = video.videoId?.value ?: return
+        selectedFavoriteVideoIds = if (id in selectedFavoriteVideoIds) {
+            selectedFavoriteVideoIds - id
+        } else {
+            selectedFavoriteVideoIds + id
+        }
+    }
+
+    fun selectAllAvailableFavoriteVideos() {
+        selectedFavoriteVideoIds = favoriteVideos.mapNotNull { it.videoId?.value }.toSet()
+    }
+
+    fun clearFavoriteVideoSelection() {
+        selectedFavoriteVideoIds = emptySet()
     }
 
     fun selectStoredResult(stored: StoredVideoResult) {
@@ -256,30 +354,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         AppLogger.info(TAG, "开始处理视频：$reference（强制刷新=$forceRefreshAudio）")
         runningJob = viewModelScope.launch {
             try {
-                videoResult = videoPipeline.run(
-                    input = reference,
-                    config = AsrConfig(
-                        engine = selectedEngine,
-                        numThreads = selectedThreads,
-                        enableVad = selectedEnableVad,
-                        vadMaxSpeechSeconds = selectedVadMaxSeconds,
-                    ),
-                    forceRefreshAudio = forceRefreshAudio,
-                    progressListener = SingleVideoProgressListener { update ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (update.stage == SingleVideoStage.COMPLETE ||
-                            now - lastProgressEmitMs >= PROGRESS_EMIT_INTERVAL_MS
-                        ) {
-                            lastProgressEmitMs = now
-                            progress = advanceProgress(progress, update.overallProgress)
-                        }
-                        status = update.stage.displayText
-                    },
-                    checkpointListener = { count ->
-                        checkpointSegmentCount = count
-                        if (count > 0) AppLogger.info(TAG, "检查点已保存：$count 段")
-                    },
-                )
+                videoResult = executeVideo(reference, forceRefreshAudio)
                 result = videoResult?.benchmark
                 storedResults = resultRepository.list()
                 selectedStoredResult = videoResult?.storedResult
@@ -317,6 +392,107 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 runningJob = null
             }
         }
+    }
+
+    fun startBatch() {
+        if (runningJob != null) return
+        if (
+            BuildConfig.SHERPA_ENABLED &&
+            selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
+            !modelRepository.allInstalled()
+        ) {
+            status = "模型未安装。请先到「设置」中安装模型。"
+            return
+        }
+        val items = favoriteVideos.filter { it.isAvailable && it.videoId?.value in selectedFavoriteVideoIds }
+        if (items.isEmpty()) {
+            status = "请先选择至少一个可用视频。"
+            return
+        }
+        val previousStoredResult = selectedStoredResult
+        val config = currentAsrConfig()
+        result = null
+        videoResult = null
+        selectedStoredResult = null
+        progress = 0f
+        checkpointSegmentCount = 0
+        batchSummary = null
+        runningJob = viewModelScope.launch {
+            try {
+                val summary = batchProcessor.run(
+                    items = items,
+                    itemId = { it.videoId!!.value },
+                    shouldSkip = { item ->
+                        resultRepository.find(VideoResultKey("bilibili", item.videoId!!.value))?.let {
+                            it.configSignature == config.signature() || it.configSignature == "bilibili-subtitle"
+                        } == true
+                    },
+                    process = { item, index, total ->
+                        val single = executeVideo(
+                            reference = item.canonicalUrl!!,
+                            forceRefreshAudio = false,
+                            config = config,
+                            statusPrefix = "批量 ${index + 1}/$total：",
+                            progressBase = index.toFloat() / total,
+                            progressSpan = 1f / total,
+                        )
+                        videoResult = single
+                        result = single.benchmark
+                        selectedStoredResult = single.storedResult
+                        storedResults = resultRepository.list()
+                    },
+                )
+                batchSummary = summary
+                status = "批量完成：成功 ${summary.succeeded}，跳过 ${summary.skipped}，失败 ${summary.failed}。"
+                AppLogger.info(TAG, "批量结果已展示 batchId=${summary.batchId}")
+            } catch (_: CancellationException) {
+                selectedStoredResult = previousStoredResult
+                status = "批量处理已取消。已完成的视频结果已保留。"
+                AppLogger.warn(TAG, "批量处理已取消")
+            } catch (error: Exception) {
+                selectedStoredResult = previousStoredResult
+                status = error.message ?: "批量处理失败。"
+                AppLogger.error(TAG, "批量处理失败：${error.message}")
+            } finally {
+                runningJob = null
+            }
+        }
+    }
+
+    private fun currentAsrConfig() = AsrConfig(
+        engine = selectedEngine,
+        numThreads = selectedThreads,
+        enableVad = selectedEnableVad,
+        vadMaxSpeechSeconds = selectedVadMaxSeconds,
+    )
+
+    private suspend fun executeVideo(
+        reference: String,
+        forceRefreshAudio: Boolean,
+        config: AsrConfig? = null,
+        statusPrefix: String = "",
+        progressBase: Float = 0f,
+        progressSpan: Float = 1f,
+    ): SingleVideoResult {
+        return videoPipeline.run(
+            input = reference,
+            config = config ?: currentAsrConfig(),
+            forceRefreshAudio = forceRefreshAudio,
+            progressListener = SingleVideoProgressListener { update ->
+                val now = SystemClock.elapsedRealtime()
+                if (update.stage == SingleVideoStage.COMPLETE ||
+                    now - lastProgressEmitMs >= PROGRESS_EMIT_INTERVAL_MS
+                ) {
+                    lastProgressEmitMs = now
+                    progress = advanceProgress(progress, progressBase + update.overallProgress * progressSpan)
+                }
+                status = statusPrefix + update.stage.displayText
+            },
+            checkpointListener = { count ->
+                checkpointSegmentCount = count
+                if (count > 0) AppLogger.info(TAG, "检查点已保存：$count 段")
+            },
+        )
     }
 
     fun startLocalAudio() {

@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +75,105 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
             onClick = { vm.processVideo(vm.videoReference) },
         ) {
             Text("处理视频")
+        }
+
+        Text("从 B 站收藏夹选择", style = MaterialTheme.typography.titleSmall)
+        OutlinedButton(
+            enabled = vm.loggedIn && !vm.favoritesLoading && vm.runningJob == null,
+            onClick = { vm.loadFavoriteFolders() },
+        ) {
+            Text(if (vm.favoriteFolders.isEmpty()) "获取收藏夹" else "刷新收藏夹")
+        }
+        if (!vm.loggedIn) {
+            Text(
+                "请先在设置中登录 B 站。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        vm.favoriteFolders.forEach { folder ->
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !vm.favoritesLoading && vm.runningJob == null,
+                onClick = { vm.loadFavoriteVideos(folder) },
+            ) {
+                Text("${folder.title}（${folder.videoCount}）", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (vm.favoritesLoading) {
+            Text("正在获取收藏夹...", style = MaterialTheme.typography.bodySmall)
+        }
+        vm.favoriteVideos.forEach { video ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                    .clickable(enabled = video.isAvailable) { vm.selectFavoriteVideo(video) }
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (video.isAvailable) {
+                    Checkbox(
+                        checked = video.videoId?.value in vm.selectedFavoriteVideoIds,
+                        onCheckedChange = { vm.toggleFavoriteVideo(video) },
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        video.title,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (video.isAvailable) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                    if (video.isAvailable) {
+                        val detail = listOfNotNull(
+                            video.author.takeIf { it.isNotBlank() },
+                            video.durationSeconds?.let { "${it}s" },
+                        ).joinToString(" · ")
+                        if (detail.isNotBlank()) {
+                            Text(detail, style = MaterialTheme.typography.bodySmall)
+                        }
+                    } else {
+                        Text(
+                            video.unavailableReason ?: "视频不可用",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
+        if (vm.favoriteVideos.any { it.isAvailable }) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    enabled = vm.runningJob == null && !vm.favoritesLoading,
+                    onClick = { vm.selectAllAvailableFavoriteVideos() },
+                ) {
+                    Text("全选可用视频")
+                }
+                OutlinedButton(
+                    enabled = vm.runningJob == null && vm.selectedFavoriteVideoIds.isNotEmpty(),
+                    onClick = { vm.clearFavoriteVideoSelection() },
+                ) {
+                    Text("清除选择")
+                }
+            }
+            Button(
+                enabled = vm.runningJob == null && vm.selectedFavoriteVideoIds.isNotEmpty(),
+                onClick = { vm.startBatch() },
+            ) {
+                Text("开始批量处理（${vm.selectedFavoriteVideoIds.size}）")
+            }
+        }
+        vm.batchSummary?.let { summary ->
+            Text(
+                "批次 ${summary.batchId.take(8)}：成功 ${summary.succeeded}，跳过 ${summary.skipped}，失败 ${summary.failed}",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
 
         HorizontalDivider()

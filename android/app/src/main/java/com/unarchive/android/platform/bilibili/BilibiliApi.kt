@@ -54,6 +54,80 @@ class BilibiliApi(
         )
     }
 
+    suspend fun fetchFavoriteFolders(): List<BilibiliFavoriteFolder> {
+        val nav = responseRoot(
+            transport.get("$API_BASE/x/web-interface/nav", headers(DEFAULT_HEADERS)),
+            "current user",
+        ).optJSONObject("data")
+        val mid = nav?.optLong("mid", 0L) ?: 0L
+        require(mid > 0) { "Bilibili login is required to access favorites" }
+        val root = responseRoot(
+            transport.get(
+                "$API_BASE/x/v3/fav/folder/created/list-all?up_mid=$mid",
+                headers(DEFAULT_HEADERS),
+            ),
+            "favorite folders",
+        )
+        val list = root.optJSONObject("data")?.optJSONArray("list") ?: return emptyList()
+        return (0 until list.length()).mapNotNull { index ->
+            val item = list.optJSONObject(index) ?: return@mapNotNull null
+            val id = item.optLong("id", 0L)
+            if (id <= 0) return@mapNotNull null
+            BilibiliFavoriteFolder(
+                id = id.toString(),
+                title = item.optString("title").ifBlank { "未命名收藏夹" },
+                videoCount = item.optInt("media_count", 0).coerceAtLeast(0),
+            )
+        }
+    }
+
+    suspend fun fetchFavoriteVideos(folderId: String): List<BilibiliFavoriteVideo> {
+        require(folderId.toLongOrNull()?.let { it > 0 } == true) {
+            "Bilibili favorite folder ID is invalid"
+        }
+        val videos = mutableListOf<BilibiliFavoriteVideo>()
+        val seen = mutableSetOf<String>()
+        var page = 1
+        while (true) {
+            require(page <= MAX_FAVORITE_PAGES) { "Bilibili favorites pagination did not finish" }
+            val root = responseRoot(
+                transport.get(
+                    "$API_BASE/x/v3/fav/resource/list?media_id=$folderId&pn=$page&ps=$FAVORITE_PAGE_SIZE",
+                    headers(DEFAULT_HEADERS),
+                ),
+                "favorite videos",
+            )
+            val data = root.optJSONObject("data") ?: break
+            val medias = data.optJSONArray("medias") ?: break
+            if (medias.length() == 0) break
+            for (index in 0 until medias.length()) {
+                val item = medias.optJSONObject(index) ?: continue
+                val aid = item.optLong("id", 0L)
+                val bvid = item.optString("bvid").takeIf { BVID_PATTERN.matches(it) }
+                val title = item.optString("title").ifBlank { "未命名视频" }
+                val key = bvid ?: if (aid > 0) "av$aid" else "unavailable:$folderId:$page:$index"
+                if (!seen.add(key)) continue
+                val unavailableReason = when {
+                    bvid == null && title.contains("失效") -> "视频已失效，B站不再提供播放内容"
+                    bvid == null -> "视频标识缺失，可能已删除或不可见"
+                    else -> null
+                }
+                val owner = item.optJSONObject("upper")?.optString("name").orEmpty()
+                videos += BilibiliFavoriteVideo(
+                    folderId = folderId,
+                    title = title,
+                    videoId = bvid?.let { PlatformVideoId("bilibili", it) },
+                    durationSeconds = item.optLong("duration", 0L).takeIf { it > 0 },
+                    author = owner,
+                    unavailableReason = unavailableReason,
+                )
+            }
+            if (!data.optBoolean("has_more", false)) break
+            page++
+        }
+        return videos
+    }
+
     /**
      * Fetches the video's CC/AI subtitles, or returns null when there are none
      * or they cannot be fetched.
@@ -285,5 +359,7 @@ class BilibiliApi(
         val BVID_PATTERN = Regex("BV[0-9A-Za-z]{10}")
         val DEFAULT_HEADERS = BilibiliHeaders.api
         val PLAYURL_HEADERS = BilibiliHeaders.media
+        const val FAVORITE_PAGE_SIZE = 20
+        const val MAX_FAVORITE_PAGES = 1_000
     }
 }

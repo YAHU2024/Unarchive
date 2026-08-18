@@ -10,6 +10,75 @@ import org.junit.Test
 
 class BilibiliApiTest {
     @Test
+    fun fetchesFavoriteFoldersForLoggedInUser() = runTest {
+        val requested = mutableListOf<String>()
+        val api = BilibiliApi(TextTransport { url, headers ->
+            requested += "$url|${headers["Cookie"]}"
+            when {
+                url.contains("/x/web-interface/nav") ->
+                    """{"code":0,"data":{"mid":42}}"""
+                url.contains("/x/v3/fav/folder/created/list-all") ->
+                    """{"code":0,"data":{"list":[{"id":7,"title":"学习","media_count":3}]}}"""
+                else -> error("unexpected url: $url")
+            }
+        }, cookieHeader = { "SESSDATA=session" })
+
+        val folders = api.fetchFavoriteFolders()
+
+        assertEquals(listOf(BilibiliFavoriteFolder("7", "学习", 3)), folders)
+        assertTrue(requested.all { it.endsWith("|SESSDATA=session") })
+        assertTrue(requested.last().contains("up_mid=42"))
+    }
+
+    @Test
+    fun fetchesFavoriteVideosAcrossPagesAndDeduplicatesByVideoId() = runTest {
+        val api = BilibiliApi(TextTransport { url, _ ->
+            when {
+                url.contains("pn=1") ->
+                    """{"code":0,"data":{"has_more":true,"medias":[
+                        {"id":1,"bvid":"BV1PS42197aM","title":"第一条","duration":12,"upper":{"name":"UP"}}
+                    ]}}"""
+                url.contains("pn=2") ->
+                    """{"code":0,"data":{"has_more":false,"medias":[
+                        {"id":1,"bvid":"BV1PS42197aM","title":"重复","duration":12},
+                        {"id":2,"bvid":"BV1xx42197aM","title":"第二条","duration":0}
+                    ]}}"""
+                else -> error("unexpected url: $url")
+            }
+        })
+
+        val videos = api.fetchFavoriteVideos("7")
+
+        assertEquals(2, videos.size)
+        assertEquals("BV1PS42197aM", videos[0].videoId?.value)
+        assertEquals("BV1xx42197aM", videos[1].videoId?.value)
+        assertEquals(null, videos[1].durationSeconds)
+    }
+
+    @Test
+    fun keepsUnavailableFavoriteVideosWithAReason() = runTest {
+        val api = BilibiliApi(TextTransport { _, _ ->
+            """{"code":0,"data":{"has_more":false,"medias":[
+                {"id":9,"title":"已失效视频"}
+            ]}}"""
+        })
+
+        val video = api.fetchFavoriteVideos("7").single()
+
+        assertEquals(false, video.isAvailable)
+        assertTrue(video.unavailableReason!!.contains("失效"))
+    }
+
+    @Test
+    fun rejectsInvalidFavoriteFolderId() {
+        val api = BilibiliApi(TextTransport { _, _ -> error("must not request") })
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runTest { api.fetchFavoriteVideos("bad") }
+        }
+    }
+
+    @Test
     fun fetchesMetadataAndCanonicalizesAvid() = runTest {
         var requestedUrl = ""
         val api = BilibiliApi(TextTransport { url, _ ->
