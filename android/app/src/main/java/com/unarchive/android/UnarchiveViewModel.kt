@@ -37,15 +37,18 @@ import com.unarchive.android.pipeline.SingleVideoProgressListener
 import com.unarchive.android.pipeline.SingleVideoResult
 import com.unarchive.android.pipeline.SingleVideoStage
 import com.unarchive.android.pipeline.BatchRunSummary
+import com.unarchive.android.pipeline.BatchUnavailableException
 import com.unarchive.android.pipeline.BatchVideoProcessor
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliApi
+import com.unarchive.android.platform.bilibili.BilibiliApiException
 import com.unarchive.android.platform.bilibili.BilibiliFavoriteFolder
 import com.unarchive.android.platform.bilibili.BilibiliFavoriteVideo
 import com.unarchive.android.platform.bilibili.BilibiliFavoritesRepository
 import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
 import com.unarchive.android.platform.bilibili.HttpsTextTransport
+import com.unarchive.android.platform.bilibili.isTerminalUnavailable
 import com.unarchive.android.result.FileVideoResultRepository
 import com.unarchive.android.result.LOCAL_AUDIO_PLATFORM
 import com.unarchive.android.result.StoredVideoResult
@@ -294,7 +297,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             batchSummary = null
             try {
                 favoriteVideos = favoritesRepository.fetchVideos(folder.id)
+                val initiallyUnavailable = favoriteVideos.count { !it.isAvailable }
                 status = "已获取收藏夹“${folder.title}”中的 ${favoriteVideos.size} 个视频。"
+                AppLogger.info(
+                    TAG,
+                    "收藏夹视频已加载 folderId=${folder.id} total=${favoriteVideos.size} " +
+                        "available=${favoriteVideos.size - initiallyUnavailable} unavailable=$initiallyUnavailable",
+                )
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Exception) {
@@ -315,6 +324,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun toggleFavoriteVideo(video: BilibiliFavoriteVideo) {
         val id = video.videoId?.value ?: return
+        if (!video.isAvailable) {
+            selectedFavoriteVideoIds = selectedFavoriteVideoIds - id
+            return
+        }
         selectedFavoriteVideoIds = if (id in selectedFavoriteVideoIds) {
             selectedFavoriteVideoIds - id
         } else {
@@ -323,7 +336,16 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectAllAvailableFavoriteVideos() {
-        selectedFavoriteVideoIds = favoriteVideos.mapNotNull { it.videoId?.value }.toSet()
+        selectedFavoriteVideoIds = favoriteVideos
+            .filter(BilibiliFavoriteVideo::isAvailable)
+            .mapNotNull { it.videoId?.value }
+            .toSet()
+        AppLogger.info(
+            TAG,
+            "收藏夹全选 folderId=${selectedFavoriteFolderId.orEmpty()} total=${favoriteVideos.size} " +
+                "available=${favoriteVideos.count(BilibiliFavoriteVideo::isAvailable)} " +
+                "unavailable=${favoriteVideos.count { !it.isAvailable }} selected=${selectedFavoriteVideoIds.size}",
+        )
     }
 
     fun clearFavoriteVideoSelection() {
@@ -417,25 +439,40 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         progress = 0f
         checkpointSegmentCount = 0
         batchSummary = null
+        val folderId = selectedFavoriteFolderId.orEmpty()
+        AppLogger.info(
+            TAG,
+            "批量选择确认 folderId=$folderId total=${favoriteVideos.size} " +
+                "available=${favoriteVideos.count(BilibiliFavoriteVideo::isAvailable)} " +
+                "unavailable=${favoriteVideos.count { !it.isAvailable }} selected=${items.size}",
+        )
         runningJob = viewModelScope.launch {
             try {
                 val summary = batchProcessor.run(
                     items = items,
                     itemId = { it.videoId!!.value },
+                    batchContext = "folderId=$folderId",
                     shouldSkip = { item ->
                         resultRepository.find(VideoResultKey("bilibili", item.videoId!!.value))?.let {
                             it.configSignature == config.signature() || it.configSignature == "bilibili-subtitle"
                         } == true
                     },
                     process = { item, index, total ->
-                        val single = executeVideo(
-                            reference = item.canonicalUrl!!,
-                            forceRefreshAudio = false,
-                            config = config,
-                            statusPrefix = "批量 ${index + 1}/$total：",
-                            progressBase = index.toFloat() / total,
-                            progressSpan = 1f / total,
-                        )
+                        val single = try {
+                            executeVideo(
+                                reference = item.canonicalUrl!!,
+                                forceRefreshAudio = false,
+                                config = config,
+                                statusPrefix = "批量 ${index + 1}/$total：",
+                                progressBase = index.toFloat() / total,
+                                progressSpan = 1f / total,
+                            )
+                        } catch (error: BilibiliApiException) {
+                            if (!error.isTerminalUnavailable) throw error
+                            val reason = unavailableReason(error)
+                            markFavoriteVideoUnavailable(item.videoId!!.value, reason)
+                            throw BatchUnavailableException(error.code, reason)
+                        }
                         videoResult = single
                         result = single.benchmark
                         selectedStoredResult = single.storedResult
@@ -443,7 +480,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     },
                 )
                 batchSummary = summary
-                status = "批量完成：成功 ${summary.succeeded}，跳过 ${summary.skipped}，失败 ${summary.failed}。"
+                status = "批量完成：成功 ${summary.succeeded}，跳过 ${summary.skipped}，" +
+                    "不可用 ${summary.unavailable}，失败 ${summary.failed}。"
                 AppLogger.info(TAG, "批量结果已展示 batchId=${summary.batchId}")
             } catch (_: CancellationException) {
                 selectedStoredResult = previousStoredResult
@@ -457,6 +495,23 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 runningJob = null
             }
         }
+    }
+
+    private fun markFavoriteVideoUnavailable(videoId: String, reason: String) {
+        favoriteVideos = favoriteVideos.map { video ->
+            if (video.videoId?.value == videoId) video.copy(unavailableReason = reason) else video
+        }
+        selectedFavoriteVideoIds = selectedFavoriteVideoIds - videoId
+        AppLogger.info(
+            TAG,
+            "收藏夹视频标记不可用 folderId=${selectedFavoriteFolderId.orEmpty()} " +
+                "videoId=$videoId reason=$reason selected=${selectedFavoriteVideoIds.size}",
+        )
+    }
+
+    private fun unavailableReason(error: BilibiliApiException): String = when (error.code) {
+        -404 -> "视频不存在或已删除（code=-404）"
+        else -> "稿件不可见（code=${error.code}）"
     }
 
     private fun currentAsrConfig() = AsrConfig(

@@ -235,6 +235,25 @@ class BilibiliApiTest {
     }
 
     @Test
+    fun preservesApiCodeAndClassifiesTerminalAvailabilityErrors() = runTest {
+        val api = BilibiliApi(TextTransport { _, _ ->
+            """{"code":62002,"message":"稿件不可见"}"""
+        })
+
+        val error = try {
+            api.fetchMetadata(PlatformVideoId("bilibili", "BV1PS42197aM"))
+            error("expected API failure")
+        } catch (failure: BilibiliApiException) {
+            failure
+        }
+
+        assertEquals(62002, error.code)
+        assertEquals(true, error.isTerminalUnavailable)
+        assertEquals(false, BilibiliApiException(-352, "风控", "metadata").isTerminalUnavailable)
+        assertEquals(false, BilibiliApiException(-400, "请求错误", "metadata").isTerminalUnavailable)
+    }
+
+    @Test
     fun clampsNegativeSubtitleStartToZero() = runTest {
         val api = BilibiliApi(
             TextTransport { _, _ ->

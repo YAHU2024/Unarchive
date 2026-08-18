@@ -58,4 +58,27 @@ class BatchVideoProcessorTest {
         assertTrue(cancelled)
         assertEquals(listOf("first"), processed)
     }
+
+    @Test
+    fun reportsUnavailableSeparatelyAndContinues() = runTest {
+        val processed = mutableListOf<String>()
+        val processor = BatchVideoProcessor(batchIdFactory = { "batch-unavailable" })
+
+        val summary = processor.run(
+            items = listOf("gone", "ok"),
+            itemId = { it },
+            shouldSkip = { false },
+            batchContext = "folderId=7",
+            process = { item, _, _ ->
+                processed += item
+                if (item == "gone") throw BatchUnavailableException(62002, "稿件不可见")
+            },
+        )
+
+        assertEquals(listOf("gone", "ok"), processed)
+        assertEquals(1, summary.unavailable)
+        assertEquals(1, summary.succeeded)
+        assertEquals(0, summary.failed)
+        assertEquals(62002, summary.results.first().apiCode)
+    }
 }

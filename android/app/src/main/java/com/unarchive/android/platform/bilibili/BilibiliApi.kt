@@ -15,6 +15,15 @@ fun interface TextTransport {
     suspend fun get(url: String, headers: Map<String, String>): String
 }
 
+class BilibiliApiException(
+    val code: Int,
+    val apiMessage: String,
+    val purpose: String,
+) : IllegalArgumentException("Bilibili $purpose failed ($code): $apiMessage")
+
+val BilibiliApiException.isTerminalUnavailable: Boolean
+    get() = code == -404 || code in 62001..62004
+
 class BilibiliApi(
     private val transport: TextTransport,
     private val subtitleTransport: TextTransport = HttpsSubtitleTransport(),
@@ -327,9 +336,9 @@ class BilibiliApi(
         val root = runCatching { JSONObject(body) }
             .getOrElse { throw IllegalArgumentException("Bilibili $purpose response is invalid") }
         val code = root.optInt("code", Int.MIN_VALUE)
-        require(code == 0) {
+        if (code != 0) {
             val message = root.optString("message").takeIf(String::isNotBlank) ?: "unknown error"
-            "Bilibili $purpose failed ($code): $message"
+            throw BilibiliApiException(code, message, purpose)
         }
         return root
     }

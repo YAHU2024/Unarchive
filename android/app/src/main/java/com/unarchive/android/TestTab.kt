@@ -171,7 +171,8 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         }
         vm.batchSummary?.let { summary ->
             Text(
-                "批次 ${summary.batchId.take(8)}：成功 ${summary.succeeded}，跳过 ${summary.skipped}，失败 ${summary.failed}",
+                "批次 ${summary.batchId.take(8)}：成功 ${summary.succeeded}，跳过 ${summary.skipped}，" +
+                    "不可用 ${summary.unavailable}，失败 ${summary.failed}",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
