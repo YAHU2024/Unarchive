@@ -27,6 +27,7 @@ object MarkdownCardRenderer {
         appendLine("author: ${yamlString(result.ownerName)}")
         appendLine("source: ${result.canonicalUrl}")
         appendLine("transcribed: ${formatDate(result.updatedAtEpochMs)}")
+        appendLine("timing: ${result.timingAccuracy.name.lowercase()}")
         appendLine("---")
         appendLine()
         appendLine("# ${result.title}")
@@ -55,6 +56,10 @@ object MarkdownCardRenderer {
             }
         }
         appendLine("## 转录全文")
+        if (result.timingAccuracy == com.unarchive.android.asr.TranscriptTimingAccuracy.ESTIMATED) {
+            appendLine("> 云端转写句子切分，时间戳为估算值。")
+            appendLine()
+        }
         result.segments.forEach { segment ->
             appendLine("${timestampLink(result.canonicalUrl, segment.startMs)} ${segment.text}")
         }

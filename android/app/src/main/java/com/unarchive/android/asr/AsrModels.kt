@@ -172,11 +172,14 @@ data class AsrOutput(
     val segments: List<TranscriptSegment>,
     val audioDurationMs: Long,
     val timings: AsrTimings = AsrTimings(),
+    val timingAccuracy: TranscriptTimingAccuracy = TranscriptTimingAccuracy.EXACT,
 ) {
     init {
         require(audioDurationMs >= 0) { "audioDurationMs cannot be negative" }
     }
 }
+
+enum class TranscriptTimingAccuracy { EXACT, ESTIMATED }
 
 fun interface AsrProgressListener {
     fun onProgress(progress: Float)

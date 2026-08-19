@@ -17,6 +17,7 @@ data class BenchmarkResult(
     val resourceSnapshot: ResourceSnapshot = ResourceSnapshot(),
     val segments: List<TranscriptSegment>,
     val timings: AsrTimings = AsrTimings(),
+    val timingAccuracy: TranscriptTimingAccuracy = TranscriptTimingAccuracy.EXACT,
 )
 
 fun interface MonotonicClock {
@@ -62,6 +63,7 @@ class BenchmarkRunner(
             realTimeFactor = realTimeFactor,
             segments = segments,
             timings = output.timings,
+            timingAccuracy = output.timingAccuracy,
         )
     }
 

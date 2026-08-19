@@ -2,6 +2,7 @@ package com.unarchive.android.result
 
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.TranscriptSegment
+import com.unarchive.android.asr.TranscriptTimingAccuracy
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -86,6 +87,7 @@ private fun StoredVideoResult.toJson() = JSONObject()
     .put("created_at_epoch_ms", createdAtEpochMs)
     .put("updated_at_epoch_ms", updatedAtEpochMs)
     .put("config_signature", configSignature)
+    .put("timing_accuracy", timingAccuracy.name)
     .put(
         "segments",
         JSONArray().apply {
@@ -125,6 +127,9 @@ private fun JSONObject.toStoredVideoResult(): StoredVideoResult {
         processingDurationMs = getLong("processing_duration_ms"),
         audioDurationMs = getLong("audio_duration_ms"),
         segments = segments,
+        timingAccuracy = runCatching {
+            TranscriptTimingAccuracy.valueOf(optString("timing_accuracy"))
+        }.getOrDefault(TranscriptTimingAccuracy.EXACT),
         createdAtEpochMs = getLong("created_at_epoch_ms"),
         updatedAtEpochMs = getLong("updated_at_epoch_ms"),
         // optString: results saved before this field existed parse as blank

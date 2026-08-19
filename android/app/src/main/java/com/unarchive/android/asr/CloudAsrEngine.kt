@@ -159,8 +159,18 @@ class CloudAsrEngine(
             if (text.isEmpty()) {
                 throw IOException("云端转写返回空文本（EMPTY_TEXT）")
             }
-            val segments = listOf(TranscriptSegment(0, durationMs, text))
-            return AsrOutput(segments, audioDurationMs = durationMs)
+            val rawSegmentCount = CloudTranscriptSegmenter.rawSegmentCount(text)
+            val segments = CloudTranscriptSegmenter.withEstimatedTiming(text, durationMs)
+            AppLogger.info(
+                "CloudAsr",
+                "云端文本切分完成 originalChars=${text.length} before=$rawSegmentCount " +
+                    "after=${segments.size} merged=${rawSegmentCount - segments.size} timing=ESTIMATED",
+            )
+            return AsrOutput(
+                segments = segments,
+                audioDurationMs = durationMs,
+                timingAccuracy = TranscriptTimingAccuracy.ESTIMATED,
+            )
         } finally {
             audio.delete()
         }

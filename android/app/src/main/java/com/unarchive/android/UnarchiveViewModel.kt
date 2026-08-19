@@ -18,6 +18,7 @@ import com.unarchive.android.asr.AndroidAsrEngineProvider
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrEngineSelection
+import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.asr.AsrProgressListener
 import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
@@ -766,6 +767,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         processingDurationMs = localRun.benchmark.processingDurationMs,
                         audioDurationMs = localRun.benchmark.audioDurationMs,
                         segments = localRun.benchmark.segments,
+                        timingAccuracy = localRun.benchmark.timingAccuracy,
                         createdAtEpochMs = resultRepository.find(key)?.createdAtEpochMs ?: now,
                         updatedAtEpochMs = now,
                         configSignature = config.signature(),
@@ -822,7 +824,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
                 )
                 val isLocalAudio = stored.key.platform == LOCAL_AUDIO_PLATFORM
-                val screenshots = if (analysis.chapters.isEmpty() || isLocalAudio) {
+                val screenshots = if (analysis.chapters.isEmpty() || isLocalAudio ||
+                    stored.timingAccuracy == TranscriptTimingAccuracy.ESTIMATED
+                ) {
                     // 本地音频没有视频可截图，只生成文字卡片。
                     emptyList()
                 } else {

@@ -2,6 +2,7 @@ package com.unarchive.android.result
 
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.TranscriptSegment
+import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.pipeline.SingleVideoResult
 
 /** Platform marker for locally benchmarked audio results (no upstream video). */
@@ -27,6 +28,7 @@ data class StoredVideoResult(
     val processingDurationMs: Long,
     val audioDurationMs: Long,
     val segments: List<TranscriptSegment>,
+    val timingAccuracy: TranscriptTimingAccuracy = TranscriptTimingAccuracy.EXACT,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
     /**
@@ -64,6 +66,7 @@ data class StoredVideoResult(
             processingDurationMs = result.benchmark.processingDurationMs,
             audioDurationMs = result.benchmark.audioDurationMs,
             segments = result.benchmark.segments,
+            timingAccuracy = result.benchmark.timingAccuracy,
             createdAtEpochMs = createdAtEpochMs,
             updatedAtEpochMs = nowEpochMs,
             configSignature = configSignature,

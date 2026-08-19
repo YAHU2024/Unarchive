@@ -139,6 +139,9 @@ internal fun ResultsTab(vm: UnarchiveViewModel) {
 
             Spacer(Modifier.height(4.dp))
             Text("转写文本", style = MaterialTheme.typography.titleMedium)
+            if (stored.timingAccuracy == com.unarchive.android.asr.TranscriptTimingAccuracy.ESTIMATED) {
+                Text("来源：云端转写（句子切分，时间为估算）", style = MaterialTheme.typography.bodySmall)
+            }
             stored.segments.forEach { segment ->
                 Text("[${segment.startMs.asTimestamp()} - ${segment.endMs.asTimestamp()}] ${segment.text}")
             }
