@@ -149,4 +149,20 @@ class MarkdownCardRendererTest {
         assertTrue(markdown.contains("![](data:image/jpeg;base64,base64AAA)"))
         assertEquals(1, markdown.split("data:image/jpeg").size - 1)
     }
+
+    @Test
+    fun rendersPersistedRelativeScreenshotPath() {
+        val analysis = CardAnalysis(
+            summary = "s",
+            keyPoints = emptyList(),
+            chapters = listOf(CardChapter("章1", 0, 5_000, emptyList())),
+        )
+
+        val markdown = MarkdownCardRenderer.render(
+            result(), analysis, screenshotPaths = listOf("assets/chapter-000.jpg"),
+        )
+
+        assertTrue(markdown.contains("![](assets/chapter-000.jpg)"))
+        assertFalse(markdown.contains("data:image/jpeg"))
+    }
 }

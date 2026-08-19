@@ -30,6 +30,13 @@ import com.unarchive.android.audio.resolveCachedAudio
 import com.unarchive.android.auth.BilibiliAuthStore
 import com.unarchive.android.auth.BilibiliLoginClient
 import com.unarchive.android.card.MarkdownCardRenderer
+import com.unarchive.android.card.CardAsset
+import com.unarchive.android.card.CardAssetKind
+import com.unarchive.android.card.CardStageState
+import com.unarchive.android.card.FileKnowledgeCardRepository
+import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.KnowledgeCardId
+import com.unarchive.android.card.KnowledgeCardRepository
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.log.AppLogger
@@ -113,6 +120,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     )
     private val videoDownloader = VideoDownloader(File(context.cacheDir, "video-cache"))
     private val frameExtractor = VideoFrameExtractor()
+    val knowledgeCardRepository: KnowledgeCardRepository =
+        FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
     val modelRepository = ModelRepository(File(context.filesDir, "models"))
     private val apiKeyStore = ApiKeyStore(context)
     private val siliconFlowKeyStore = SiliconFlowKeyStore(context)
@@ -151,6 +160,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var storedResults by mutableStateOf(resultRepository.list())
         private set
     var selectedStoredResult by mutableStateOf(storedResults.firstOrNull())
+    var knowledgeCards by mutableStateOf(knowledgeCardRepository.list())
+        private set
+    var selectedKnowledgeCard by mutableStateOf(knowledgeCards.firstOrNull())
+        private set
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
 
     var favoriteFolders by mutableStateOf<List<BilibiliFavoriteFolder>>(emptyList())
@@ -439,6 +452,36 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun selectStoredResult(stored: StoredVideoResult) {
         selectedStoredResult = stored
+    }
+
+    fun selectKnowledgeCard(card: KnowledgeCard) {
+        selectedKnowledgeCard = card
+    }
+
+    fun refreshKnowledgeCards() {
+        knowledgeCards = knowledgeCardRepository.list()
+        selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
+            knowledgeCards.firstOrNull { it.cardId == current.cardId } ?: knowledgeCards.firstOrNull()
+        } ?: knowledgeCards.firstOrNull()
+    }
+
+    fun exportKnowledgeCard(card: KnowledgeCard) {
+        context.shareMarkdownFile(
+            fileName = MarkdownCardRenderer.fileName(card.title),
+            markdown = card.markdown,
+            title = card.title,
+        )
+        status = "知识卡片已导出。"
+    }
+
+    fun regenerateCard(card: KnowledgeCard) {
+        val stored = resultRepository.find(VideoResultKey(card.cardId.platform, card.cardId.videoId))
+        if (stored == null) {
+            status = "找不到该卡片对应的转录结果，无法重新生成。"
+            AppLogger.warn(TAG, "知识卡片缺少转录结果：${card.cardId.value}")
+            return
+        }
+        generateCard(stored)
     }
 
     fun processVideo(reference: String, forceRefreshAudio: Boolean = false) {
@@ -810,35 +853,118 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun generateCard(stored: StoredVideoResult) {
+        if (generateJob != null || runningJob != null) return
         val apiKey = apiKeyStore.get()
-        if (apiKey == null) {
-            status = "请先在「设置」页配置 DeepSeek API Key。"
-            AppLogger.warn(TAG, "未配置 API Key，已中止卡片生成")
-            return
-        }
-        status = "正在生成 AI 卡片..."
+        status = if (apiKey == null) "正在保存基础知识卡片..." else "正在保存基础知识卡片..."
         AppLogger.info(TAG, "开始生成卡片：${stored.title}")
         generateJob = viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val cardId = KnowledgeCardId(stored.key.platform, stored.key.videoId)
             try {
-                val analysis = cardAnalyzer.analyze(
-                    apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
+                var analysis: com.unarchive.android.card.CardAnalysis? = null
+                var analysisState = if (apiKey == null) CardStageState.SKIPPED else CardStageState.RUNNING
+                val baseVersion = KnowledgeCard.version(
+                    stored.canonicalUrl, stored.title, stored.ownerName, stored.segments,
+                    null, emptyList(), "base-v1",
                 )
-                val isLocalAudio = stored.key.platform == LOCAL_AUDIO_PLATFORM
-                val screenshots = if (analysis.chapters.isEmpty() || isLocalAudio ||
-                    stored.timingAccuracy == TranscriptTimingAccuracy.ESTIMATED
+                var card = KnowledgeCard(
+                    cardId = cardId,
+                    cardVersion = baseVersion,
+                    canonicalUrl = stored.canonicalUrl,
+                    title = stored.title,
+                    ownerName = stored.ownerName,
+                    videoDurationSeconds = stored.videoDurationSeconds,
+                    timingAccuracy = stored.timingAccuracy,
+                    transcript = stored.segments,
+                    baseState = CardStageState.SUCCEEDED,
+                    analysisState = analysisState,
+                    screenshotsState = CardStageState.SKIPPED,
+                    createdAtEpochMs = knowledgeCardRepository.find(cardId)?.createdAtEpochMs ?: now,
+                    updatedAtEpochMs = now,
+                    markdown = MarkdownCardRenderer.render(stored),
+                )
+                knowledgeCardRepository.save(card)
+                refreshKnowledgeCards()
+
+                if (apiKey != null) {
+                    try {
+                        status = "正在生成 AI 卡片..."
+                        analysis = cardAnalyzer.analyze(
+                            apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
+                        )
+                        analysisState = CardStageState.SUCCEEDED
+                    } catch (error: Exception) {
+                        analysisState = CardStageState.FAILED
+                        card = card.copy(lastError = "AI：${error.message}", updatedAtEpochMs = System.currentTimeMillis())
+                        AppLogger.warn(TAG, "AI 分析失败，保留基础卡片：${error.message}")
+                    }
+                }
+
+                val screenshotBytes = mutableListOf<ByteArray?>()
+                var screenshotsState = CardStageState.SKIPPED
+                if (analysis != null && analysis.chapters.isNotEmpty() &&
+                    stored.key.platform != LOCAL_AUDIO_PLATFORM &&
+                    stored.timingAccuracy != TranscriptTimingAccuracy.ESTIMATED
                 ) {
-                    // 本地音频没有视频可截图，只生成文字卡片。
-                    emptyList()
-                } else {
+                    screenshotsState = CardStageState.RUNNING
                     status = "正在下载视频并截图..."
-                    extractChapterScreenshots(
-                        platformAdapter, videoDownloader, frameExtractor,
-                        stored, analysis.chapters.map { it.startMs },
+                    try {
+                        screenshotBytes += extractChapterScreenshotBytes(
+                            platformAdapter, videoDownloader, frameExtractor,
+                            stored, analysis.chapters.map { it.startMs },
+                        )
+                        screenshotsState = if (screenshotBytes.any { it == null }) CardStageState.PARTIAL else CardStageState.SUCCEEDED
+                    } catch (error: Exception) {
+                        screenshotsState = CardStageState.FAILED
+                        AppLogger.warn(TAG, "截图失败，保留无图卡片：${error.message}")
+                    }
+                }
+
+                val validBytes = screenshotBytes.mapIndexedNotNull { index, bytes ->
+                    bytes?.let { index to it }
+                }
+                val assetHashes = validBytes.map { (_, bytes) -> KnowledgeCard.sha256(bytes) }
+                val finalVersion = KnowledgeCard.version(
+                    stored.canonicalUrl, stored.title, stored.ownerName, stored.segments,
+                    analysis, emptyList(), "card-v1-thinking=$thinkingEnabled", assetHashes,
+                )
+                if (finalVersion != card.cardVersion) {
+                    card = card.copy(cardVersion = finalVersion)
+                }
+                val savedAssets = validBytes.map { (index, bytes) ->
+                    knowledgeCardRepository.save(card)
+                    knowledgeCardRepository.saveAsset(
+                        card.cardId, card.cardVersion, "chapter-$index", bytes,
+                        kind = CardAssetKind.CHAPTER_SCREENSHOT,
+                        chapterIndex = index,
+                        timestampMs = analysis?.chapters?.getOrNull(index)?.startMs,
                     )
                 }
-                context.exportCard(stored, MarkdownCardRenderer.render(stored, analysis, screenshots))
-                status = if (screenshots.isEmpty()) "AI 卡片已生成并导出。" else "图文卡片已生成并导出。"
-                AppLogger.info(TAG, "卡片已导出：${MarkdownCardRenderer.fileName(stored)}")
+                val paths = savedAssets.associateBy { it.chapterIndex ?: -1 }
+                    .mapValues { (_, asset) -> asset.relativePath }
+                val finalMarkdown = MarkdownCardRenderer.render(
+                    stored, analysis,
+                    screenshotPaths = analysis?.chapters?.indices?.map { paths[it].orEmpty() },
+                )
+                card = card.copy(
+                    analysis = analysis,
+                    assets = savedAssets,
+                    analysisState = analysisState,
+                    screenshotsState = screenshotsState,
+                    lastError = card.lastError,
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                    markdown = finalMarkdown,
+                )
+                knowledgeCardRepository.save(card)
+                refreshKnowledgeCards()
+                selectedKnowledgeCard = card
+                status = when {
+                    analysisState == CardStageState.FAILED -> "基础知识卡片已保存，AI 生成失败，可重试。"
+                    screenshotsState == CardStageState.FAILED || screenshotsState == CardStageState.PARTIAL -> "知识卡片已保存，部分截图失败，可重试。"
+                    analysis == null -> "基础知识卡片已保存。"
+                    else -> "知识卡片已保存。"
+                }
+                AppLogger.info(TAG, "本地知识卡片已保存：${card.cardId.value} version=${card.cardVersion}")
             } catch (_: CancellationException) {
                 status = "AI 卡片生成已取消。"
                 AppLogger.warn(TAG, "卡片生成已取消")

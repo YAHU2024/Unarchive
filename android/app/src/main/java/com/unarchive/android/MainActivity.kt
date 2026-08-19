@@ -34,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 private enum class AppTab(val label: String, val icon: ImageVector) {
     TEST("测试", Icons.Filled.PlayArrow),
     RESULTS("结果", Icons.AutoMirrored.Filled.List),
+    KNOWLEDGE("笔记", Icons.AutoMirrored.Filled.List),
     LOG("日志", Icons.Filled.Info),
     SETTINGS("设置", Icons.Filled.Settings),
 }
@@ -97,6 +98,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
             when (tabs[selectedTabIndex]) {
                 AppTab.TEST -> TestTab(vm, onOpenLogs = { selectedTabIndex = AppTab.LOG.ordinal })
                 AppTab.RESULTS -> ResultsTab(vm)
+                AppTab.KNOWLEDGE -> KnowledgeTab(vm)
                 AppTab.LOG -> LogTab()
                 AppTab.SETTINGS -> SettingsTab(vm)
             }

@@ -21,6 +21,7 @@ object MarkdownCardRenderer {
         result: StoredVideoResult,
         analysis: CardAnalysis? = null,
         screenshots: List<String>? = null,
+        screenshotPaths: List<String>? = null,
     ): String = buildString {
         appendLine("---")
         appendLine("title: ${yamlString(result.title)}")
@@ -40,9 +41,12 @@ object MarkdownCardRenderer {
                 appendLine("## 故事线")
                 analysis.chapters.forEachIndexed { index, chapter ->
                     appendLine("### ${chapter.startMs.asTimestamp()}–${chapter.endMs.asTimestamp()} ${chapter.title}")
-                    screenshots?.getOrNull(index)
+                    screenshotPaths?.getOrNull(index)
                         ?.takeIf { it.isNotEmpty() }
-                        ?.let { appendLine("![](data:image/jpeg;base64,$it)") }
+                        ?.let { appendLine("![]($it)") }
+                        ?: screenshots?.getOrNull(index)
+                            ?.takeIf { it.isNotEmpty() }
+                            ?.let { appendLine("![](data:image/jpeg;base64,$it)") }
                     chapter.points.forEach { point ->
                         appendLine("- ${timestampLink(result.canonicalUrl, point.timestampMs)} ${point.text}")
                     }
@@ -66,7 +70,9 @@ object MarkdownCardRenderer {
     }.trimEnd()
 
     /** Returns a safe `.md` file name derived from the video title. */
-    fun fileName(result: StoredVideoResult): String = "${safeFileName(result.title)}.md"
+    fun fileName(result: StoredVideoResult): String = fileName(result.title)
+
+    fun fileName(title: String): String = "${safeFileName(title)}.md"
 
     private fun timestampLink(canonicalUrl: String, startMs: Long): String =
         "[${startMs.asTimestamp()}](${timestampUrl(canonicalUrl, startMs)})"

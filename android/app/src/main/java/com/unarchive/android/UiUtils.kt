@@ -143,6 +143,20 @@ internal suspend fun extractChapterScreenshots(
     stored: StoredVideoResult,
     timestampsMs: List<Long>,
 ): List<String> {
+    return extractChapterScreenshotBytes(
+        platformAdapter, videoDownloader, frameExtractor, stored, timestampsMs,
+    ).map { bytes ->
+        bytes?.let { Base64.encodeToString(it, Base64.NO_WRAP) }.orEmpty()
+    }
+}
+
+internal suspend fun extractChapterScreenshotBytes(
+    platformAdapter: VideoPlatformAdapter,
+    videoDownloader: VideoDownloader,
+    frameExtractor: VideoFrameExtractor,
+    stored: StoredVideoResult,
+    timestampsMs: List<Long>,
+): List<ByteArray?> {
     val metadata = platformAdapter.fetchMetadata(
         VideoReference.Canonical(
             id = PlatformVideoId(stored.key.platform, stored.key.videoId),
@@ -157,10 +171,7 @@ internal suspend fun extractChapterScreenshots(
     )
     return try {
         withContext(Dispatchers.IO) {
-            frameExtractor.extractFrames(videoFile, timestampsMs).map { bytes ->
-                bytes?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
-                    .orEmpty()
-            }
+            frameExtractor.extractFrames(videoFile, timestampsMs)
         }
     } finally {
         videoFile.delete()
