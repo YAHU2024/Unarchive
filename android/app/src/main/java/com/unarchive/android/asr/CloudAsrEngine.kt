@@ -61,7 +61,18 @@ class SiliconFlowAsrClient(
             val response = connection.inputStream.readBytes().toString(StandardCharsets.UTF_8)
             val readDone = android.os.SystemClock.elapsedRealtime()
             AppLogger.info("CloudAsrTiming", "服务端转写+响应耗时=${readDone - uploadDone}ms")
-            JSONObject(response).optString("text", "")
+            val json = JSONObject(response)
+            val keys = buildList {
+                val iterator = json.keys()
+                while (iterator.hasNext()) add(iterator.next())
+            }.sorted().joinToString(",")
+            if (!json.has("text")) {
+                AppLogger.warn("CloudAsr", "响应缺少 text 字段，顶层字段=$keys")
+                throw IOException("云端转写响应缺少 text 字段")
+            }
+            val text = json.optString("text", "")
+            AppLogger.info("CloudAsr", "响应包含 text 字段，文本长度=${text.trim().length}，顶层字段=$keys")
+            text
         } finally {
             connection.disconnect()
         }
@@ -126,18 +137,27 @@ class CloudAsrEngine(
         progressListener.onProgress(0.05f)
         val durationMs = withContext(Dispatchers.IO) { readAudioDurationMs(source.uri, context) }
         AppLogger.debug("CloudAsrEngine", "读取音频时长=${durationMs}ms source=${source.displayName}")
+        if (durationMs <= 0L) {
+            AppLogger.warn("CloudAsr", "源音频时长读取为 0，source=${source.displayName}")
+        }
         val t0 = android.os.SystemClock.elapsedRealtime()
         val audio = transcoder.transcode(source.uri, context)
         val t1 = android.os.SystemClock.elapsedRealtime()
-        AppLogger.info("CloudAsrTiming", "转码耗时=${t1 - t0}ms, 输出=${audio.length() / 1024}KB")
+        AppLogger.info(
+            "CloudAsrTiming",
+            "转码耗时=${t1 - t0}ms, 源时长=${durationMs}ms, 输出=${audio.length() / 1024}KB",
+        )
         try {
+            if (audio.length() <= 0L) {
+                AppLogger.warn("CloudAsr", "转码输出文件为空或过小，可能导致空文本（AUDIO_EMPTY_OR_TOO_SHORT）")
+            }
             progressListener.onProgress(0.5f)
             val text = client.transcribe(audio).trim()
             val t2 = android.os.SystemClock.elapsedRealtime()
             AppLogger.info("CloudAsrTiming", "上传+服务端转写耗时=${t2 - t1}ms")
             progressListener.onProgress(1f)
             if (text.isEmpty()) {
-                throw IOException("云端转写返回空文本")
+                throw IOException("云端转写返回空文本（EMPTY_TEXT）")
             }
             val segments = listOf(TranscriptSegment(0, durationMs, text))
             return AsrOutput(segments, audioDurationMs = durationMs)
