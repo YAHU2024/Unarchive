@@ -77,7 +77,7 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
                     OutlinedButton(
                         enabled = vm.runningJob == null,
                         onClick = { vm.retryFailedBatch() },
-                    ) { Text("重试失败项") }
+                    ) { Text("重试可恢复失败项") }
                 }
                 OutlinedButton(
                     enabled = vm.runningJob == null,
@@ -205,7 +205,7 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
             .filter { it.state == BatchItemState.FAILED || it.state == BatchItemState.UNAVAILABLE || it.state == BatchItemState.CANCELLED }
             .forEach { item ->
                 Text(
-                    "${item.videoId} · ${batchStateText(item.state)}${item.errorMessage?.let { "：$it" } ?: ""}",
+                    "${item.videoId} · ${batchStateText(item.state)}${item.errorMessage?.let { "：${friendlyBatchError(it)}" } ?: ""}",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (item.state == BatchItemState.UNAVAILABLE) {
                         MaterialTheme.colorScheme.error
@@ -275,6 +275,11 @@ private fun batchStateText(state: BatchItemState): String = when (state) {
     BatchItemState.UNAVAILABLE -> "不可用"
     BatchItemState.CANCELLED -> "已取消"
     else -> state.name
+}
+
+private fun friendlyBatchError(message: String): String = when {
+    message.contains("EMPTY_TEXT") -> "云端未识别到有效语音，可能是无旁白或纯音乐（EMPTY_TEXT）"
+    else -> message
 }
 
 @Composable

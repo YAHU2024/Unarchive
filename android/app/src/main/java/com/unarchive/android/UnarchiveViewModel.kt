@@ -44,6 +44,8 @@ import com.unarchive.android.pipeline.BatchManifest
 import com.unarchive.android.pipeline.BatchManifestItem
 import com.unarchive.android.pipeline.BatchManifestRepository
 import com.unarchive.android.pipeline.BatchItemState
+import com.unarchive.android.pipeline.BatchFailureRetryability
+import com.unarchive.android.pipeline.BatchFailureClassifier
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.bilibili.BilibiliAudioDownloader
 import com.unarchive.android.platform.bilibili.BilibiliApi
@@ -414,7 +416,25 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun resumeBatch() = runStoredBatch(setOf(BatchItemState.QUEUED, BatchItemState.CANCELLED))
 
-    fun retryFailedBatch() = runStoredBatch(setOf(BatchItemState.FAILED))
+    fun retryFailedBatch() {
+        val manifest = activeBatchManifest
+        if (manifest == null) {
+            status = "没有可恢复的批次。"
+            return
+        }
+        val retryable = manifest.items.filter {
+            it.state == BatchItemState.FAILED && it.retryability != BatchFailureRetryability.NON_RETRYABLE
+        }
+        val nonRetryable = manifest.items.count {
+            it.state == BatchItemState.FAILED && it.retryability == BatchFailureRetryability.NON_RETRYABLE
+        }
+        AppLogger.info(TAG, "失败项重试筛选 batchId=${manifest.batchId} retryable=${retryable.size} nonRetryable=$nonRetryable unknown=${retryable.count { it.retryability == BatchFailureRetryability.UNKNOWN }}")
+        if (retryable.isEmpty()) {
+            status = "没有可自动重试的失败项目。"
+            return
+        }
+        runStoredBatch(setOf(BatchItemState.FAILED), retryable.map { it.videoId }.toSet())
+    }
 
     fun selectStoredResult(stored: StoredVideoResult) {
         selectedStoredResult = stored
@@ -522,7 +542,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         runBatchManifest(manifest, setOf(BatchItemState.QUEUED))
     }
 
-    private fun runStoredBatch(targetStates: Set<BatchItemState>) {
+    private fun runStoredBatch(targetStates: Set<BatchItemState>, targetVideoIds: Set<String>? = null) {
         val manifest = activeBatchManifest
         if (manifest == null) {
             status = "没有可恢复的批次。"
@@ -537,7 +557,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             status = "批次配置已变化，无法恢复。请重新创建批次。"
             return
         }
-        if (manifest.items.none { it.state in targetStates }) {
+        if (manifest.items.none { it.state in targetStates && (targetVideoIds == null || it.videoId in targetVideoIds) }) {
             status = "没有可恢复的项目。"
             return
         }
@@ -548,13 +568,14 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 "manifestVersion=${manifest.schemaVersion} targetStates=${targetStates.joinToString(",")} " +
                 "reason=user_confirm",
         )
-        runBatchManifest(manifest, targetStates)
+        runBatchManifest(manifest, targetStates, targetVideoIds)
     }
 
-    private fun runBatchManifest(manifest: BatchManifest, targetStates: Set<BatchItemState>) {
+    private fun runBatchManifest(manifest: BatchManifest, targetStates: Set<BatchItemState>, targetVideoIds: Set<String>? = null) {
         val config = currentAsrConfig()
         val items = manifest.items
             .filter { it.state in targetStates }
+            .filter { targetVideoIds == null || it.videoId in targetVideoIds }
             .map { it.toFavoriteVideo(manifest.folderId) }
         result = null
         videoResult = null
@@ -618,7 +639,15 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private fun persistBatchItemState(item: BilibiliFavoriteVideo, state: BatchItemState, errorMessage: String?, apiCode: Int?) {
         val current = activeBatchManifest ?: return
         val updated = current.withItem(
-            BatchManifestItem(item.videoId!!.value, item.canonicalUrl!!, item.title, state, errorMessage, apiCode),
+            BatchManifestItem(
+                videoId = item.videoId!!.value,
+                canonicalUrl = item.canonicalUrl!!,
+                title = item.title,
+                state = state,
+                errorMessage = errorMessage,
+                apiCode = apiCode,
+                retryability = if (state == BatchItemState.FAILED) BatchFailureClassifier.classify(errorMessage) else BatchFailureRetryability.UNKNOWN,
+            ),
         )
         activeBatchManifest = batchManifestRepository.save(updated)
         batchManifestItems = updated.items

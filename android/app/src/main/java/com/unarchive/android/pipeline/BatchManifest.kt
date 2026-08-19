@@ -8,6 +8,25 @@ import java.nio.file.StandardCopyOption
 import org.json.JSONArray
 import org.json.JSONObject
 
+enum class BatchFailureRetryability { RETRYABLE, NON_RETRYABLE, UNKNOWN }
+
+object BatchFailureClassifier {
+    fun classify(message: String?): BatchFailureRetryability {
+        val text = message.orEmpty()
+        if (text.contains("EMPTY_TEXT") || text.contains("响应缺少 text") ||
+            text.contains("AUDIO_EMPTY_OR_TOO_SHORT") || text.contains("音频为空") ||
+            Regex("HTTP 4\\d{2}\\b").containsMatchIn(text)) {
+            return BatchFailureRetryability.NON_RETRYABLE
+        }
+        if (Regex("HTTP (408|429|5\\d{2})\\b").containsMatchIn(text) ||
+            text.contains("timeout", ignoreCase = true) || text.contains("timed out", ignoreCase = true) ||
+            text.contains("超时") || text.contains("连接") || text.contains("网络")) {
+            return BatchFailureRetryability.RETRYABLE
+        }
+        return BatchFailureRetryability.UNKNOWN
+    }
+}
+
 data class BatchManifestItem(
     val videoId: String,
     val canonicalUrl: String,
@@ -15,6 +34,7 @@ data class BatchManifestItem(
     val state: BatchItemState,
     val errorMessage: String? = null,
     val apiCode: Int? = null,
+    val retryability: BatchFailureRetryability = BatchFailureRetryability.UNKNOWN,
     val updatedAtEpochMs: Long = System.currentTimeMillis(),
 )
 
@@ -106,6 +126,7 @@ private fun BatchManifest.toJson() = JSONObject()
                 .put("state", item.state.name)
                 .put("error_message", item.errorMessage)
                 .put("api_code", item.apiCode)
+                .put("retryability", item.retryability.name)
                 .put("updated_at_epoch_ms", item.updatedAtEpochMs))
         }
     })
@@ -123,6 +144,9 @@ private fun JSONObject.toManifest(): BatchManifest {
                 state = BatchItemState.valueOf(item.getString("state")),
                 errorMessage = item.optString("error_message").takeIf { it.isNotBlank() },
                 apiCode = if (item.isNull("api_code")) null else item.optInt("api_code"),
+                retryability = runCatching {
+                    BatchFailureRetryability.valueOf(item.optString("retryability"))
+                }.getOrDefault(BatchFailureRetryability.UNKNOWN),
                 updatedAtEpochMs = item.optLong("updated_at_epoch_ms", 0L),
             ))
         }

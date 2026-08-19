@@ -57,6 +57,15 @@ class BatchManifestTest {
         assertEquals("我的收藏夹", repository.load()?.folderTitle)
     }
 
+    @Test
+    fun classifiesRetryableAndDeterministicFailures() {
+        assertEquals(BatchFailureRetryability.RETRYABLE, BatchFailureClassifier.classify("云端转写失败：HTTP 500"))
+        assertEquals(BatchFailureRetryability.RETRYABLE, BatchFailureClassifier.classify("读取超时"))
+        assertEquals(BatchFailureRetryability.NON_RETRYABLE, BatchFailureClassifier.classify("云端转写返回空文本（EMPTY_TEXT）"))
+        assertEquals(BatchFailureRetryability.NON_RETRYABLE, BatchFailureClassifier.classify("云端转写失败：HTTP 401"))
+        assertEquals(BatchFailureRetryability.UNKNOWN, BatchFailureClassifier.classify("其他失败"))
+    }
+
     private fun sampleManifest() = BatchManifest(
         batchId = "batch",
         folderId = "7",
