@@ -103,6 +103,11 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         }
 
         Text("从 B 站收藏夹选择", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "收藏夹加载结果仅作初筛，实际处理时仍可能发现视频已删除或不可访问。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         OutlinedButton(
             enabled = vm.loggedIn && !vm.favoritesLoading && vm.runningJob == null,
             onClick = { vm.loadFavoriteFolders() },
@@ -178,7 +183,7 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
                     enabled = vm.runningJob == null && !vm.favoritesLoading,
                     onClick = { vm.selectAllAvailableFavoriteVideos() },
                 ) {
-                    Text("全选可用视频")
+                    Text("全选待处理视频")
                 }
                 OutlinedButton(
                     enabled = vm.runningJob == null && vm.selectedFavoriteVideoIds.isNotEmpty(),
