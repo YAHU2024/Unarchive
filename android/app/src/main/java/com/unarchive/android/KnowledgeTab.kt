@@ -53,7 +53,7 @@ internal fun KnowledgeTab(vm: UnarchiveViewModel) {
             vm.knowledgeCards.forEach { card ->
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                    enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null && !vm.imaSyncing,
                     onClick = { vm.selectKnowledgeCard(card) },
                 ) {
                     val marker = if (selected?.cardId == card.cardId) "▶ " else ""
@@ -85,17 +85,17 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
-                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null && !vm.imaSyncing,
                 onClick = { vm.exportKnowledgeCard(card) },
             ) { Text("导出") }
             OutlinedButton(
-                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null && !vm.imaSyncing,
                 onClick = { vm.regenerateCard(card) },
             ) {
                 Text("重新生成")
             }
             OutlinedButton(
-                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null && !vm.imaSyncing,
                 onClick = { vm.syncKnowledgeCard(card) },
             ) { Text("同步 ima") }
         }

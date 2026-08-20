@@ -150,6 +150,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var imaKnowledgeBaseId by mutableStateOf(prefs.getString("ima_kb_id", "").orEmpty())
     var imaFolderId by mutableStateOf(prefs.getString("ima_folder_id", "").orEmpty())
     var imaSyncStatus by mutableStateOf<Map<String, String>>(emptyMap())
+    var imaSyncing by mutableStateOf(false)
     var imaDiscoveryStatus by mutableStateOf("")
     var imaFolderDiscoveryStatus by mutableStateOf("")
     var imaKnowledgeBases by mutableStateOf<List<ImaKnowledgeBase>>(emptyList())
@@ -413,11 +414,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun syncKnowledgeCard(card: KnowledgeCard) {
-        if (generateJob != null || runningJob != null) return
+        if (imaSyncing || generateJob != null || runningJob != null) return
         val clientId = imaCredentialStore.clientId().orEmpty()
         val apiKey = imaCredentialStore.apiKey().orEmpty()
         if (clientId.isBlank() || apiKey.isBlank() || imaKnowledgeBaseId.isBlank()) { status = "请先配置 ima 凭据和知识库 ID"; return }
-        generateJob = viewModelScope.launch {
+        imaSyncing = true
+        viewModelScope.launch {
             try {
                 val result = ImaSyncService(
                     ImaClient(clientId, apiKey),
@@ -426,7 +428,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 ).sync(card, imaKnowledgeBaseId.trim(), imaFolderId.trim())
                 imaSyncStatus = imaSyncStatus + (card.cardId.value to "${result.state}: ${result.message}")
                 status = "ima：${result.message}"
-            } finally { generateJob = null }
+            } finally {
+                imaSyncing = false
+            }
         }
     }
 

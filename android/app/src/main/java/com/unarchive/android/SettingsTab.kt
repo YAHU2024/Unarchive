@@ -19,6 +19,8 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,7 +28,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -208,16 +209,19 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
 private fun ImaKnowledgeBaseSelector(vm: UnarchiveViewModel) {
     var expanded by remember { mutableStateOf(false) }
     val selectedName = vm.imaKnowledgeBases.firstOrNull { it.id == vm.imaKnowledgeBaseId }?.name
-        ?.takeIf(String::isNotBlank) ?: "请选择测试知识库"
-    Box {
-        OutlinedTextField(
-            value = selectedName,
-            onValueChange = {},
-            readOnly = true,
-            modifier = Modifier.fillMaxWidth().clickable(enabled = vm.imaKnowledgeBases.isNotEmpty()) { expanded = true },
-            enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBases.isNotEmpty(),
-            label = { Text("测试知识库") },
-        )
+        ?.takeIf(String::isNotBlank)
+        ?: if (vm.imaKnowledgeBases.isEmpty()) "请先点击“检查连接”" else "请选择测试知识库"
+    val enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBases.isNotEmpty()
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("测试知识库", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = enabled,
+            onClick = { expanded = true },
+        ) {
+            Text(selectedName, modifier = Modifier.weight(1f), maxLines = 1)
+            androidx.compose.material3.Icon(Icons.Default.ArrowDropDown, contentDescription = "选择测试知识库")
+        }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             vm.imaKnowledgeBases.forEach { base ->
                 DropdownMenuItem(text = { Text(base.name.ifBlank { "未命名知识库" }) }, onClick = {
@@ -235,15 +239,16 @@ private fun ImaFolderSelector(vm: UnarchiveViewModel) {
     val selectedName = vm.imaFolders.firstOrNull { it.id == vm.imaFolderId }?.name
         ?.takeIf(String::isNotBlank) ?: "根目录"
     val enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBaseId.isNotBlank()
-    Box {
-        OutlinedTextField(
-            value = selectedName,
-            onValueChange = {},
-            readOnly = true,
-            modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { expanded = true },
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("目标文件夹", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
             enabled = enabled,
-            label = { Text("目标文件夹") },
-        )
+            onClick = { expanded = true },
+        ) {
+            Text(selectedName, modifier = Modifier.weight(1f), maxLines = 1)
+            androidx.compose.material3.Icon(Icons.Default.ArrowDropDown, contentDescription = "选择目标文件夹")
+        }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("根目录") }, onClick = { vm.selectImaFolder(""); expanded = false })
             vm.imaFolders.forEach { folder ->
