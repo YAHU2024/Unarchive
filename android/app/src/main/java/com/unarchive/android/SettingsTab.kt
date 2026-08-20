@@ -13,14 +13,23 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.model.ModelManagementSection
@@ -109,6 +118,21 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
 
         HorizontalDivider()
 
+        Text("ima 同步（单卡）", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(value = vm.imaClientIdInput, onValueChange = { vm.imaClientIdInput = it }, modifier = Modifier.fillMaxWidth(), enabled = vm.runningJob == null && vm.generateJob == null, label = { Text("ima Client ID") })
+        OutlinedTextField(value = vm.imaApiKeyInput, onValueChange = { vm.imaApiKeyInput = it }, modifier = Modifier.fillMaxWidth(), enabled = vm.runningJob == null && vm.generateJob == null, label = { Text("ima API Key") }, visualTransformation = PasswordVisualTransformation())
+        ImaKnowledgeBaseSelector(vm)
+        ImaFolderSelector(vm)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::saveImaSettings) { Text("保存 ima 设置") }
+            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::checkImaConnection) { Text("检查连接") }
+            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::discoverImaFolders) { Text("查看文件夹") }
+            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::clearImaSettings) { Text("清除 ima") }
+        }
+        if (vm.imaDiscoveryStatus.isNotBlank()) Text(vm.imaDiscoveryStatus, style = MaterialTheme.typography.bodySmall)
+        if (vm.imaFolderDiscoveryStatus.isNotBlank()) Text(vm.imaFolderDiscoveryStatus, style = MaterialTheme.typography.bodySmall)
+
+        HorizontalDivider()
         Text("云端转写（可选）", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = vm.siliconFlowKeyInput,
@@ -116,6 +140,7 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
             modifier = Modifier.fillMaxWidth(),
             enabled = vm.runningJob == null,
             label = { Text("SiliconFlow API Key") },
+            visualTransformation = PasswordVisualTransformation(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
@@ -141,6 +166,7 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
             modifier = Modifier.fillMaxWidth(),
             enabled = vm.runningJob == null && vm.generateJob == null,
             label = { Text("DeepSeek API Key") },
+            visualTransformation = PasswordVisualTransformation(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
@@ -175,5 +201,57 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
             modelsDirectory = File(context.filesDir, "models"),
             enabled = vm.runningJob == null,
         )
+    }
+}
+
+@Composable
+private fun ImaKnowledgeBaseSelector(vm: UnarchiveViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedName = vm.imaKnowledgeBases.firstOrNull { it.id == vm.imaKnowledgeBaseId }?.name
+        ?.takeIf(String::isNotBlank) ?: "请选择测试知识库"
+    Box {
+        OutlinedTextField(
+            value = selectedName,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier.fillMaxWidth().clickable(enabled = vm.imaKnowledgeBases.isNotEmpty()) { expanded = true },
+            enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBases.isNotEmpty(),
+            label = { Text("测试知识库") },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            vm.imaKnowledgeBases.forEach { base ->
+                DropdownMenuItem(text = { Text(base.name.ifBlank { "未命名知识库" }) }, onClick = {
+                    vm.selectImaKnowledgeBase(base.id)
+                    expanded = false
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImaFolderSelector(vm: UnarchiveViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedName = vm.imaFolders.firstOrNull { it.id == vm.imaFolderId }?.name
+        ?.takeIf(String::isNotBlank) ?: "根目录"
+    val enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBaseId.isNotBlank()
+    Box {
+        OutlinedTextField(
+            value = selectedName,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { expanded = true },
+            enabled = enabled,
+            label = { Text("目标文件夹") },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("根目录") }, onClick = { vm.selectImaFolder(""); expanded = false })
+            vm.imaFolders.forEach { folder ->
+                DropdownMenuItem(text = { Text(folder.name.ifBlank { "未命名文件夹" }) }, onClick = {
+                    vm.selectImaFolder(folder.id)
+                    expanded = false
+                })
+            }
+        }
     }
 }

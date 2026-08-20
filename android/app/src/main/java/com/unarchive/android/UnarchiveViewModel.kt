@@ -70,6 +70,13 @@ import com.unarchive.android.result.FileVideoResultRepository
 import com.unarchive.android.result.LOCAL_AUDIO_PLATFORM
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.result.VideoResultKey
+import com.unarchive.android.sync.ImaClient
+import com.unarchive.android.sync.ImaCredentialStore
+import com.unarchive.android.sync.ImaFolder
+import com.unarchive.android.sync.ImaKnowledgeBase
+import com.unarchive.android.sync.ImaSyncService
+import com.unarchive.android.card.FileKnowledgeSyncRepository
+import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.video.VideoDownloader
 import com.unarchive.android.video.VideoFrameExtractor
 import java.io.File
@@ -127,6 +134,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     val modelRepository = ModelRepository(File(context.filesDir, "models"))
     private val apiKeyStore = ApiKeyStore(context)
     private val siliconFlowKeyStore = SiliconFlowKeyStore(context)
+    private val imaCredentialStore = ImaCredentialStore(context)
+    private val imaSyncStateRepository = FileKnowledgeSyncRepository(File(context.filesDir, "knowledge-cards/ima-sync.json"))
     private val cardAnalyzer = CardAnalyzer()
 
     // --- state ---
@@ -136,6 +145,15 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     var apiKeyInput by mutableStateOf(apiKeyStore.get().orEmpty())
     var siliconFlowKeyInput by mutableStateOf(siliconFlowKeyStore.get().orEmpty())
+    var imaClientIdInput by mutableStateOf(imaCredentialStore.clientId().orEmpty())
+    var imaApiKeyInput by mutableStateOf(imaCredentialStore.apiKey().orEmpty())
+    var imaKnowledgeBaseId by mutableStateOf(prefs.getString("ima_kb_id", "").orEmpty())
+    var imaFolderId by mutableStateOf(prefs.getString("ima_folder_id", "").orEmpty())
+    var imaSyncStatus by mutableStateOf<Map<String, String>>(emptyMap())
+    var imaDiscoveryStatus by mutableStateOf("")
+    var imaFolderDiscoveryStatus by mutableStateOf("")
+    var imaKnowledgeBases by mutableStateOf<List<ImaKnowledgeBase>>(emptyList())
+    var imaFolders by mutableStateOf<List<ImaFolder>>(emptyList())
     var thinkingEnabled by mutableStateOf(apiKeyStore.getThinkingEnabled())
         private set
 
@@ -335,6 +353,81 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         activeBatchManifest = null
         batchManifestRepository.delete()
         AppLogger.info(TAG, "B站已退出登录")
+    }
+
+    fun saveImaSettings() {
+        imaCredentialStore.saveClientId(imaClientIdInput)
+        imaCredentialStore.saveApiKey(imaApiKeyInput)
+        prefs.edit().putString("ima_kb_id", imaKnowledgeBaseId.trim()).putString("ima_folder_id", imaFolderId.trim()).apply()
+        status = "ima 设置已保存（凭据已加密）"
+    }
+
+    fun clearImaSettings() {
+        imaCredentialStore.clear(); imaClientIdInput = ""; imaApiKeyInput = ""; imaKnowledgeBaseId = ""; imaFolderId = ""
+        imaKnowledgeBases = emptyList(); imaFolders = emptyList(); status = "ima 凭据已清除"
+    }
+
+    fun checkImaConnection() {
+        val clientId = imaClientIdInput.trim(); val apiKey = imaApiKeyInput.trim()
+        if (clientId.isBlank() || apiKey.isBlank()) { imaDiscoveryStatus = "请先填写 ima 凭据"; return }
+        generateJob = viewModelScope.launch {
+            try {
+                val client = ImaClient(clientId, apiKey)
+                client.connect()
+                val bases = client.listKnowledgeBases()
+                imaKnowledgeBases = bases
+                if (bases.none { it.id == imaKnowledgeBaseId }) {
+                    imaKnowledgeBaseId = ""
+                    imaFolderId = ""
+                    imaFolders = emptyList()
+                }
+                imaDiscoveryStatus = if (bases.isEmpty()) "连接成功，但没有可写知识库" else "已加载 ${bases.size} 个可用知识库"
+            } catch (e: Exception) { imaDiscoveryStatus = "连接失败：${e.message ?: "未知错误"}" }
+            finally { generateJob = null }
+        }
+    }
+
+    fun discoverImaFolders() {
+        val clientId = imaClientIdInput.trim(); val apiKey = imaApiKeyInput.trim(); val kbId = imaKnowledgeBaseId.trim()
+        if (clientId.isBlank() || apiKey.isBlank() || kbId.isBlank()) { imaFolderDiscoveryStatus = "请先填写凭据和知识库 ID"; return }
+        generateJob = viewModelScope.launch {
+            try {
+                val folders = ImaClient(clientId, apiKey).listKnowledgeBaseFolders(kbId)
+                imaFolders = folders
+                if (folders.none { it.id == imaFolderId }) imaFolderId = ""
+                imaFolderDiscoveryStatus = if (folders.isEmpty()) "该知识库暂无文件夹，将使用根目录" else "已加载 ${folders.size} 个文件夹"
+            } catch (e: Exception) { imaFolderDiscoveryStatus = "文件夹读取失败：${e.message ?: "未知错误"}" }
+            finally { generateJob = null }
+        }
+    }
+
+    fun selectImaKnowledgeBase(id: String) {
+        imaKnowledgeBaseId = id
+        imaFolderId = ""
+        imaFolders = emptyList()
+        imaFolderDiscoveryStatus = ""
+    }
+
+    fun selectImaFolder(id: String) {
+        imaFolderId = id
+    }
+
+    fun syncKnowledgeCard(card: KnowledgeCard) {
+        if (generateJob != null || runningJob != null) return
+        val clientId = imaCredentialStore.clientId().orEmpty()
+        val apiKey = imaCredentialStore.apiKey().orEmpty()
+        if (clientId.isBlank() || apiKey.isBlank() || imaKnowledgeBaseId.isBlank()) { status = "请先配置 ima 凭据和知识库 ID"; return }
+        generateJob = viewModelScope.launch {
+            try {
+                val result = ImaSyncService(
+                    ImaClient(clientId, apiKey),
+                    imaSyncStateRepository,
+                    readAsset = { asset -> knowledgeCardRepository.assetFile(card, asset)?.takeIf(File::isFile)?.readBytes() },
+                ).sync(card, imaKnowledgeBaseId.trim(), imaFolderId.trim())
+                imaSyncStatus = imaSyncStatus + (card.cardId.value to "${result.state}: ${result.message}")
+                status = "ima：${result.message}"
+            } finally { generateJob = null }
+        }
     }
 
     fun loadFavoriteFolders() {

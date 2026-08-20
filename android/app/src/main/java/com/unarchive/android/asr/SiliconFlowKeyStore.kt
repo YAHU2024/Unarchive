@@ -1,24 +1,24 @@
 package com.unarchive.android.asr
 
 import android.content.Context
+import com.unarchive.android.security.KeystoreSecretStore
 
 /**
- * Stores the user's SiliconFlow API key in app-private SharedPreferences, for
- * the cloud ASR fallback. Mirrors `analyzer.ApiKeyStore`; Keystore-backed
- * storage is a follow-up hardening step.
+ * Stores the user's SiliconFlow API key encrypted with Android Keystore.
  */
 class SiliconFlowKeyStore(context: Context) {
     private val preferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val secret = KeystoreSecretStore(context, KEY)
 
-    fun get(): String? = preferences.getString(KEY, null)?.trim()?.takeIf { it.isNotEmpty() }
+    fun get(): String? = secret.get() ?: preferences.getString(KEY, null)?.trim()?.takeIf { it.isNotEmpty() }?.also { secret.save(it); preferences.edit().remove(KEY).apply() }
 
     fun save(apiKey: String) {
-        preferences.edit().putString(KEY, apiKey.trim()).apply()
+        secret.save(apiKey)
     }
 
     fun clear() {
-        preferences.edit().remove(KEY).apply()
+        secret.clear(); preferences.edit().remove(KEY).apply()
     }
 
     private companion object {

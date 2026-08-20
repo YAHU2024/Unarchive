@@ -94,7 +94,12 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
             ) {
                 Text("重新生成")
             }
+            OutlinedButton(
+                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                onClick = { vm.syncKnowledgeCard(card) },
+            ) { Text("同步 ima") }
         }
+        vm.imaSyncStatus[card.cardId.value]?.let { Text("ima：$it", style = MaterialTheme.typography.bodySmall) }
         HorizontalDivider()
         Text("笔记内容", style = MaterialTheme.typography.titleMedium)
         Text(card.markdown, style = MaterialTheme.typography.bodyMedium)
