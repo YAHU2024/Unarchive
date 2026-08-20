@@ -1,5 +1,6 @@
 package com.unarchive.android.pipeline
 
+import com.unarchive.android.card.CardStageState
 import com.unarchive.android.log.AppLogger
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -35,6 +36,9 @@ data class BatchManifestItem(
     val errorMessage: String? = null,
     val apiCode: Int? = null,
     val retryability: BatchFailureRetryability = BatchFailureRetryability.UNKNOWN,
+    val cardState: CardStageState = CardStageState.SKIPPED,
+    val cardId: String? = null,
+    val cardVersion: String? = null,
     val updatedAtEpochMs: Long = System.currentTimeMillis(),
 )
 
@@ -58,7 +62,11 @@ data class BatchManifest(
         it.state == BatchItemState.QUEUED ||
             it.state == BatchItemState.RUNNING ||
             it.state == BatchItemState.FAILED ||
-            it.state == BatchItemState.CANCELLED
+            it.state == BatchItemState.CANCELLED ||
+            it.cardState == CardStageState.QUEUED ||
+            it.cardState == CardStageState.RUNNING ||
+            it.cardState == CardStageState.FAILED ||
+            it.cardState == CardStageState.PARTIAL
     }
 
     companion object { const val SCHEMA_VERSION = 1 }
@@ -127,6 +135,9 @@ private fun BatchManifest.toJson() = JSONObject()
                 .put("error_message", item.errorMessage)
                 .put("api_code", item.apiCode)
                 .put("retryability", item.retryability.name)
+                .put("card_state", item.cardState.name)
+                .put("card_id", item.cardId)
+                .put("card_version", item.cardVersion)
                 .put("updated_at_epoch_ms", item.updatedAtEpochMs))
         }
     })
@@ -147,6 +158,11 @@ private fun JSONObject.toManifest(): BatchManifest {
                 retryability = runCatching {
                     BatchFailureRetryability.valueOf(item.optString("retryability"))
                 }.getOrDefault(BatchFailureRetryability.UNKNOWN),
+                cardState = runCatching {
+                    CardStageState.valueOf(item.optString("card_state"))
+                }.getOrDefault(CardStageState.SKIPPED),
+                cardId = item.optString("card_id").takeIf { it.isNotBlank() },
+                cardVersion = item.optString("card_version").takeIf { it.isNotBlank() },
                 updatedAtEpochMs = item.optLong("updated_at_epoch_ms", 0L),
             ))
         }

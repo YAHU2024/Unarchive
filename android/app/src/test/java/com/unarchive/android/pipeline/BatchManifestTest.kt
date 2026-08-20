@@ -1,5 +1,6 @@
 package com.unarchive.android.pipeline
 
+import com.unarchive.android.card.CardStageState
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -55,6 +56,26 @@ class BatchManifestTest {
         val manifest = sampleManifest().copy(folderTitle = "我的收藏夹")
         repository.save(manifest)
         assertEquals("我的收藏夹", repository.load()?.folderTitle)
+    }
+
+    @Test
+    fun cardStageAndIdentityRoundTripAndKeepRecoveryOpen() {
+        val repository = BatchManifestRepository(temporaryFolder.newFolder("card-stage"))
+        val manifest = sampleManifest().copy(
+            items = listOf(
+                BatchManifestItem(
+                    "BV1", "https://x", "card", BatchItemState.SUCCEEDED,
+                    cardState = CardStageState.PARTIAL,
+                    cardId = "bilibili:BV1",
+                    cardVersion = "version-1",
+                ),
+            ),
+        )
+
+        repository.save(manifest)
+
+        assertEquals(manifest, repository.load())
+        assertTrue(requireNotNull(repository.load()).unfinished())
     }
 
     @Test

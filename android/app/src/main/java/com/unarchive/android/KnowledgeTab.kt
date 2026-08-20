@@ -53,7 +53,7 @@ internal fun KnowledgeTab(vm: UnarchiveViewModel) {
             vm.knowledgeCards.forEach { card ->
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = vm.runningJob == null && vm.generateJob == null,
+                    enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
                     onClick = { vm.selectKnowledgeCard(card) },
                 ) {
                     val marker = if (selected?.cardId == card.cardId) "▶ " else ""
@@ -84,8 +84,14 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
             Text("最近错误：$error", color = MaterialTheme.colorScheme.error, maxLines = 3)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { vm.exportKnowledgeCard(card) }) { Text("导出") }
-            OutlinedButton(onClick = { vm.regenerateCard(card) }) {
+            OutlinedButton(
+                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                onClick = { vm.exportKnowledgeCard(card) },
+            ) { Text("导出") }
+            OutlinedButton(
+                enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null,
+                onClick = { vm.regenerateCard(card) },
+            ) {
                 Text("重新生成")
             }
         }

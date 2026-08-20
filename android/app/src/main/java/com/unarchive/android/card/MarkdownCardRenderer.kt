@@ -74,6 +74,50 @@ object MarkdownCardRenderer {
 
     fun fileName(title: String): String = "${safeFileName(title)}.md"
 
+    data class EmbeddedAssetsResult(
+        val markdown: String,
+        val requestedCount: Int,
+        val embeddedCount: Int,
+        val embeddedBytes: Long,
+        val missingCount: Int,
+    )
+
+    /** Converts local relative asset references into portable data URLs for one-file sharing. */
+    fun embedAssets(
+        markdown: String,
+        assets: List<CardAsset>,
+        readAsset: (CardAsset) -> ByteArray?,
+    ): String = embedAssetsWithStats(markdown, assets, readAsset).markdown
+
+    fun embedAssetsWithStats(
+        markdown: String,
+        assets: List<CardAsset>,
+        readAsset: (CardAsset) -> ByteArray?,
+    ): EmbeddedAssetsResult {
+        var embeddedCount = 0
+        var embeddedBytes = 0L
+        var missingCount = 0
+        val rendered = assets.fold(markdown) { current, asset ->
+            val bytes = readAsset(asset)
+            if (bytes == null) {
+                missingCount++
+                return@fold current
+            }
+            val marker = "![](${asset.relativePath})"
+            val dataUrl = "![](data:${asset.mimeType};base64,${java.util.Base64.getEncoder().encodeToString(bytes)})"
+            embeddedCount++
+            embeddedBytes += bytes.size
+            current.replace(marker, dataUrl)
+        }
+        return EmbeddedAssetsResult(
+            markdown = rendered,
+            requestedCount = assets.size,
+            embeddedCount = embeddedCount,
+            embeddedBytes = embeddedBytes,
+            missingCount = missingCount,
+        )
+    }
+
     private fun timestampLink(canonicalUrl: String, startMs: Long): String =
         "[${startMs.asTimestamp()}](${timestampUrl(canonicalUrl, startMs)})"
 

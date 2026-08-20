@@ -32,6 +32,7 @@ import com.unarchive.android.auth.BilibiliLoginClient
 import com.unarchive.android.card.MarkdownCardRenderer
 import com.unarchive.android.card.CardAsset
 import com.unarchive.android.card.CardAssetKind
+import com.unarchive.android.card.CardProcessingLog
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.FileKnowledgeCardRepository
 import com.unarchive.android.card.KnowledgeCard
@@ -73,6 +74,7 @@ import com.unarchive.android.video.VideoDownloader
 import com.unarchive.android.video.VideoFrameExtractor
 import java.io.File
 import java.util.Locale
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -178,6 +180,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
     var batchSummary by mutableStateOf<BatchRunSummary?>(null)
         private set
+    var batchCardSucceededCount by mutableIntStateOf(0)
+        private set
+    var batchCardPartialCount by mutableIntStateOf(0)
+        private set
     var batchManifestItems by mutableStateOf<List<BatchManifestItem>>(emptyList())
         private set
     var batchRecoveryAvailable by mutableStateOf(false)
@@ -192,8 +198,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
     var generateJob by mutableStateOf<Job?>(null)
         private set
+    var exportJob by mutableStateOf<Job?>(null)
+        private set
     private var favoritesJob: Job? = null
     private var activeBatchManifest: BatchManifest? = null
+    private var batchGeneratingCard = false
+    private var batchCardJob: Job? = null
 
     private var lastProgressEmitMs = 0L
 
@@ -318,6 +328,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         favoriteVideos = emptyList()
         selectedFavoriteVideoIds = emptySet()
         batchSummary = null
+        batchCardSucceededCount = 0
+        batchCardPartialCount = 0
         batchManifestItems = emptyList()
         batchRecoveryAvailable = false
         activeBatchManifest = null
@@ -428,7 +440,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         status = "已放弃未完成批次。"
     }
 
-    fun resumeBatch() = runStoredBatch(setOf(BatchItemState.QUEUED, BatchItemState.CANCELLED))
+    fun resumeBatch() = runStoredBatch(setOf(BatchItemState.QUEUED, BatchItemState.CANCELLED, BatchItemState.SUCCEEDED))
 
     fun retryFailedBatch() {
         val manifest = activeBatchManifest
@@ -466,12 +478,70 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun exportKnowledgeCard(card: KnowledgeCard) {
-        context.shareMarkdownFile(
-            fileName = MarkdownCardRenderer.fileName(card.title),
-            markdown = card.markdown,
-            title = card.title,
+        if (generateJob != null || runningJob != null || exportJob != null) return
+        val operationId = UUID.randomUUID().toString()
+        val startedAt = SystemClock.elapsedRealtime()
+        CardProcessingLog.event(
+            operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.STARTED, card.cardId,
+            metadata = mapOf(
+                "cardVersion" to card.cardVersion.take(12),
+                "assetCount" to card.assets.size,
+                "markdownBytes" to card.markdown.toByteArray(Charsets.UTF_8).size,
+            ),
         )
-        status = "知识卡片已导出。"
+        exportJob = viewModelScope.launch {
+            try {
+                val embedded = withContext(Dispatchers.IO) {
+                    MarkdownCardRenderer.embedAssetsWithStats(
+                        markdown = card.markdown,
+                        assets = card.assets,
+                    ) { asset ->
+                        knowledgeCardRepository.assetFile(card, asset)?.readBytes()
+                    }
+                }
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.EXPORT_ASSETS, CardProcessingLog.State.COMPLETED, card.cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                    metadata = mapOf(
+                        "requestedCount" to embedded.requestedCount,
+                        "embeddedCount" to embedded.embeddedCount,
+                        "missingCount" to embedded.missingCount,
+                        "assetBytes" to embedded.embeddedBytes,
+                        "exportMarkdownBytes" to embedded.markdown.toByteArray(Charsets.UTF_8).size,
+                    ),
+                )
+                context.shareMarkdownFile(
+                    fileName = MarkdownCardRenderer.fileName(card.title),
+                    markdown = embedded.markdown,
+                    title = card.title,
+                )
+                status = if (embedded.embeddedCount > 0) {
+                    "知识卡片已导出（已内嵌截图）。"
+                } else {
+                    "知识卡片已导出。"
+                }
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.EXPORT_SHARE, CardProcessingLog.State.LAUNCHED, card.cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                    metadata = mapOf("embeddedCount" to embedded.embeddedCount),
+                )
+            } catch (_: CancellationException) {
+                status = "知识卡片导出已取消。"
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.CANCELLED, card.cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                )
+            } catch (error: Exception) {
+                status = "知识卡片导出失败：${CardProcessingLog.safeError(error)}"
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.FAILED, card.cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                    metadata = mapOf("error" to CardProcessingLog.safeError(error)),
+                )
+            } finally {
+                exportJob = null
+            }
+        }
     }
 
     fun regenerateCard(card: KnowledgeCard) {
@@ -576,7 +646,14 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
             items = items.map { item ->
-                BatchManifestItem(item.videoId!!.value, item.canonicalUrl!!, item.title, BatchItemState.QUEUED, updatedAtEpochMs = now)
+                BatchManifestItem(
+                    videoId = item.videoId!!.value,
+                    canonicalUrl = item.canonicalUrl!!,
+                    title = item.title,
+                    state = BatchItemState.QUEUED,
+                    cardState = CardStageState.QUEUED,
+                    updatedAtEpochMs = now,
+                )
             },
         )
         batchManifestRepository.save(manifest)
@@ -619,6 +696,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val config = currentAsrConfig()
         val items = manifest.items
             .filter { it.state in targetStates }
+            .filter { it.state != BatchItemState.SUCCEEDED || it.cardState != CardStageState.SUCCEEDED }
             .filter { targetVideoIds == null || it.videoId in targetVideoIds }
             .map { it.toFavoriteVideo(manifest.folderId) }
         result = null
@@ -635,30 +713,85 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     batchId = manifest.batchId,
                     batchContext = "folderId=${manifest.folderId}",
                     shouldSkip = { item ->
-                        resultRepository.find(VideoResultKey("bilibili", item.videoId!!.value))?.let {
-                            it.configSignature == config.signature() || it.configSignature == "bilibili-subtitle"
+                        val stored = resultRepository.find(VideoResultKey("bilibili", item.videoId!!.value))
+                        val card = knowledgeCardRepository.find(KnowledgeCardId("bilibili", item.videoId!!.value))
+                        stored?.let {
+                            val cardComplete = card != null &&
+                                card.analysisState != CardStageState.FAILED &&
+                                card.screenshotsState != CardStageState.FAILED &&
+                                card.screenshotsState != CardStageState.PARTIAL
+                            (it.configSignature == config.signature() || it.configSignature == "bilibili-subtitle") && cardComplete
                         } == true
                     },
                     onItemState = { item, state, errorMessage, apiCode ->
                         persistBatchItemState(item, state, errorMessage, apiCode)
                     },
                     process = { item, index, total ->
-                        val single = try {
-                            executeVideo(item.canonicalUrl!!, false, config, "批量 ${index + 1}/$total：", index.toFloat() / total, 1f / total)
-                        } catch (error: BilibiliApiException) {
-                            if (!error.isTerminalUnavailable) throw error
-                            val reason = unavailableReason(error)
-                            markFavoriteVideoUnavailable(item.videoId!!.value, reason)
-                            throw BatchUnavailableException(error.code, reason)
+                        val key = VideoResultKey("bilibili", item.videoId!!.value)
+                        val existing = resultRepository.find(key)?.takeIf {
+                            it.configSignature == config.signature() || it.configSignature == "bilibili-subtitle"
                         }
-                        videoResult = single
-                        result = single.benchmark
-                        selectedStoredResult = single.storedResult
+                        val stored = if (existing != null) {
+                            status = "批量 ${index + 1}/$total：复用已有转录，正在生成知识卡片..."
+                            AppLogger.info(
+                                TAG,
+                                "批量复用转录 batchId=${manifest.batchId} videoId=${item.videoId!!.value} reason=card_missing",
+                            )
+                            existing
+                        } else {
+                            val single = try {
+                                executeVideo(item.canonicalUrl!!, false, config, "批量 ${index + 1}/$total：", index.toFloat() / total, 1f / total)
+                            } catch (error: BilibiliApiException) {
+                                if (!error.isTerminalUnavailable) throw error
+                                val reason = unavailableReason(error)
+                                markFavoriteVideoUnavailable(item.videoId!!.value, reason)
+                                throw BatchUnavailableException(error.code, reason)
+                            }
+                            videoResult = single
+                            result = single.benchmark
+                            single.storedResult ?: throw IllegalStateException("转录完成但未返回本地结果")
+                        }
+                        selectedStoredResult = stored
                         storedResults = resultRepository.list()
+                        persistBatchCardState(item, CardStageState.RUNNING)
+                        batchGeneratingCard = true
+                        try {
+                            generateCard(stored)
+                            batchCardJob = generateJob
+                            batchCardJob?.join()
+                        } catch (error: CancellationException) {
+                            persistBatchCardState(item, CardStageState.QUEUED)
+                            throw error
+                        } catch (error: Exception) {
+                            persistBatchCardState(item, CardStageState.FAILED)
+                            throw error
+                        } finally {
+                            batchCardJob = null
+                            batchGeneratingCard = false
+                        }
+                        val card = knowledgeCardRepository.find(
+                            KnowledgeCardId(stored.key.platform, stored.key.videoId),
+                        ) ?: throw IllegalStateException("本地知识卡片未生成")
+                        val cardState = if (
+                            card.analysisState == CardStageState.FAILED ||
+                            card.screenshotsState == CardStageState.FAILED ||
+                            card.screenshotsState == CardStageState.PARTIAL
+                        ) CardStageState.PARTIAL else CardStageState.SUCCEEDED
+                        persistBatchCardState(
+                            item,
+                            cardState,
+                            card.cardId.value,
+                            card.cardVersion,
+                        )
                     },
                 )
                 batchSummary = summary
-                status = "批量完成：成功 ${summary.succeeded}，跳过 ${summary.skipped}，不可用 ${summary.unavailable}，失败 ${summary.failed}。"
+                val cardItems = activeBatchManifest?.items.orEmpty()
+                val cardSucceeded = cardItems.count { it.cardState == CardStageState.SUCCEEDED }
+                val cardPartial = cardItems.count { it.cardState == CardStageState.PARTIAL }
+                batchCardSucceededCount = cardSucceeded
+                batchCardPartialCount = cardPartial
+                status = "批量完成：转录成功 ${summary.succeeded}，跳过 ${summary.skipped}，不可用 ${summary.unavailable}，失败 ${summary.failed}；知识卡片完成 $cardSucceeded，部分完成 $cardPartial。"
                 if (activeBatchManifest?.unfinished() != true) {
                     batchManifestRepository.delete()
                     activeBatchManifest = null
@@ -668,6 +801,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     batchRecoveryAvailable = true
                 }
             } catch (_: CancellationException) {
+                batchCardJob?.cancel()
                 status = "批量处理已取消。可从批次清单恢复。"
                 batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
             } catch (error: Exception) {
@@ -675,6 +809,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 AppLogger.error(TAG, "批量处理失败：${error.message}")
                 batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
             } finally {
+                // Covers cancellation initiated by lifecycle teardown or a
+                // parent scope, where the UI cancel callback is not involved.
+                batchCardJob?.cancel()
+                if (batchGeneratingCard) generateJob?.cancel()
+                batchCardJob = null
+                batchGeneratingCard = false
                 runningJob = null
             }
         }
@@ -682,6 +822,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun persistBatchItemState(item: BilibiliFavoriteVideo, state: BatchItemState, errorMessage: String?, apiCode: Int?) {
         val current = activeBatchManifest ?: return
+        val previous = current.items.firstOrNull { it.videoId == item.videoId!!.value }
+        val skippedCard = if (state == BatchItemState.SKIPPED) {
+            knowledgeCardRepository.find(KnowledgeCardId("bilibili", item.videoId!!.value))
+        } else null
         val updated = current.withItem(
             BatchManifestItem(
                 videoId = item.videoId!!.value,
@@ -691,6 +835,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 errorMessage = errorMessage,
                 apiCode = apiCode,
                 retryability = if (state == BatchItemState.FAILED) BatchFailureClassifier.classify(errorMessage) else BatchFailureRetryability.UNKNOWN,
+                cardState = when {
+                    skippedCard != null -> CardStageState.SUCCEEDED
+                    state == BatchItemState.UNAVAILABLE -> CardStageState.SKIPPED
+                    else -> previous?.cardState ?: CardStageState.SKIPPED
+                },
+                cardId = skippedCard?.cardId?.value ?: previous?.cardId,
+                cardVersion = skippedCard?.cardVersion ?: previous?.cardVersion,
             ),
         )
         activeBatchManifest = batchManifestRepository.save(updated)
@@ -698,8 +849,33 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         AppLogger.info(
             TAG,
             "批次 manifest 已保存 batchId=${updated.batchId} folderId=${updated.folderId} " +
-                "manifestVersion=${updated.schemaVersion} videoId=${item.videoId.value} state=$state " +
-                "reason=state_transition",
+                "manifestVersion=${updated.schemaVersion} videoId=${item.videoId!!.value} state=$state " +
+            "reason=state_transition",
+        )
+    }
+
+    private fun persistBatchCardState(
+        item: BilibiliFavoriteVideo,
+        state: CardStageState,
+        cardId: String? = null,
+        cardVersion: String? = null,
+    ) {
+        val current = activeBatchManifest ?: return
+        val previous = current.items.firstOrNull { it.videoId == item.videoId!!.value } ?: return
+        val updated = current.withItem(
+            previous.copy(
+                cardState = state,
+                cardId = cardId ?: previous.cardId,
+                cardVersion = cardVersion ?: previous.cardVersion,
+                updatedAtEpochMs = System.currentTimeMillis(),
+            ),
+        )
+        activeBatchManifest = batchManifestRepository.save(updated)
+        batchManifestItems = updated.items
+        AppLogger.info(
+            TAG,
+            "批次卡片阶段已保存 batchId=${updated.batchId} folderId=${updated.folderId} " +
+                "videoId=${item.videoId!!.value} cardState=$state reason=card_transition",
         )
     }
 
@@ -850,17 +1026,33 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         status = "正在取消（等待当前识别段完成）..."
         AppLogger.info(TAG, "已请求取消")
         runningJob?.cancel()
+        // Batch card generation is launched as a separate viewModel job so the
+        // card UI can also start it directly. Cancel both sides explicitly;
+        // cancelling only the batch coordinator leaves that sibling job alive.
+        if (batchGeneratingCard) {
+            batchCardJob?.cancel()
+            generateJob?.cancel()
+        }
     }
 
     fun generateCard(stored: StoredVideoResult) {
-        if (generateJob != null || runningJob != null) return
+        if (generateJob != null || (runningJob != null && !batchGeneratingCard) || exportJob != null) return
         val apiKey = apiKeyStore.get()
         status = if (apiKey == null) "正在保存基础知识卡片..." else "正在保存基础知识卡片..."
-        AppLogger.info(TAG, "开始生成卡片：${stored.title}")
+        val operationId = UUID.randomUUID().toString()
+        val startedAt = SystemClock.elapsedRealtime()
+        val cardId = KnowledgeCardId(stored.key.platform, stored.key.videoId)
+        CardProcessingLog.event(
+            operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.STARTED, cardId,
+            metadata = mapOf(
+                "hasApiKey" to (apiKey != null),
+                "segmentCount" to stored.segments.size,
+                "durationMs" to stored.audioDurationMs,
+            ),
+        )
         generateJob = viewModelScope.launch {
-            val now = System.currentTimeMillis()
-            val cardId = KnowledgeCardId(stored.key.platform, stored.key.videoId)
             try {
+                val now = System.currentTimeMillis()
                 var analysis: com.unarchive.android.card.CardAnalysis? = null
                 var analysisState = if (apiKey == null) CardStageState.SKIPPED else CardStageState.RUNNING
                 val baseVersion = KnowledgeCard.version(
@@ -883,21 +1075,55 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     updatedAtEpochMs = now,
                     markdown = MarkdownCardRenderer.render(stored),
                 )
+                val baseStartedAt = SystemClock.elapsedRealtime()
                 knowledgeCardRepository.save(card)
                 refreshKnowledgeCards()
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.BASE_CARD, CardProcessingLog.State.PUBLISHED, cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - baseStartedAt,
+                    metadata = mapOf(
+                        "cardVersion" to card.cardVersion.take(12),
+                        "markdownBytes" to card.markdown.toByteArray(Charsets.UTF_8).size,
+                    ),
+                )
 
                 if (apiKey != null) {
+                    val aiStartedAt = SystemClock.elapsedRealtime()
+                    CardProcessingLog.event(operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.STARTED, cardId)
                     try {
                         status = "正在生成 AI 卡片..."
                         analysis = cardAnalyzer.analyze(
                             apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
                         )
                         analysisState = CardStageState.SUCCEEDED
+                        CardProcessingLog.event(
+                            operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.SUCCEEDED, cardId,
+                            elapsedMs = SystemClock.elapsedRealtime() - aiStartedAt,
+                            metadata = mapOf(
+                                "chapterCount" to analysis?.chapters?.size,
+                                "keyPointCount" to analysis?.keyPoints?.size,
+                            ),
+                        )
+                    } catch (error: CancellationException) {
+                        CardProcessingLog.event(
+                            operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.CANCELLED, cardId,
+                            elapsedMs = SystemClock.elapsedRealtime() - aiStartedAt,
+                        )
+                        throw error
                     } catch (error: Exception) {
                         analysisState = CardStageState.FAILED
-                        card = card.copy(lastError = "AI：${error.message}", updatedAtEpochMs = System.currentTimeMillis())
-                        AppLogger.warn(TAG, "AI 分析失败，保留基础卡片：${error.message}")
+                        card = card.copy(lastError = "AI：${CardProcessingLog.safeError(error)}", updatedAtEpochMs = System.currentTimeMillis())
+                        CardProcessingLog.event(
+                            operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.FAILED, cardId,
+                            elapsedMs = SystemClock.elapsedRealtime() - aiStartedAt,
+                            metadata = mapOf("error" to CardProcessingLog.safeError(error)),
+                        )
                     }
+                } else {
+                    CardProcessingLog.event(
+                        operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.SKIPPED, cardId,
+                        metadata = mapOf("reason" to "api_key_unconfigured"),
+                    )
                 }
 
                 val screenshotBytes = mutableListOf<ByteArray?>()
@@ -908,16 +1134,57 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 ) {
                     screenshotsState = CardStageState.RUNNING
                     status = "正在下载视频并截图..."
+                    val screenshotStartedAt = SystemClock.elapsedRealtime()
+                    CardProcessingLog.event(
+                        operationId, CardProcessingLog.Stage.SCREENSHOTS, CardProcessingLog.State.STARTED, cardId,
+                        metadata = mapOf("requestedCount" to analysis.chapters.size),
+                    )
                     try {
                         screenshotBytes += extractChapterScreenshotBytes(
                             platformAdapter, videoDownloader, frameExtractor,
                             stored, analysis.chapters.map { it.startMs },
                         )
                         screenshotsState = if (screenshotBytes.any { it == null }) CardStageState.PARTIAL else CardStageState.SUCCEEDED
+                        CardProcessingLog.event(
+                            operationId, CardProcessingLog.Stage.SCREENSHOTS, CardProcessingLog.State.COMPLETED, cardId,
+                            elapsedMs = SystemClock.elapsedRealtime() - screenshotStartedAt,
+                            metadata = mapOf(
+                                "requestedCount" to analysis.chapters.size,
+                                "succeededCount" to screenshotBytes.count { it != null },
+                                "failedCount" to screenshotBytes.count { it == null },
+                                "bytes" to screenshotBytes.filterNotNull().sumOf { it.size.toLong() },
+                                "state" to screenshotsState.name,
+                            ),
+                        )
+                    } catch (error: CancellationException) {
+                        CardProcessingLog.event(
+                            operationId, CardProcessingLog.Stage.SCREENSHOTS, CardProcessingLog.State.CANCELLED, cardId,
+                            elapsedMs = SystemClock.elapsedRealtime() - screenshotStartedAt,
+                        )
+                        throw error
                     } catch (error: Exception) {
                         screenshotsState = CardStageState.FAILED
-                        AppLogger.warn(TAG, "截图失败，保留无图卡片：${error.message}")
+                        CardProcessingLog.event(
+                            operationId, CardProcessingLog.Stage.SCREENSHOTS, CardProcessingLog.State.FAILED, cardId,
+                            elapsedMs = SystemClock.elapsedRealtime() - screenshotStartedAt,
+                            metadata = mapOf(
+                                "requestedCount" to analysis.chapters.size,
+                                "error" to CardProcessingLog.safeError(error),
+                            ),
+                        )
                     }
+                } else {
+                    CardProcessingLog.event(
+                        operationId, CardProcessingLog.Stage.SCREENSHOTS, CardProcessingLog.State.SKIPPED, cardId,
+                        metadata = mapOf(
+                            "reason" to when {
+                                analysis == null -> "analysis_unavailable"
+                                analysis.chapters.isEmpty() -> "no_chapters"
+                                stored.key.platform == LOCAL_AUDIO_PLATFORM -> "local_audio"
+                                else -> "estimated_timing"
+                            },
+                        ),
+                    )
                 }
 
                 val validBytes = screenshotBytes.mapIndexedNotNull { index, bytes ->
@@ -931,6 +1198,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 if (finalVersion != card.cardVersion) {
                     card = card.copy(cardVersion = finalVersion)
                 }
+                val assetsStartedAt = SystemClock.elapsedRealtime()
                 val savedAssets = validBytes.map { (index, bytes) ->
                     knowledgeCardRepository.save(card)
                     knowledgeCardRepository.saveAsset(
@@ -940,6 +1208,14 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         timestampMs = analysis?.chapters?.getOrNull(index)?.startMs,
                     )
                 }
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.ASSETS, CardProcessingLog.State.PUBLISHED, cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - assetsStartedAt,
+                    metadata = mapOf(
+                        "assetCount" to savedAssets.size,
+                        "assetBytes" to savedAssets.sumOf { it.byteCount },
+                    ),
+                )
                 val paths = savedAssets.associateBy { it.chapterIndex ?: -1 }
                     .mapValues { (_, asset) -> asset.relativePath }
                 val finalMarkdown = MarkdownCardRenderer.render(
@@ -965,12 +1241,29 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     else -> "知识卡片已保存。"
                 }
                 AppLogger.info(TAG, "本地知识卡片已保存：${card.cardId.value} version=${card.cardVersion}")
-            } catch (_: CancellationException) {
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.PUBLISHED, cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                    metadata = mapOf(
+                        "cardVersion" to card.cardVersion.take(12),
+                        "markdownBytes" to card.markdown.toByteArray(Charsets.UTF_8).size,
+                        "assetCount" to card.assets.size,
+                    ),
+                )
+            } catch (cancellation: CancellationException) {
                 status = "AI 卡片生成已取消。"
-                AppLogger.warn(TAG, "卡片生成已取消")
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.CANCELLED, cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                )
+                throw cancellation
             } catch (error: Exception) {
-                status = "AI 生成失败：${error.message}。可点「导出卡片」导出基础版。"
-                AppLogger.error(TAG, "卡片生成失败：${error.message}")
+                status = "AI 生成失败：${CardProcessingLog.safeError(error)}。可点「导出卡片」导出基础版。"
+                CardProcessingLog.event(
+                    operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.FAILED, cardId,
+                    elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                    metadata = mapOf("error" to CardProcessingLog.safeError(error)),
+                )
             } finally {
                 generateJob = null
             }

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.log.AppLogger
 import com.unarchive.android.log.LogLevel
 import com.unarchive.android.pipeline.BatchItemState
+import com.unarchive.android.card.CardStageState
 
 @Composable
 internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
@@ -65,7 +66,8 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         if (vm.batchRecoveryAvailable) {
             Text("发现未完成批次", style = MaterialTheme.typography.titleMedium)
             Text(
-                "批次 ${vm.batchManifestItems.size} 项（收藏夹 ${vm.recoveryBatchFolderLabel}），可直接恢复。",
+                "批次 ${vm.batchManifestItems.size} 项（收藏夹 ${vm.recoveryBatchFolderLabel}），" +
+                    "待恢复卡片 ${vm.batchManifestItems.count { it.cardState != CardStageState.SUCCEEDED }} 项。",
                 style = MaterialTheme.typography.bodySmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -202,15 +204,22 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         vm.batchSummary?.let { summary ->
             Text(
                 "批次 ${summary.batchId.take(8)}：成功 ${summary.succeeded}，跳过 ${summary.skipped}，" +
-                    "不可用 ${summary.unavailable}，失败 ${summary.failed}",
+                    "不可用 ${summary.unavailable}，失败 ${summary.failed}；" +
+                    "卡片完成 ${vm.batchCardSucceededCount}，部分完成 ${vm.batchCardPartialCount}",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
         vm.batchManifestItems
-            .filter { it.state == BatchItemState.FAILED || it.state == BatchItemState.UNAVAILABLE || it.state == BatchItemState.CANCELLED }
+            .filter {
+                it.state == BatchItemState.FAILED ||
+                    it.state == BatchItemState.UNAVAILABLE ||
+                    it.state == BatchItemState.CANCELLED ||
+                    (it.state == BatchItemState.SUCCEEDED && it.cardState != CardStageState.SUCCEEDED)
+            }
             .forEach { item ->
                 Text(
-                    "${item.videoId} · ${batchStateText(item.state)}${item.errorMessage?.let { "：${friendlyBatchError(it)}" } ?: ""}",
+                    "${item.videoId} · ${batchStateText(item.state)} · 卡片${cardStateText(item.cardState)}" +
+                        "${item.errorMessage?.let { "：${friendlyBatchError(it)}" } ?: ""}",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (item.state == BatchItemState.UNAVAILABLE) {
                         MaterialTheme.colorScheme.error
@@ -280,6 +289,15 @@ private fun batchStateText(state: BatchItemState): String = when (state) {
     BatchItemState.UNAVAILABLE -> "不可用"
     BatchItemState.CANCELLED -> "已取消"
     else -> state.name
+}
+
+private fun cardStateText(state: CardStageState): String = when (state) {
+    CardStageState.QUEUED -> "排队"
+    CardStageState.RUNNING -> "处理中"
+    CardStageState.SUCCEEDED -> "完成"
+    CardStageState.FAILED -> "失败"
+    CardStageState.SKIPPED -> "跳过"
+    CardStageState.PARTIAL -> "部分完成"
 }
 
 private fun friendlyBatchError(message: String): String = when {
