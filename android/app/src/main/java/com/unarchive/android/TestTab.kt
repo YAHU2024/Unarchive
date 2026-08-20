@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.log.AppLogger
 import com.unarchive.android.log.LogLevel
 import com.unarchive.android.pipeline.BatchItemState
+import com.unarchive.android.pipeline.ImaBatchStageState
 import com.unarchive.android.card.CardStageState
 
 @Composable
@@ -85,6 +86,14 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
                     enabled = vm.runningJob == null,
                     onClick = { vm.abandonBatchRecovery() },
                 ) { Text("放弃批次") }
+            }
+        }
+        if (vm.batchImaSyncAvailable) {
+            Button(
+                enabled = vm.runningJob == null,
+                onClick = if (vm.batchImaRetryCount > 0) vm::retryImaBatch else vm::startImaBatchSync,
+            ) {
+                Text(if (vm.batchImaRetryCount > 0) "重试未完成 ima（${vm.batchImaRetryCount}）" else "同步本批到 ima（${vm.batchImaPendingCount}）")
             }
         }
 
@@ -209,17 +218,23 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        if (vm.batchManifestItems.isNotEmpty() && vm.batchImaPendingCount == 0 && vm.batchImaRetryCount == 0) {
+            Text("ima 批量同步：已完成或跳过", style = MaterialTheme.typography.bodySmall)
+        }
         vm.batchManifestItems
             .filter {
                 it.state == BatchItemState.FAILED ||
                     it.state == BatchItemState.UNAVAILABLE ||
                     it.state == BatchItemState.CANCELLED ||
                     (it.state == BatchItemState.SUCCEEDED && it.cardState != CardStageState.SUCCEEDED)
+                    || (it.cardId != null && it.imaState != ImaBatchStageState.SYNCED && it.imaState != ImaBatchStageState.SKIPPED)
             }
             .forEach { item ->
                 Text(
                     "${item.videoId} · ${batchStateText(item.state)} · 卡片${cardStateText(item.cardState)}" +
-                        "${item.errorMessage?.let { "：${friendlyBatchError(it)}" } ?: ""}",
+                        " · ima${imaBatchStateText(item.imaState)}" +
+                        "${item.errorMessage?.let { "：${friendlyBatchError(it)}" } ?: ""}" +
+                        "${item.imaErrorMessage?.let { "：$it" } ?: ""}",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (item.state == BatchItemState.UNAVAILABLE) {
                         MaterialTheme.colorScheme.error
@@ -298,6 +313,16 @@ private fun cardStateText(state: CardStageState): String = when (state) {
     CardStageState.FAILED -> "失败"
     CardStageState.SKIPPED -> "跳过"
     CardStageState.PARTIAL -> "部分完成"
+}
+
+private fun imaBatchStateText(state: ImaBatchStageState): String = when (state) {
+    ImaBatchStageState.QUEUED -> "排队"
+    ImaBatchStageState.RUNNING -> "同步中"
+    ImaBatchStageState.SYNCED -> "完成"
+    ImaBatchStageState.SKIPPED -> "跳过"
+    ImaBatchStageState.RETRYABLE_FAILURE -> "待重试"
+    ImaBatchStageState.PERMANENT_FAILURE -> "失败"
+    ImaBatchStageState.BLOCKED -> "已阻断"
 }
 
 private fun friendlyBatchError(message: String): String = when {

@@ -11,6 +11,10 @@ import org.json.JSONObject
 
 enum class BatchFailureRetryability { RETRYABLE, NON_RETRYABLE, UNKNOWN }
 
+enum class ImaBatchStageState {
+    QUEUED, RUNNING, SYNCED, SKIPPED, RETRYABLE_FAILURE, PERMANENT_FAILURE, BLOCKED,
+}
+
 object BatchFailureClassifier {
     fun classify(message: String?): BatchFailureRetryability {
         val text = message.orEmpty()
@@ -39,6 +43,10 @@ data class BatchManifestItem(
     val cardState: CardStageState = CardStageState.SKIPPED,
     val cardId: String? = null,
     val cardVersion: String? = null,
+    val imaState: ImaBatchStageState = ImaBatchStageState.SKIPPED,
+    val imaNoteId: String? = null,
+    val imaErrorMessage: String? = null,
+    val imaUpdatedAtEpochMs: Long = System.currentTimeMillis(),
     val updatedAtEpochMs: Long = System.currentTimeMillis(),
 )
 
@@ -47,6 +55,8 @@ data class BatchManifest(
     val batchId: String,
     val folderId: String,
     val folderTitle: String? = null,
+    val imaKnowledgeBaseId: String = "",
+    val imaFolderId: String = "",
     val configSignature: String,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
@@ -67,9 +77,14 @@ data class BatchManifest(
             it.cardState == CardStageState.RUNNING ||
             it.cardState == CardStageState.FAILED ||
             it.cardState == CardStageState.PARTIAL
+            || it.imaState == ImaBatchStageState.QUEUED
+            || it.imaState == ImaBatchStageState.RUNNING
+            || it.imaState == ImaBatchStageState.RETRYABLE_FAILURE
+            || it.imaState == ImaBatchStageState.PERMANENT_FAILURE
+            || it.imaState == ImaBatchStageState.BLOCKED
     }
 
-    companion object { const val SCHEMA_VERSION = 1 }
+    companion object { const val SCHEMA_VERSION = 2 }
 }
 
 class BatchManifestRepository(private val directory: File) {
@@ -122,6 +137,8 @@ private fun BatchManifest.toJson() = JSONObject()
     .put("batch_id", batchId)
     .put("folder_id", folderId)
     .put("folder_title", folderTitle)
+    .put("ima_knowledge_base_id", imaKnowledgeBaseId)
+    .put("ima_folder_id", imaFolderId)
     .put("config_signature", configSignature)
     .put("created_at_epoch_ms", createdAtEpochMs)
     .put("updated_at_epoch_ms", updatedAtEpochMs)
@@ -138,12 +155,17 @@ private fun BatchManifest.toJson() = JSONObject()
                 .put("card_state", item.cardState.name)
                 .put("card_id", item.cardId)
                 .put("card_version", item.cardVersion)
+                .put("ima_state", item.imaState.name)
+                .put("ima_note_id", item.imaNoteId)
+                .put("ima_error_message", item.imaErrorMessage)
+                .put("ima_updated_at_epoch_ms", item.imaUpdatedAtEpochMs)
                 .put("updated_at_epoch_ms", item.updatedAtEpochMs))
         }
     })
 
 private fun JSONObject.toManifest(): BatchManifest {
-    require(getInt("schema_version") == BatchManifest.SCHEMA_VERSION) { "Unsupported batch manifest schema" }
+    val schemaVersion = getInt("schema_version")
+    require(schemaVersion in 1..BatchManifest.SCHEMA_VERSION) { "Unsupported batch manifest schema" }
     val array = getJSONArray("items")
     val items = buildList {
         repeat(array.length()) { index ->
@@ -163,15 +185,23 @@ private fun JSONObject.toManifest(): BatchManifest {
                 }.getOrDefault(CardStageState.SKIPPED),
                 cardId = item.optString("card_id").takeIf { it.isNotBlank() },
                 cardVersion = item.optString("card_version").takeIf { it.isNotBlank() },
+                imaState = runCatching {
+                    ImaBatchStageState.valueOf(item.optString("ima_state"))
+                }.getOrDefault(ImaBatchStageState.SKIPPED),
+                imaNoteId = item.optString("ima_note_id").takeIf { it.isNotBlank() },
+                imaErrorMessage = item.optString("ima_error_message").takeIf { it.isNotBlank() },
+                imaUpdatedAtEpochMs = item.optLong("ima_updated_at_epoch_ms", 0L),
                 updatedAtEpochMs = item.optLong("updated_at_epoch_ms", 0L),
             ))
         }
     }
     return BatchManifest(
-        schemaVersion = getInt("schema_version"),
+        schemaVersion = BatchManifest.SCHEMA_VERSION,
         batchId = getString("batch_id"),
         folderId = getString("folder_id"),
         folderTitle = optString("folder_title").takeIf { it.isNotBlank() },
+        imaKnowledgeBaseId = optString("ima_knowledge_base_id"),
+        imaFolderId = optString("ima_folder_id"),
         configSignature = getString("config_signature"),
         createdAtEpochMs = getLong("created_at_epoch_ms"),
         updatedAtEpochMs = getLong("updated_at_epoch_ms"),

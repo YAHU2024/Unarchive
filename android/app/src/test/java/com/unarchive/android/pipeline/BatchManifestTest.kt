@@ -79,6 +79,48 @@ class BatchManifestTest {
     }
 
     @Test
+    fun imaStageAndTargetRoundTripKeepBatchRecoverable() {
+        val repository = BatchManifestRepository(temporaryFolder.newFolder("ima-stage"))
+        val manifest = sampleManifest().copy(
+            imaKnowledgeBaseId = "kb-test",
+            imaFolderId = "folder-test",
+            items = listOf(
+                BatchManifestItem(
+                    "BV1", "https://x", "ima", BatchItemState.SUCCEEDED,
+                    cardState = CardStageState.SUCCEEDED,
+                    cardId = "bilibili:BV1", cardVersion = "version-1",
+                    imaState = ImaBatchStageState.RETRYABLE_FAILURE,
+                    imaNoteId = "note-1", imaErrorMessage = "网络超时",
+                ),
+            ),
+        )
+
+        repository.save(manifest)
+
+        val restored = requireNotNull(repository.load())
+        assertEquals("kb-test", restored.imaKnowledgeBaseId)
+        assertEquals("folder-test", restored.imaFolderId)
+        assertEquals(ImaBatchStageState.RETRYABLE_FAILURE, restored.items.single().imaState)
+        assertEquals("note-1", restored.items.single().imaNoteId)
+        assertTrue(restored.unfinished())
+    }
+
+    @Test
+    fun legacyV1ManifestLoadsWithSkippedImaStage() {
+        val directory = temporaryFolder.newFolder("legacy-v1")
+        val repository = BatchManifestRepository(directory)
+        File(directory, "batch-manifest.json").writeText("""{
+            "schema_version":1, "batch_id":"b", "folder_id":"f",
+            "config_signature":"c", "created_at_epoch_ms":1, "updated_at_epoch_ms":1,
+            "items":[{"video_id":"BV1","canonical_url":"https://x","title":"t","state":"SUCCEEDED"}]
+        }""".trimIndent())
+
+        val restored = requireNotNull(repository.load())
+        assertEquals(ImaBatchStageState.SKIPPED, restored.items.single().imaState)
+        assertEquals(2, restored.schemaVersion)
+    }
+
+    @Test
     fun classifiesRetryableAndDeterministicFailures() {
         assertEquals(BatchFailureRetryability.RETRYABLE, BatchFailureClassifier.classify("云端转写失败：HTTP 500"))
         assertEquals(BatchFailureRetryability.RETRYABLE, BatchFailureClassifier.classify("读取超时"))

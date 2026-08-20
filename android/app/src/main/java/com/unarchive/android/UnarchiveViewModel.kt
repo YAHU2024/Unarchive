@@ -53,6 +53,7 @@ import com.unarchive.android.pipeline.BatchManifest
 import com.unarchive.android.pipeline.BatchManifestItem
 import com.unarchive.android.pipeline.BatchManifestRepository
 import com.unarchive.android.pipeline.BatchItemState
+import com.unarchive.android.pipeline.ImaBatchStageState
 import com.unarchive.android.pipeline.BatchFailureRetryability
 import com.unarchive.android.pipeline.BatchFailureClassifier
 import com.unarchive.android.platform.DownloadProgressListener
@@ -87,6 +88,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Single source of truth for the whole app. Owns every shared dependency and
@@ -212,6 +215,27 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         get() = activeBatchManifest?.folderTitle?.takeIf { it.isNotBlank() }
             ?: activeBatchManifest?.folderId
             ?: "未知"
+
+    val batchImaPendingCount: Int
+        get() = batchManifestItems.count { item ->
+            item.cardId != null && item.cardState != CardStageState.SKIPPED &&
+                item.imaState != ImaBatchStageState.SYNCED && item.imaState != ImaBatchStageState.SKIPPED
+        }
+
+    val batchImaRetryCount: Int
+        get() = batchManifestItems.count { it.imaState in setOf(
+            ImaBatchStageState.RETRYABLE_FAILURE,
+            ImaBatchStageState.PERMANENT_FAILURE,
+            ImaBatchStageState.BLOCKED,
+        ) }
+
+    val batchImaSyncAvailable: Boolean
+        get() = imaKnowledgeBaseId.isNotBlank() && batchManifestItems.any { item ->
+            item.cardId != null && item.cardState != CardStageState.SKIPPED &&
+                ((item.imaState != ImaBatchStageState.SYNCED && item.imaState != ImaBatchStageState.SKIPPED) ||
+                    activeBatchManifest?.imaKnowledgeBaseId != imaKnowledgeBaseId ||
+                    activeBatchManifest?.imaFolderId != imaFolderId)
+        }
 
     var runningJob by mutableStateOf<Job?>(null)
         private set
@@ -749,6 +773,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     title = item.title,
                     state = BatchItemState.QUEUED,
                     cardState = CardStageState.QUEUED,
+                    imaState = if (imaKnowledgeBaseId.isNotBlank()) ImaBatchStageState.QUEUED else ImaBatchStageState.SKIPPED,
                     updatedAtEpochMs = now,
                 )
             },
@@ -939,6 +964,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 },
                 cardId = skippedCard?.cardId?.value ?: previous?.cardId,
                 cardVersion = skippedCard?.cardVersion ?: previous?.cardVersion,
+                imaState = previous?.imaState ?: ImaBatchStageState.SKIPPED,
+                imaNoteId = previous?.imaNoteId,
+                imaErrorMessage = previous?.imaErrorMessage,
+                imaUpdatedAtEpochMs = previous?.imaUpdatedAtEpochMs ?: System.currentTimeMillis(),
             ),
         )
         activeBatchManifest = batchManifestRepository.save(updated)
@@ -975,6 +1004,122 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 "videoId=${item.videoId!!.value} cardState=$state reason=card_transition",
         )
     }
+
+    fun startImaBatchSync() {
+        runImaBatchSync(retryOnly = false)
+    }
+
+    fun retryImaBatch() {
+        runImaBatchSync(retryOnly = true)
+    }
+
+    private fun runImaBatchSync(retryOnly: Boolean) {
+        val manifest = activeBatchManifest
+        val clientId = imaCredentialStore.clientId().orEmpty()
+        val apiKey = imaCredentialStore.apiKey().orEmpty()
+        val kbId = imaKnowledgeBaseId.trim()
+        val folderId = imaFolderId.trim()
+        if (manifest == null) { status = "没有可同步的批次。"; return }
+        if (runningJob != null || clientId.isBlank() || apiKey.isBlank() || kbId.isBlank()) {
+            status = if (clientId.isBlank() || apiKey.isBlank() || kbId.isBlank()) "请先配置 ima 凭据和知识库。" else "当前已有任务运行中。"
+            return
+        }
+        val targetChanged = manifest.imaKnowledgeBaseId != kbId || manifest.imaFolderId != folderId
+        val eligible = manifest.items.filter { item ->
+            val hasCard = item.cardId != null && item.cardVersion != null &&
+                knowledgeCardRepository.find(KnowledgeCardId("bilibili", item.videoId)) != null
+            hasCard && (!retryOnly || item.imaState in setOf(
+                ImaBatchStageState.QUEUED,
+                ImaBatchStageState.RUNNING,
+                ImaBatchStageState.RETRYABLE_FAILURE,
+                ImaBatchStageState.PERMANENT_FAILURE,
+                ImaBatchStageState.BLOCKED,
+            )) && (targetChanged || item.imaState != ImaBatchStageState.SYNCED)
+        }
+        if (eligible.isEmpty()) { status = "没有需要同步的本地知识卡片。"; return }
+        val prepared = manifest.copy(
+            imaKnowledgeBaseId = kbId,
+            imaFolderId = folderId,
+            items = manifest.items.map { item ->
+                if (targetChanged && item in eligible) item.copy(imaState = ImaBatchStageState.QUEUED, imaErrorMessage = null) else item
+            },
+        )
+        activeBatchManifest = batchManifestRepository.save(prepared)
+        batchManifestItems = prepared.items
+        runningJob = viewModelScope.launch {
+            try {
+                val client = ImaClient(clientId, apiKey)
+                client.connect()
+                for ((index, item) in eligible.withIndex()) {
+                    if (!coroutineContext.isActive) throw CancellationException("ima batch cancelled")
+                    val card = knowledgeCardRepository.find(KnowledgeCardId("bilibili", item.videoId)) ?: continue
+                    persistBatchImaState(item, ImaBatchStageState.RUNNING)
+                    status = "ima 批量同步 ${index + 1}/${eligible.size}：${item.title}"
+                    val result = ImaSyncService(
+                        client,
+                        imaSyncStateRepository,
+                        readAsset = { asset -> knowledgeCardRepository.assetFile(card, asset)?.takeIf(File::isFile)?.readBytes() },
+                    ).sync(card, kbId, folderId)
+                    val state = when (result.state) {
+                        KnowledgeSyncState.SYNCED -> if (result.message.contains("跳过")) ImaBatchStageState.SKIPPED else ImaBatchStageState.SYNCED
+                        KnowledgeSyncState.BLOCKED -> ImaBatchStageState.BLOCKED
+                        KnowledgeSyncState.RETRYABLE_FAILURE -> when {
+                            result.message.contains("200002") || result.message.contains("401") -> ImaBatchStageState.BLOCKED
+                            BatchFailureClassifier.classify(result.message) == BatchFailureRetryability.NON_RETRYABLE -> ImaBatchStageState.PERMANENT_FAILURE
+                            else -> ImaBatchStageState.RETRYABLE_FAILURE
+                        }
+                        else -> ImaBatchStageState.PERMANENT_FAILURE
+                    }
+                    persistBatchImaState(item, state, result.noteId, result.message)
+                    if (state == ImaBatchStageState.BLOCKED) {
+                        eligible.drop(index + 1).forEach { remaining ->
+                            persistBatchImaState(remaining, ImaBatchStageState.BLOCKED, errorMessage = result.message)
+                        }
+                        break
+                    }
+                }
+                val current = activeBatchManifest
+                val synced = current?.items?.count { it.imaState == ImaBatchStageState.SYNCED || it.imaState == ImaBatchStageState.SKIPPED } ?: 0
+                val pending = current?.items?.count { it.imaState !in setOf(ImaBatchStageState.SYNCED, ImaBatchStageState.SKIPPED) } ?: 0
+                status = "ima 批量完成：已同步/跳过 $synced，待处理 $pending。"
+                batchRecoveryAvailable = current?.unfinished() == true
+            } catch (_: CancellationException) {
+                status = "ima 批量同步已取消，可恢复未完成项目。"
+                batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
+            } catch (error: Exception) {
+                val message = error.message ?: "ima 批量同步失败"
+                val pendingIds = eligible.mapTo(HashSet()) { it.videoId }
+                activeBatchManifest?.items
+                    ?.filter { it.videoId in pendingIds && it.imaState !in setOf(ImaBatchStageState.SYNCED, ImaBatchStageState.SKIPPED) }
+                    ?.forEach { pending ->
+                        persistBatchImaState(pending, ImaBatchStageState.RETRYABLE_FAILURE, errorMessage = message)
+                    }
+                status = "ima 批量同步异常，未完成项目可重试：$message"
+                batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
+            } finally {
+                runningJob = null
+            }
+        }
+    }
+
+    private fun persistBatchImaState(
+        item: BatchManifestItem,
+        state: ImaBatchStageState,
+        noteId: String? = item.imaNoteId,
+        errorMessage: String? = null,
+    ) {
+        val current = activeBatchManifest ?: return
+        val updated = current.withItem(item.copy(
+            imaState = state,
+            imaNoteId = noteId,
+            imaErrorMessage = errorMessage,
+            imaUpdatedAtEpochMs = System.currentTimeMillis(),
+            updatedAtEpochMs = System.currentTimeMillis(),
+        ))
+        activeBatchManifest = batchManifestRepository.save(updated)
+        batchManifestItems = updated.items
+    }
+
 
     private fun markFavoriteVideoUnavailable(videoId: String, reason: String) {
         favoriteVideos = favoriteVideos.map { video ->

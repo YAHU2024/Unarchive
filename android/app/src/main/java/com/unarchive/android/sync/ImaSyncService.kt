@@ -8,6 +8,7 @@ import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.CardAsset
 import com.unarchive.android.card.MarkdownCardRenderer
 import java.io.File
+import kotlinx.coroutines.CancellationException
 
 data class ImaSyncResult(val state: KnowledgeSyncState, val noteId: String? = null, val message: String = "", val imagesSynced: Boolean = false)
 
@@ -46,6 +47,8 @@ class ImaSyncService(
         } catch (e: ImaRateLimitException) {
             states.save(KnowledgeSyncRecord(key, KnowledgeSyncState.RETRYABLE_FAILURE, noteId, false, e.message, System.currentTimeMillis()))
             return ImaSyncResult(KnowledgeSyncState.RETRYABLE_FAILURE, noteId, e.message.orEmpty())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             states.save(KnowledgeSyncRecord(key, KnowledgeSyncState.RETRYABLE_FAILURE, noteId, false, e.message, System.currentTimeMillis()))
             return ImaSyncResult(KnowledgeSyncState.RETRYABLE_FAILURE, noteId, e.message ?: "同步失败")
