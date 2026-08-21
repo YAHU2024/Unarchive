@@ -294,6 +294,21 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private var batchGeneratingCard = false
     private var batchCardJob: Job? = null
 
+    private fun refreshPublishedState() {
+        storedResults = resultRepository.list()
+        selectedStoredResult = selectedStoredResult?.let { current ->
+            storedResults.firstOrNull { it.key == current.key } ?: storedResults.firstOrNull()
+        } ?: storedResults.firstOrNull()
+        refreshKnowledgeCards()
+        selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
+            knowledgeCards.firstOrNull { it.cardId == current.cardId } ?: knowledgeCards.firstOrNull()
+        } ?: knowledgeCards.firstOrNull()
+    }
+
+    private fun clearRunningJobIfCurrent(job: Job?) {
+        if (job != null && runningJob === job) runningJob = null
+    }
+
     private var lastProgressEmitMs = 0L
 
     init {
@@ -1063,6 +1078,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     },
                 )
+                refreshPublishedState()
                 batchSummary = summary
                 val cardItems = activeBatchManifest?.items.orEmpty()
                 val cardSucceeded = cardItems.count { it.cardState == CardStageState.SUCCEEDED }
@@ -1093,7 +1109,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 if (batchGeneratingCard) generateJob?.cancel()
                 batchCardJob = null
                 batchGeneratingCard = false
-                runningJob = null
+                clearRunningJobIfCurrent(coroutineContext[Job])
             }
         }
     }
@@ -1427,9 +1443,15 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun cancel() {
+        val job = runningJob
+        if (job == null || !job.isActive) {
+            runningJob = null
+            if (status.startsWith("正在取消")) status = "批量处理已完成。"
+            return
+        }
         status = "正在取消（等待当前识别段完成）..."
         AppLogger.info(TAG, "已请求取消")
-        runningJob?.cancel()
+        job.cancel()
         // Batch card generation is launched as a separate viewModel job so the
         // card UI can also start it directly. Cancel both sides explicitly;
         // cancelling only the batch coordinator leaves that sibling job alive.
