@@ -17,11 +17,18 @@ class ImaSyncServiceTest {
     private class FakeGateway : ImaGateway {
         var imports = 0
         var associations = 0
+        var importedFolderId: String? = null
+        var associatedFolderId: String? = null
         var failAssociation = true
         override suspend fun connect() = Unit
         override suspend fun findNote(videoId: String): String? = null
-        override suspend fun importDocument(markdown: String, folderId: String): String { imports++; return "note-1" }
+        override suspend fun importDocument(markdown: String, folderId: String): String {
+            importedFolderId = folderId
+            imports++
+            return "note-1"
+        }
         override suspend fun addToKnowledgeBase(noteId: String, title: String, kbId: String, folderId: String) {
+            associatedFolderId = folderId
             if (failAssociation) { failAssociation = false; error("temporary failure") }
             associations++
         }
@@ -40,18 +47,20 @@ class ImaSyncServiceTest {
         )
         val service = ImaSyncService(gateway, repo)
         val first = kotlinx.coroutines.runBlocking {
-            service.sync(card, "kb-test", targetName = "测试知识库", folderName = "根目录")
+            service.sync(card, "kb-test", "kb-folder-1", targetName = "测试知识库", folderName = "课程")
         }
         assertEquals(KnowledgeSyncState.RETRYABLE_FAILURE, first.state)
         assertNotNull(repo.list().single().remoteNoteId)
         val second = kotlinx.coroutines.runBlocking {
-            service.sync(card, "kb-test", targetName = "测试知识库", folderName = "根目录")
+            service.sync(card, "kb-test", "kb-folder-1", targetName = "测试知识库", folderName = "课程")
         }
         assertEquals(KnowledgeSyncState.SYNCED, second.state)
         assertEquals(1, gateway.imports)
         assertEquals(1, gateway.associations)
+        assertEquals("", gateway.importedFolderId)
+        assertEquals("kb-folder-1", gateway.associatedFolderId)
         assertEquals("测试知识库", repo.list().single().targetName)
-        assertEquals("根目录", repo.list().single().folderName)
+        assertEquals("课程", repo.list().single().folderName)
         root.deleteRecursively()
     }
 

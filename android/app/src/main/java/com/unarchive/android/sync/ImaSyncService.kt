@@ -63,7 +63,11 @@ class ImaSyncService(
                         operationId, card, key, targetName, folderName, "导入笔记", "开始", startedAt,
                         metadata = mapOf("textOnlyFallback" to fallback),
                     )
-                    noteId = client.importDocument(markdown, folderId)
+                    // The selected folder belongs to the knowledge-base tree and
+                    // is only valid for add_knowledge. import_doc creates the
+                    // note in ima's note root unless a separate note folder is
+                    // explicitly configured.
+                    noteId = client.importDocument(markdown)
                     ImaSyncLog.event(
                         operationId, card, key, targetName, folderName, "导入笔记", "成功", startedAt,
                         noteId = noteId, metadata = mapOf("textOnlyFallback" to fallback),

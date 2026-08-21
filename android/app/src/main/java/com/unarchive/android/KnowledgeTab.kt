@@ -164,7 +164,9 @@ private fun CardStageState.displayName(): String = when (this) {
 }
 
 private fun syncMarkerText(record: KnowledgeSyncRecord): String =
-    "${record.key.targetType} · ${record.targetName.ifBlank { "知识库" }}：${syncStateText(record.state)}"
+    "${record.key.targetType} · ${record.targetName.ifBlank { "知识库" }} / " +
+        "${record.folderName.ifBlank { if (record.key.folderId.isBlank()) "根目录" else "文件夹" }}：" +
+        syncStateText(record.state)
 
 private fun syncStateText(state: KnowledgeSyncState): String = when (state) {
     KnowledgeSyncState.NOT_SYNCED -> "未同步"
