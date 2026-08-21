@@ -1,6 +1,8 @@
 package com.unarchive.android.storage
 
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StoragePreflightTest {
@@ -24,6 +26,37 @@ class StoragePreflightTest {
         assertThrows(InsufficientStorageException::class.java) {
             StoragePreflight({ snapshot }, { 200L * MiB }).check("下载", 20L * MiB)
         }
+    }
+
+    @Test
+    fun usesTheFixedFiveHundredTwelveMebibyteSafetyFloorAtTheBoundary() {
+        val exactFloor = 512L * MiB
+        StoragePreflight({ snapshot(allocatable = exactFloor, cache = 0L) }, { 4L * GiB })
+            .checkPersistent("截图", 0L)
+        assertThrows(InsufficientStorageException::class.java) {
+            StoragePreflight({ snapshot(allocatable = exactFloor - 1L, cache = 0L) }, { 4L * GiB })
+                .checkPersistent("截图", 0L)
+        }
+    }
+
+    @Test
+    fun persistentWritesIgnoreCacheBudgetButStillRequireAllocatableSpace() {
+        StoragePreflight({ snapshot(allocatable = 2L * GiB, cache = 2L * GiB) }, { 1L * GiB })
+            .checkPersistent("截图", 100L * MiB)
+        val error = assertThrows(InsufficientStorageException::class.java) {
+            StoragePreflight({ snapshot(allocatable = 600L * MiB, cache = 0L) }, { 4L * GiB })
+                .checkPersistent("截图", 200L * MiB)
+        }
+        assertEquals("截图", error.stage)
+        assertTrue(error.requiredBytes > 600L * MiB)
+    }
+
+    @Test
+    fun recoveryMessageIncludesCleanupAndRetryDirectionWithoutPrivateContent() {
+        val error = InsufficientStorageException("导出", 512L * MiB, 400L * MiB, 1L * GiB, 0L)
+        val message = error.recoveryMessage()
+        assertTrue(message.contains("清理可重建缓存"))
+        assertTrue(message.contains("重试"))
     }
 
     @Test

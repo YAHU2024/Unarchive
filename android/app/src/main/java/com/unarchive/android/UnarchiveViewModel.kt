@@ -81,6 +81,10 @@ import com.unarchive.android.storage.AndroidStorageStatsProvider
 import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.storage.StorageBudgetPolicy
 import com.unarchive.android.storage.StoragePreflight
+import com.unarchive.android.storage.RebuildableCacheCleaner
+import com.unarchive.android.storage.InsufficientStorageException
+import com.unarchive.android.storage.recoveryMessage
+import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.card.FileKnowledgeSyncRepository
 import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
@@ -191,6 +195,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         }.orEmpty(),
     )
     var cacheBudgetStatus by mutableStateOf("")
+        private set
+    var cacheClearing by mutableStateOf(false)
+        private set
+    var cacheClearStatus by mutableStateOf("")
         private set
 
     val effectiveCacheBudgetBytes: Long
@@ -343,6 +351,29 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+    }
+
+    fun clearRebuildableCache() {
+        if (cacheClearing || runningJob != null || generateJob != null || exportJob != null || imaSyncing) return
+        cacheClearing = true
+        cacheClearStatus = "正在清理可重建缓存……"
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { RebuildableCacheCleaner(context.cacheDir).clear() }
+                cacheClearStatus = if (result.failures.isEmpty()) {
+                    "已清理 " + formatStorageBytes(result.deletedBytes) + " 可重建缓存。模型、知识卡片、转录结果和凭据未受影响。"
+                } else {
+                    "已清理 " + formatStorageBytes(result.deletedBytes) + "；" + result.failures.size + " 个缓存项未能删除，可关闭占用它的操作后重试。"
+                }
+                AppLogger.info(TAG, "用户清理可重建缓存 bytes=" + result.deletedBytes + " failures=" + result.failures.size)
+                refreshStorageStats()
+            } catch (error: Exception) {
+                cacheClearStatus = "清理可重建缓存失败：" + CardProcessingLog.safeError(error) + "。请关闭占用操作后重试。"
+                AppLogger.warn(TAG, cacheClearStatus)
+            } finally {
+                cacheClearing = false
+            }
+        }
     }
 
     fun usePresetCacheBudget(gibibytes: Long) {
@@ -774,7 +805,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,
                 )
             } catch (error: Exception) {
-                status = "知识卡片导出失败：${CardProcessingLog.safeError(error)}"
+                status = if (error is InsufficientStorageException) {
+                    "知识卡片导出失败：" + error.recoveryMessage()
+                } else {
+                    "知识卡片导出失败：" + CardProcessingLog.safeError(error)
+                }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.FAILED, card.cardId,
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,
@@ -1568,15 +1603,23 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     card = card.copy(cardVersion = finalVersion)
                 }
                 val assetsStartedAt = SystemClock.elapsedRealtime()
-                val savedAssets = validBytes.map { (index, bytes) ->
-                    storagePreflight.checkPersistent("截图保存", bytes.size.toLong())
-                    knowledgeCardRepository.save(card)
-                    knowledgeCardRepository.saveAsset(
-                        card.cardId, card.cardVersion, "chapter-$index", bytes,
-                        kind = CardAssetKind.CHAPTER_SCREENSHOT,
-                        chapterIndex = index,
-                        timestampMs = analysis?.chapters?.getOrNull(index)?.startMs,
-                    )
+                val savedAssets = mutableListOf<CardAsset>()
+                var screenshotStorageError: InsufficientStorageException? = null
+                validBytes.forEach { (index, bytes) ->
+                    try {
+                        storagePreflight.checkPersistent("截图保存", bytes.size.toLong())
+                        knowledgeCardRepository.save(card)
+                        savedAssets += knowledgeCardRepository.saveAsset(
+                            card.cardId, card.cardVersion, "chapter-" + index, bytes,
+                            kind = CardAssetKind.CHAPTER_SCREENSHOT,
+                            chapterIndex = index,
+                            timestampMs = analysis?.chapters?.getOrNull(index)?.startMs,
+                        )
+                    } catch (storageError: InsufficientStorageException) {
+                        screenshotStorageError = storageError
+                        screenshotsState = if (savedAssets.isEmpty()) CardStageState.FAILED else CardStageState.PARTIAL
+                        return@forEach
+                    }
                 }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.ASSETS, CardProcessingLog.State.PUBLISHED, cardId,
@@ -1597,7 +1640,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     assets = savedAssets,
                     analysisState = analysisState,
                     screenshotsState = screenshotsState,
-                    lastError = card.lastError,
+                    lastError = screenshotStorageError?.let { "截图：" + it.recoveryMessage() } ?: card.lastError,
                     updatedAtEpochMs = System.currentTimeMillis(),
                     markdown = finalMarkdown,
                 )
@@ -1606,7 +1649,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 selectedKnowledgeCard = card
                 status = when {
                     analysisState == CardStageState.FAILED -> "基础知识卡片已保存，AI 生成失败，可重试。"
-                    screenshotsState == CardStageState.FAILED || screenshotsState == CardStageState.PARTIAL -> "知识卡片已保存，部分截图失败，可重试。"
+                    screenshotsState == CardStageState.FAILED || screenshotsState == CardStageState.PARTIAL ->
+                        screenshotStorageError?.let { "知识卡片已保存；" + it.recoveryMessage() }
+                            ?: "知识卡片已保存，部分截图失败，可重试。"
                     analysis == null -> "基础知识卡片已保存。"
                     else -> "知识卡片已保存。"
                 }
@@ -1628,7 +1673,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 )
                 throw cancellation
             } catch (error: Exception) {
-                status = "AI 生成失败：${CardProcessingLog.safeError(error)}。可点「导出卡片」导出基础版。"
+                status = if (error is InsufficientStorageException) {
+                    "基础知识卡片已保存；" + error.recoveryMessage()
+                } else {
+                    "AI 生成失败：" + CardProcessingLog.safeError(error) + "。可点「导出卡片」导出基础版。"
+                }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.FAILED, cardId,
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,

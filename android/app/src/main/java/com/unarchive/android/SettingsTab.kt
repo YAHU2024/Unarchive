@@ -244,6 +244,19 @@ private fun StorageManagementSection(vm: UnarchiveViewModel) {
             Text("系统存储设置")
         }
     }
+    OutlinedButton(
+        onClick = vm::clearRebuildableCache,
+        enabled = !vm.cacheClearing && vm.runningJob == null && vm.generateJob == null && vm.exportJob == null && !vm.imaSyncing,
+    ) {
+        Text(if (vm.cacheClearing) "正在清理" else "清理可重建缓存")
+    }
+    Text(
+        "仅清理导出临时文件、解码缓存、音频缓存和视频缓存；不会删除模型、知识卡片、转录结果、批次恢复信息或凭据。",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (vm.cacheClearStatus.isNotBlank()) {
+        Text(vm.cacheClearStatus, style = MaterialTheme.typography.bodySmall)
+    }
 
     Text(
         "缓存预算：${formatStorageBytes(vm.effectiveCacheBudgetBytes)}",
