@@ -5,6 +5,7 @@ import com.unarchive.android.platform.VideoStream
 import com.unarchive.android.platform.bilibili.HttpsMediaDownloadTransport
 import com.unarchive.android.platform.bilibili.MediaDownloadRequest
 import com.unarchive.android.platform.bilibili.MediaDownloadTransport
+import com.unarchive.android.storage.StoragePreflight
 import java.io.File
 import kotlinx.coroutines.CancellationException
 
@@ -15,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 class VideoDownloader(
     private val cacheDirectory: File,
     private val transport: MediaDownloadTransport = HttpsMediaDownloadTransport(followRedirects = true),
+    private val storagePreflight: (() -> StoragePreflight)? = null,
 ) {
     suspend fun download(
         stream: VideoStream,
@@ -27,6 +29,7 @@ class VideoDownloader(
 
         val part = File(cacheDirectory, "$videoId.m4s.part")
         part.delete()
+        storagePreflight?.invoke()?.check("视频下载", MAXIMUM_VIDEO_BYTES)
         val urls = (listOf(stream.url) + stream.backupUrls).distinct()
         var lastFailure: Exception? = null
         for (url in urls) {

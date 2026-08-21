@@ -6,6 +6,7 @@ import com.unarchive.android.platform.AudioStream
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.DownloadedAudio
 import com.unarchive.android.platform.VideoMetadata
+import com.unarchive.android.storage.StoragePreflight
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -31,6 +32,7 @@ class BilibiliAudioDownloader(
     private val maximumBytes: Long = DEFAULT_MAXIMUM_BYTES,
     private val cacheLifetimeMs: Long = DEFAULT_CACHE_LIFETIME_MS,
     private val wallClockEpochMs: () -> Long = System::currentTimeMillis,
+    private val storagePreflight: (() -> StoragePreflight)? = null,
 ) : AudioDownloader {
     init {
         require(maximumBytes > 0) { "maximumBytes must be positive" }
@@ -69,6 +71,7 @@ class BilibiliAudioDownloader(
         metadataPartial.delete()
         val urls = (listOf(stream.url) + stream.backupUrls).distinct()
         require(urls.isNotEmpty()) { "Bilibili audio stream has no URL" }
+        storagePreflight?.invoke()?.check("音频下载", maximumBytes)
         var lastFailure: Exception? = null
 
         for (url in urls) {

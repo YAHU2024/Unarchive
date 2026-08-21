@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -76,6 +77,10 @@ import com.unarchive.android.sync.ImaCredentialStore
 import com.unarchive.android.sync.ImaFolder
 import com.unarchive.android.sync.ImaKnowledgeBase
 import com.unarchive.android.sync.ImaSyncService
+import com.unarchive.android.storage.AndroidStorageStatsProvider
+import com.unarchive.android.storage.AppStorageSnapshot
+import com.unarchive.android.storage.StorageBudgetPolicy
+import com.unarchive.android.storage.StoragePreflight
 import com.unarchive.android.card.FileKnowledgeSyncRepository
 import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
@@ -123,7 +128,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private val batchProcessor = BatchVideoProcessor()
     private val batchManifestRepository = BatchManifestRepository(File(context.filesDir, "batch"))
     private val audioCacheDirectory = File(context.cacheDir, "bilibili-audio")
-    private val audioDownloader = BilibiliAudioDownloader(audioCacheDirectory)
+    private val audioDownloader = BilibiliAudioDownloader(audioCacheDirectory, storagePreflight = { storagePreflight })
     private val videoPipeline = SingleVideoPipeline(
         platformAdapter = platformAdapter,
         audioDownloader = audioDownloader,
@@ -131,7 +136,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         resultRepository = resultRepository,
         checkpointRepository = checkpointRepository,
     )
-    private val videoDownloader = VideoDownloader(File(context.cacheDir, "video-cache"))
+    private val videoDownloader = VideoDownloader(File(context.cacheDir, "video-cache"), storagePreflight = { storagePreflight })
     private val frameExtractor = VideoFrameExtractor()
     val knowledgeCardRepository: KnowledgeCardRepository =
         FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
@@ -141,6 +146,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private val imaCredentialStore = ImaCredentialStore(context)
     private val imaSyncStateRepository = FileKnowledgeSyncRepository(File(context.filesDir, "knowledge-cards/ima-sync.json"))
     private val cardAnalyzer = CardAnalyzer()
+    private val storageStatsProvider = AndroidStorageStatsProvider(context)
+    private val storagePreflight by lazy {
+        StoragePreflight(
+            readSnapshot = { storageStatsProvider.snapshot() },
+            cacheBudgetBytes = { effectiveCacheBudgetBytes },
+        )
+    }
 
     // --- state ---
 
@@ -162,6 +174,30 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var imaFolders by mutableStateOf<List<ImaFolder>>(emptyList())
     var thinkingEnabled by mutableStateOf(apiKeyStore.getThinkingEnabled())
         private set
+
+    var storageSnapshot by mutableStateOf<AppStorageSnapshot?>(null)
+        private set
+    var storageLoading by mutableStateOf(false)
+        private set
+    var storageError by mutableStateOf("")
+        private set
+    var configuredCacheBudgetBytes by mutableStateOf(prefs.getLong(PREF_CACHE_BUDGET_BYTES, 0L))
+        private set
+    var customCacheBudgetInput by mutableStateOf(
+        configuredCacheBudgetBytes.takeIf { it > 0L }?.let { bytes ->
+            String.format(Locale.US, "%.2f", bytes.toDouble() / (1024.0 * 1024.0 * 1024.0))
+                .trimEnd('0')
+                .trimEnd('.')
+        }.orEmpty(),
+    )
+    var cacheBudgetStatus by mutableStateOf("")
+        private set
+
+    val effectiveCacheBudgetBytes: Long
+        get() = StorageBudgetPolicy.effectiveBytes(
+            storageSnapshot?.totalBytes ?: context.filesDir.totalSpace,
+            configuredCacheBudgetBytes,
+        )
 
     var videoReference by mutableStateOf("")
     var selectedAudio by mutableStateOf<Uri?>(null)
@@ -278,6 +314,56 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         AppLogger.info(TAG, "视图模型已初始化")
+        refreshStorageStats()
+    }
+
+    fun refreshStorageStats() {
+        if (storageLoading) return
+        storageLoading = true
+        storageError = ""
+        viewModelScope.launch {
+            try {
+                storageSnapshot = withContext(Dispatchers.IO) { storageStatsProvider.snapshot() }
+            } catch (error: Exception) {
+                storageError = "无法读取应用存储信息：${error.message ?: error::class.simpleName}"
+                AppLogger.warn(TAG, storageError)
+            } finally {
+                storageLoading = false
+            }
+        }
+    }
+
+    fun useAutomaticCacheBudget() {
+        configuredCacheBudgetBytes = 0L
+        prefs.edit().remove(PREF_CACHE_BUDGET_BYTES).apply()
+        cacheBudgetStatus = "已启用自动预算（设备容量的 2%，范围 1～4 GiB）。"
+    }
+
+    fun openSystemStorageSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+
+    fun usePresetCacheBudget(gibibytes: Long) {
+        saveCacheBudget(gibibytes * 1024L * 1024L * 1024L)
+        customCacheBudgetInput = gibibytes.toString()
+    }
+
+    fun saveCustomCacheBudget() {
+        val value = customCacheBudgetInput.trim().toDoubleOrNull()
+        val bytes = value?.let(StorageBudgetPolicy::manualBytes)
+        if (bytes == null) {
+            cacheBudgetStatus = "请输入 0.5～16 之间的 GiB 数值。"
+            return
+        }
+        saveCacheBudget(bytes)
+    }
+
+    private fun saveCacheBudget(bytes: Long) {
+        configuredCacheBudgetBytes = bytes
+        prefs.edit().putLong(PREF_CACHE_BUDGET_BYTES, bytes).apply()
+        cacheBudgetStatus = "缓存预算已保存。"
     }
 
     /** Receives audio / video reference shared into the activity via Intent. */
@@ -651,6 +737,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     ) { asset ->
                         knowledgeCardRepository.assetFile(card, asset)?.readBytes()
                     }
+                }
+                withContext(Dispatchers.IO) {
+                    storagePreflight.check("知识卡片导出", embedded.markdown.toByteArray(Charsets.UTF_8).size.toLong())
                 }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.EXPORT_ASSETS, CardProcessingLog.State.COMPLETED, card.cardId,
@@ -1480,6 +1569,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 val assetsStartedAt = SystemClock.elapsedRealtime()
                 val savedAssets = validBytes.map { (index, bytes) ->
+                    storagePreflight.checkPersistent("截图保存", bytes.size.toLong())
                     knowledgeCardRepository.save(card)
                     knowledgeCardRepository.saveAsset(
                         card.cardId, card.cardVersion, "chapter-$index", bytes,
@@ -1592,6 +1682,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "UnarchiveViewModel"
         private const val PREF_SELECTED_ENGINE = "selected_asr_engine"
+        private const val PREF_CACHE_BUDGET_BYTES = "cache_budget_bytes"
     }
 
     private fun loadPersistedEngine(): AsrEngineKind = prefs.getString(PREF_SELECTED_ENGINE, null)

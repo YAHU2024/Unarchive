@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.model.ModelManagementSection
+import com.unarchive.android.storage.formatStorageBytes
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -198,10 +199,84 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
 
         HorizontalDivider()
 
+        StorageManagementSection(vm)
+
+        HorizontalDivider()
+
         ModelManagementSection(
             modelsDirectory = File(context.filesDir, "models"),
             enabled = vm.runningJob == null,
         )
+    }
+}
+
+@Composable
+private fun StorageManagementSection(vm: UnarchiveViewModel) {
+    Text("存储", style = MaterialTheme.typography.titleMedium)
+    val snapshot = vm.storageSnapshot
+    when {
+        vm.storageLoading && snapshot == null -> Text("正在读取存储信息……", style = MaterialTheme.typography.bodySmall)
+        snapshot != null -> {
+            Text(
+                "设备可用 ${formatStorageBytes(snapshot.freeBytes)} · 当前可分配 ${formatStorageBytes(snapshot.allocatableBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "应用：代码 ${formatStorageBytes(snapshot.appCodeBytes)} · 数据 ${formatStorageBytes(snapshot.appDataBytes)} · 缓存 ${formatStorageBytes(snapshot.appCacheBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "持久数据：模型 ${formatStorageBytes(snapshot.modelsBytes)} · 知识卡片 ${formatStorageBytes(snapshot.knowledgeCardsBytes)} · 转录结果 ${formatStorageBytes(snapshot.resultsBytes)} · 日志 ${formatStorageBytes(snapshot.logsBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "可重建缓存：音频 ${formatStorageBytes(snapshot.audioCacheBytes)} · 解码 ${formatStorageBytes(snapshot.decodedCacheBytes)} · 导出 ${formatStorageBytes(snapshot.exportCacheBytes)} · 视频 ${formatStorageBytes(snapshot.videoCacheBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        vm.storageError.isNotBlank() -> Text(vm.storageError, color = MaterialTheme.colorScheme.error)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedButton(onClick = vm::refreshStorageStats, enabled = !vm.storageLoading) {
+            Text(if (vm.storageLoading) "正在刷新" else "刷新存储信息")
+        }
+        OutlinedButton(onClick = vm::openSystemStorageSettings) {
+            Text("系统存储设置")
+        }
+    }
+
+    Text(
+        "缓存预算：${formatStorageBytes(vm.effectiveCacheBudgetBytes)}",
+        style = MaterialTheme.typography.titleSmall,
+    )
+    Text(
+        "预算只管理可重建缓存，不会自动删除模型、知识卡片或转录结果。",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    val options = listOf(0L to "自动（容量的 2%，1～4 GiB）", 1L to "1 GiB", 2L to "2 GiB", 4L to "4 GiB", 8L to "8 GiB")
+    options.forEach { (gibibytes, label) ->
+        val bytes = gibibytes * 1024L * 1024L * 1024L
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = if (gibibytes == 0L) vm.configuredCacheBudgetBytes == 0L else vm.configuredCacheBudgetBytes == bytes,
+                onClick = {
+                    if (gibibytes == 0L) vm.useAutomaticCacheBudget() else vm.usePresetCacheBudget(gibibytes)
+                },
+            )
+            Text(label)
+        }
+    }
+    OutlinedTextField(
+        value = vm.customCacheBudgetInput,
+        onValueChange = { vm.customCacheBudgetInput = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("自定义缓存预算（GiB）") },
+        supportingText = { Text("允许范围 0.5～16 GiB") },
+        singleLine = true,
+    )
+    OutlinedButton(onClick = vm::saveCustomCacheBudget) { Text("保存自定义预算") }
+    if (vm.cacheBudgetStatus.isNotBlank()) {
+        Text(vm.cacheBudgetStatus, style = MaterialTheme.typography.bodySmall)
     }
 }
 

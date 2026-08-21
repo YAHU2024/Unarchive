@@ -10,6 +10,7 @@ import com.unarchive.android.card.MarkdownCardRenderer
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import com.unarchive.android.storage.ImaRequestBudget
 
 data class ImaSyncResult(val state: KnowledgeSyncState, val noteId: String? = null, val message: String = "", val imagesSynced: Boolean = false)
 
@@ -45,9 +46,13 @@ class ImaSyncService(
         try {
             if (noteId == null) {
                 val rendered = MarkdownCardRenderer.embedAssetsWithStats(card.markdown, card.assets, readAsset)
-                val markdown = if (rendered.embeddedBytes <= MAX_EMBEDDED_BYTES) rendered.markdown
-                else card.markdown.replace(IMAGE_LINK, "")
-                val fallback = rendered.embeddedBytes > MAX_EMBEDDED_BYTES
+                val imageMarkdown = rendered.markdown
+                val textOnlyMarkdown = card.markdown.replace(IMAGE_LINK, "")
+                val markdown = if (ImaRequestBudget.fitsMarkdown(imageMarkdown)) imageMarkdown else textOnlyMarkdown
+                val fallback = markdown != imageMarkdown
+                if (!ImaRequestBudget.fitsMarkdown(markdown)) {
+                    throw java.io.IOException("ima 知识卡片请求体超过 5 MiB 安全上限")
+                }
                 ImaSyncLog.event(
                     operationId, card, key, targetName, folderName, "查找笔记", "开始", startedAt,
                     metadata = mapOf(
@@ -146,7 +151,6 @@ class ImaSyncService(
     }
 
     companion object {
-        private const val MAX_EMBEDDED_BYTES = 4L * 1024L * 1024L
         private val IMAGE_LINK = Regex("!\\[[^]]*]\\([^)]*\\)\\r?\\n?")
     }
 }
