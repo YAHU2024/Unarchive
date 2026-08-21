@@ -77,6 +77,7 @@ import com.unarchive.android.sync.ImaFolder
 import com.unarchive.android.sync.ImaKnowledgeBase
 import com.unarchive.android.sync.ImaSyncService
 import com.unarchive.android.card.FileKnowledgeSyncRepository
+import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.video.VideoDownloader
 import com.unarchive.android.video.VideoFrameExtractor
@@ -154,6 +155,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var imaFolderId by mutableStateOf(prefs.getString("ima_folder_id", "").orEmpty())
     var imaSyncStatus by mutableStateOf<Map<String, String>>(emptyMap())
     var imaSyncing by mutableStateOf(false)
+    private var knowledgeSyncRevision by mutableIntStateOf(0)
     var imaDiscoveryStatus by mutableStateOf("")
     var imaFolderDiscoveryStatus by mutableStateOf("")
     var imaKnowledgeBases by mutableStateOf<List<ImaKnowledgeBase>>(emptyList())
@@ -449,8 +451,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     ImaClient(clientId, apiKey),
                     imaSyncStateRepository,
                     readAsset = { asset -> knowledgeCardRepository.assetFile(card, asset)?.takeIf(File::isFile)?.readBytes() },
-                ).sync(card, imaKnowledgeBaseId.trim(), imaFolderId.trim())
+                ).sync(
+                    card, imaKnowledgeBaseId.trim(), imaFolderId.trim(),
+                    targetName = currentImaTargetName(), folderName = currentImaFolderName(),
+                )
                 imaSyncStatus = imaSyncStatus + (card.cardId.value to "${result.state}: ${result.message}")
+                knowledgeSyncRevision++
                 status = "ima：${result.message}"
             } finally {
                 imaSyncing = false
@@ -593,10 +599,36 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshKnowledgeCards() {
         knowledgeCards = knowledgeCardRepository.list()
+        knowledgeSyncRevision++
         selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
             knowledgeCards.firstOrNull { it.cardId == current.cardId } ?: knowledgeCards.firstOrNull()
         } ?: knowledgeCards.firstOrNull()
     }
+
+    fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> {
+        knowledgeSyncRevision
+        return imaSyncStateRepository.list()
+            .filter { it.key.cardId == card.cardId && it.key.cardVersion == card.cardVersion }
+            .map { record ->
+                if (record.key.targetType == "ima" && record.targetName.isBlank() &&
+                    record.key.targetId == imaKnowledgeBaseId) {
+                    record.copy(
+                        targetName = currentImaTargetName(),
+                        folderName = record.folderName.ifBlank {
+                            imaFolders.firstOrNull { it.id == record.key.folderId }?.name
+                                ?: if (record.key.folderId.isBlank()) "根目录" else "文件夹"
+                        },
+                    )
+                } else record
+            }
+            .sortedWith(compareBy<KnowledgeSyncRecord> { it.key.targetType }.thenBy { it.targetName }.thenBy { it.folderName })
+    }
+
+    private fun currentImaTargetName(): String =
+        imaKnowledgeBases.firstOrNull { it.id == imaKnowledgeBaseId }?.name ?: "知识库"
+
+    private fun currentImaFolderName(): String =
+        imaFolders.firstOrNull { it.id == imaFolderId }?.name ?: if (imaFolderId.isBlank()) "根目录" else "文件夹"
 
     fun exportKnowledgeCard(card: KnowledgeCard) {
         if (generateJob != null || runningJob != null || exportJob != null) return
@@ -1019,6 +1051,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val apiKey = imaCredentialStore.apiKey().orEmpty()
         val kbId = imaKnowledgeBaseId.trim()
         val folderId = imaFolderId.trim()
+        val targetName = currentImaTargetName()
+        val folderName = currentImaFolderName()
         if (manifest == null) { status = "没有可同步的批次。"; return }
         if (runningJob != null || clientId.isBlank() || apiKey.isBlank() || kbId.isBlank()) {
             status = if (clientId.isBlank() || apiKey.isBlank() || kbId.isBlank()) "请先配置 ima 凭据和知识库。" else "当前已有任务运行中。"
@@ -1059,7 +1093,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         client,
                         imaSyncStateRepository,
                         readAsset = { asset -> knowledgeCardRepository.assetFile(card, asset)?.takeIf(File::isFile)?.readBytes() },
-                    ).sync(card, kbId, folderId)
+                    ).sync(
+                        card, kbId, folderId, targetName = targetName, folderName = folderName,
+                        operationId = "batch-${manifest.batchId}-${index + 1}",
+                    )
+                    knowledgeSyncRevision++
                     val state = when (result.state) {
                         KnowledgeSyncState.SYNCED -> if (result.message.contains("跳过")) ImaBatchStageState.SKIPPED else ImaBatchStageState.SYNCED
                         KnowledgeSyncState.BLOCKED -> ImaBatchStageState.BLOCKED

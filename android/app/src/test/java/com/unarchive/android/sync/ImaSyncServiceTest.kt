@@ -39,13 +39,19 @@ class ImaSyncServiceTest {
             markdown = "# 测试",
         )
         val service = ImaSyncService(gateway, repo)
-        val first = kotlinx.coroutines.runBlocking { service.sync(card, "kb-test") }
+        val first = kotlinx.coroutines.runBlocking {
+            service.sync(card, "kb-test", targetName = "测试知识库", folderName = "根目录")
+        }
         assertEquals(KnowledgeSyncState.RETRYABLE_FAILURE, first.state)
         assertNotNull(repo.list().single().remoteNoteId)
-        val second = kotlinx.coroutines.runBlocking { service.sync(card, "kb-test") }
+        val second = kotlinx.coroutines.runBlocking {
+            service.sync(card, "kb-test", targetName = "测试知识库", folderName = "根目录")
+        }
         assertEquals(KnowledgeSyncState.SYNCED, second.state)
         assertEquals(1, gateway.imports)
         assertEquals(1, gateway.associations)
+        assertEquals("测试知识库", repo.list().single().targetName)
+        assertEquals("根目录", repo.list().single().folderName)
         root.deleteRecursively()
     }
 

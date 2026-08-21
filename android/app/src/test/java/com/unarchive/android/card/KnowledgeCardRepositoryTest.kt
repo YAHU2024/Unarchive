@@ -101,12 +101,17 @@ class KnowledgeCardRepositoryTest {
         val keyB = KnowledgeSyncKey(cardId, "v1", "ima", "kb-b", "folder-b")
         val keyV2 = KnowledgeSyncKey(cardId, "v2", "ima", "kb-a", "folder-a")
 
-        repository.save(KnowledgeSyncRecord(keyA, KnowledgeSyncState.SYNCED, "note-a", true, updatedAtEpochMs = 1))
+        repository.save(KnowledgeSyncRecord(
+            keyA, KnowledgeSyncState.SYNCED, "note-a", true, updatedAtEpochMs = 1,
+            targetName = "测试知识库", folderName = "课程",
+        ))
         repository.save(KnowledgeSyncRecord(keyB, KnowledgeSyncState.RETRYABLE_FAILURE, "note-a", false, "rate", 2))
         repository.save(KnowledgeSyncRecord(keyV2, KnowledgeSyncState.CREATED, "note-v2", false, updatedAtEpochMs = 3))
 
         assertEquals(3, repository.list().size)
         assertEquals(KnowledgeSyncState.SYNCED, repository.find(keyA)?.state)
+        assertEquals("测试知识库", repository.find(keyA)?.targetName)
+        assertEquals("课程", repository.find(keyA)?.folderName)
         assertEquals("note-a", repository.find(keyB)?.remoteNoteId)
         assertEquals("note-v2", repository.find(keyV2)?.remoteNoteId)
     }

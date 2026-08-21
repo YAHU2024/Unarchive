@@ -24,6 +24,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.KnowledgeSyncRecord
+import com.unarchive.android.card.KnowledgeSyncState
 
 @Composable
 internal fun KnowledgeTab(vm: UnarchiveViewModel) {
@@ -51,13 +53,20 @@ internal fun KnowledgeTab(vm: UnarchiveViewModel) {
             )
         } else {
             vm.knowledgeCards.forEach { card ->
+                val syncMarker = vm.knowledgeSyncRecords(card)
+                    .firstOrNull { it.key.targetType == "ima" }
+                    ?.let(::syncMarkerText)
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = vm.runningJob == null && vm.generateJob == null && vm.exportJob == null && !vm.imaSyncing,
                     onClick = { vm.selectKnowledgeCard(card) },
                 ) {
                     val marker = if (selected?.cardId == card.cardId) "▶ " else ""
-                    Text("$marker${card.title} · ${card.cardId.videoId}", maxLines = 2)
+                    Text(
+                        "$marker${card.title} · ${card.cardId.videoId}" +
+                            syncMarker?.let { " · $it" }.orEmpty(),
+                        maxLines = 2,
+                    )
                 }
             }
         }
@@ -99,7 +108,26 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
                 onClick = { vm.syncKnowledgeCard(card) },
             ) { Text("同步 ima") }
         }
-        vm.imaSyncStatus[card.cardId.value]?.let { Text("ima：$it", style = MaterialTheme.typography.bodySmall) }
+        val syncRecords = vm.knowledgeSyncRecords(card)
+        if (syncRecords.isEmpty()) {
+            Text("同步标识：未同步", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("同步目标", style = MaterialTheme.typography.titleMedium)
+            syncRecords.forEach { record ->
+                val targetName = record.targetName.ifBlank { record.key.targetType }
+                val folderName = record.folderName.takeIf(String::isNotBlank)
+                Text(
+                    "${record.key.targetType} · $targetName" +
+                        folderName?.let { " / $it" }.orEmpty() +
+                        "：${syncStateText(record.state)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                record.lastError?.let { error ->
+                    Text("原因：$error", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
+                }
+            }
+        }
+        vm.imaSyncStatus[card.cardId.value]?.let { Text("本次 ima：$it", style = MaterialTheme.typography.bodySmall) }
         HorizontalDivider()
         Text("笔记内容", style = MaterialTheme.typography.titleMedium)
         Text(card.markdown, style = MaterialTheme.typography.bodyMedium)
@@ -133,4 +161,16 @@ private fun CardStageState.displayName(): String = when (this) {
     CardStageState.FAILED -> "失败"
     CardStageState.SKIPPED -> "跳过"
     CardStageState.PARTIAL -> "部分完成"
+}
+
+private fun syncMarkerText(record: KnowledgeSyncRecord): String =
+    "${record.key.targetType} · ${record.targetName.ifBlank { "知识库" }}：${syncStateText(record.state)}"
+
+private fun syncStateText(state: KnowledgeSyncState): String = when (state) {
+    KnowledgeSyncState.NOT_SYNCED -> "未同步"
+    KnowledgeSyncState.CREATING, KnowledgeSyncState.CREATED, KnowledgeSyncState.ASSOCIATING -> "同步中"
+    KnowledgeSyncState.SYNCED -> "已同步"
+    KnowledgeSyncState.RETRYABLE_FAILURE -> "待重试"
+    KnowledgeSyncState.PERMANENT_FAILURE -> "失败"
+    KnowledgeSyncState.BLOCKED -> "已阻断"
 }

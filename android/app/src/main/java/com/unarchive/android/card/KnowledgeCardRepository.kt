@@ -299,6 +299,23 @@ data class KnowledgeSyncKey(
     }
 }
 
+/**
+ * User-visible target metadata paired with the durable sync key. IDs remain
+ * authoritative while names keep historical state understandable in the UI.
+ */
+data class KnowledgeSyncTarget(
+    val type: String,
+    val id: String,
+    val name: String,
+    val folderId: String = "",
+    val folderName: String = "",
+) {
+    init {
+        require(type.isNotBlank()) { "type cannot be blank" }
+        require(id.isNotBlank()) { "id cannot be blank" }
+    }
+}
+
 data class KnowledgeSyncRecord(
     val key: KnowledgeSyncKey,
     val state: KnowledgeSyncState = KnowledgeSyncState.NOT_SYNCED,
@@ -306,6 +323,8 @@ data class KnowledgeSyncRecord(
     val kbAdded: Boolean = false,
     val lastError: String? = null,
     val updatedAtEpochMs: Long,
+    val targetName: String = "",
+    val folderName: String = "",
 )
 
 interface KnowledgeSyncRepository {
@@ -435,6 +454,7 @@ private fun KnowledgeSyncRecord.toJson() = JSONObject()
     .put("target_id", key.targetId).put("folder_id", key.folderId)
     .put("state", state.name).put("remote_note_id", remoteNoteId).put("kb_added", kbAdded)
     .put("last_error", lastError).put("updated_at_epoch_ms", updatedAtEpochMs)
+    .put("target_name", targetName).put("folder_name", folderName)
 
 private fun JSONObject.toSyncRecord() = KnowledgeSyncRecord(
     key = KnowledgeSyncKey(
@@ -447,6 +467,8 @@ private fun JSONObject.toSyncRecord() = KnowledgeSyncRecord(
     kbAdded = optBoolean("kb_added", false),
     lastError = optString("last_error").takeIf { it.isNotBlank() },
     updatedAtEpochMs = optLong("updated_at_epoch_ms", 0L),
+    targetName = optString("target_name"),
+    folderName = optString("folder_name"),
 )
 
 private fun jsonStringList(array: JSONArray?): List<String> = buildList {
