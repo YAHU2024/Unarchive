@@ -1,0 +1,66 @@
+package com.unarchive.android.ui.state
+
+import com.unarchive.android.UnarchiveViewModel
+
+internal data class UnarchiveUiState(
+    val create: CreateUiState,
+    val notes: NotesUiState,
+    val graph: GraphUiState,
+    val me: MeUiState,
+)
+
+internal data class CreateUiState(
+    val videoReference: String,
+    val isProcessing: Boolean,
+    val statusMessage: String,
+    val hasRecovery: Boolean,
+    val storedResultCount: Int,
+)
+
+internal data class NotesUiState(
+    val noteCount: Int,
+    val materialCount: Int,
+    val noteTitles: List<String>,
+)
+
+internal data class GraphUiState(
+    val noteCount: Int,
+    val relationCount: Int = 0,
+)
+
+internal data class MeUiState(
+    val developerToolsAvailable: Boolean = true,
+)
+
+internal sealed interface CreateEvent {
+    data class VideoReferenceChanged(val value: String) : CreateEvent
+    data object ProcessVideo : CreateEvent
+    data object CancelProcessing : CreateEvent
+    data object ResumeBatch : CreateEvent
+}
+
+internal sealed interface NotesEvent {
+    data object Refresh : NotesEvent
+}
+
+internal sealed interface MeEvent {
+    data object OpenDeveloperOptions : MeEvent
+}
+
+internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
+    UnarchiveUiState(
+        create = CreateUiState(
+            videoReference = videoReference,
+            isProcessing = runningJob?.isActive == true,
+            statusMessage = status,
+            hasRecovery = batchRecoveryAvailable,
+            storedResultCount = storedResults.size,
+        ),
+        notes = NotesUiState(
+            noteCount = knowledgeCards.size,
+            materialCount = storedResults.size,
+            noteTitles = knowledgeCards.map { it.title }.take(6),
+        ),
+        graph = GraphUiState(noteCount = knowledgeCards.size),
+        me = MeUiState(),
+    )
