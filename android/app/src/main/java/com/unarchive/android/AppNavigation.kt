@@ -1,6 +1,8 @@
 package com.unarchive.android
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +50,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.NoteDocumentRepository
+import com.unarchive.android.card.toNoteDocument
+import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
@@ -62,10 +68,14 @@ internal object AppRoutes {
     const val NOTES = "notes"
     const val GRAPH = "graph"
     const val ME = "me"
+    const val NOTE_EDITOR = "notes/{platform}/{videoId}/{cardVersion}/edit"
     const val LEGACY_TEST = "legacy/test"
     const val LEGACY_RESULTS = "legacy/results"
     const val LEGACY_LOG = "legacy/log"
     const val LEGACY_SETTINGS = "legacy/settings"
+
+    fun noteEditor(card: KnowledgeCard): String =
+        "notes/${Uri.encode(card.cardId.platform)}/${Uri.encode(card.cardId.videoId)}/${Uri.encode(card.cardVersion)}/edit"
 }
 
 private data class MainDestination(
@@ -91,6 +101,7 @@ internal fun UnarchiveNavigationHost(
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit,
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
     legacySettingsContent: @Composable (onBack: () -> Unit) -> Unit,
+    noteDocumentRepository: NoteDocumentRepository? = null,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -131,7 +142,30 @@ internal fun UnarchiveNavigationHost(
                     state = state.notes,
                     onEvent = onNotesEvent,
                     onOpenLegacyNotes = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
+                    onOpenEditor = { card -> navController.navigate(AppRoutes.noteEditor(card)) },
                 )
+            }
+            composable(AppRoutes.NOTE_EDITOR) { entry ->
+                val platform = entry.arguments?.getString("platform")
+                val videoId = entry.arguments?.getString("videoId")
+                val cardVersion = entry.arguments?.getString("cardVersion")
+                val card = state.notes.noteCards.firstOrNull {
+                    it.cardId.platform == platform &&
+                        it.cardId.videoId == videoId &&
+                        it.cardVersion == cardVersion
+                }
+                if (card == null || noteDocumentRepository == null) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text("找不到这篇笔记")
+                        TextButton(onClick = { navController.popBackStack() }) { Text("返回") }
+                    }
+                } else {
+                    NoteEditorRoute(
+                        document = card.toNoteDocument(),
+                        repository = noteDocumentRepository,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable(AppRoutes.GRAPH) {
                 GraphScreen(state = state.graph)
@@ -307,6 +341,7 @@ private fun NotesScreen(
     state: NotesUiState,
     onEvent: (NotesEvent) -> Unit,
     onOpenLegacyNotes: () -> Unit,
+    onOpenEditor: (KnowledgeCard) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -343,9 +378,21 @@ private fun NotesScreen(
                 }
             }
         } else {
-            items(state.noteTitles) { title ->
-                GlassSurface(modifier = Modifier.fillMaxWidth()) {
-                    Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            items(state.noteCards, key = { it.cardId.value }) { card ->
+                GlassSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenEditor(card) }
+                        .testTag("note-card-${card.cardId.value}"),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(card.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "${card.ownerName} · 点击编辑结构化笔记",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

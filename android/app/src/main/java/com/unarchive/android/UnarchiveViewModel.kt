@@ -36,9 +36,11 @@ import com.unarchive.android.card.CardAssetKind
 import com.unarchive.android.card.CardProcessingLog
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.FileKnowledgeCardRepository
+import com.unarchive.android.card.FileNoteDocumentRepository
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.KnowledgeCardRepository
+import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.log.AppLogger
@@ -145,6 +147,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private val frameExtractor = VideoFrameExtractor()
     val knowledgeCardRepository: KnowledgeCardRepository =
         FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
+    val noteDocumentRepository: NoteDocumentRepository =
+        FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
     val modelRepository = ModelRepository(File(context.filesDir, "models"))
     private val apiKeyStore = ApiKeyStore(context)
     private val siliconFlowKeyStore = SiliconFlowKeyStore(context)

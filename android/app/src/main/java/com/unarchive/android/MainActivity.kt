@@ -84,6 +84,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 SettingsTab(vm)
             }
         },
+        noteDocumentRepository = vm.noteDocumentRepository,
     )
 }
 
