@@ -32,6 +32,8 @@ packages.
 | Component | Use | License / notice action |
 | --- | --- | --- |
 | AndroidX Activity, Compose, Material3, Lifecycle | Android UI/runtime | Apache-2.0; include AndroidX notices in release materials. |
+| multiplatform-markdown-renderer-m3 | 0.28.0; isolated Android Markdown reading Spike | Apache-2.0; its bundled MarkdownComposer portions retain the upstream MIT attribution. Include the renderer notice and Apache-2.0 text in release materials if the dependency is retained. |
+| JetBrains Markdown parser | 0.7.3; transitive renderer dependency | Apache-2.0; preserve upstream notice if the renderer is retained. |
 | Kotlin and kotlinx.coroutines | Language/runtime and async work | Apache-2.0; include Kotlin and coroutine notices. |
 | FFmpegKit Maintained / FFmpeg 8.1.7 | Fast Android container/audio decode | LGPL-3.0; the AAR bundles the full license and source notice under `res/raw/`. Source: https://github.com/ffmpegkit-maintained/ffmpeg. |
 | smart-exception Java/common 0.2.1 | FFmpegKit runtime support | BSD-3-Clause (Copyright 2019-2020 Taner Sener); ship the full license text. |

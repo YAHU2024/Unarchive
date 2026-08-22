@@ -16,6 +16,8 @@ in the dependency resource named in the table:
 | FFmpeg / FFmpegKit Maintained | FFmpegKit 8.1.7 | LGPL-3.0 | `res/raw/license.txt` bundled by the AAR |
 | smart-exception Java/common | 0.2.1 | BSD-3-Clause (Taner Sener) | `smart-exception-BSD-3-Clause.txt` |
 | AndroidX / Jetpack Compose / Kotlin / kotlinx.coroutines | dependency versions in `android/app/build.gradle.kts` | Apache-2.0 | `apache-2.0.txt` |
+| multiplatform-markdown-renderer-m3 | 0.28.0; isolated Markdown reading Spike | Apache-2.0 + bundled MarkdownComposer MIT attribution | `apache-2.0.txt` and `multiplatform-markdown-renderer-NOTICE.txt` |
+| JetBrains Markdown parser | 0.7.3; transitive renderer dependency | Apache-2.0 | `apache-2.0.txt` |
 
 ## Model attribution (required by FunASR Model License v1.1 §2.2)
 

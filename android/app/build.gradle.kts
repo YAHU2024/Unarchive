@@ -132,6 +132,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     // D1 navigation shell: nested routes, back stack, and state restoration.
     implementation("androidx.navigation:navigation-compose:2.8.3")
+    // D1.5 isolated Markdown reading spike. Keep this behind MarkdownProjectionRenderer.
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.28.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // QR code rendering for Bilibili scan-to-login.
     implementation("com.google.zxing:core:3.5.3")
