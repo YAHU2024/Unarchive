@@ -43,6 +43,7 @@ data class NoteEditorUiState(
     val draftChapterTitles: Map<String, String> = emptyMap(),
     val tagsInput: String = document.tags.joinToString(", "),
     val errorMessage: String? = document.editing.lastSaveError,
+    val aiProposal: NoteDocumentProposal? = null,
 ) {
     val isDirty: Boolean get() = saveState == NoteEditorSaveState.DIRTY || document.editing.dirty
 
@@ -69,6 +70,9 @@ sealed interface NoteEditorEvent {
     data class AddBlock(val type: NoteBlockType) : NoteEditorEvent
     data class RemoveBlock(val blockId: String) : NoteEditorEvent
     data class MoveBlock(val blockId: String, val direction: Direction) : NoteEditorEvent
+    data class AiProposalReady(val proposal: NoteDocumentProposal) : NoteEditorEvent
+    data object ApplyAiProposal : NoteEditorEvent
+    data object RejectAiProposal : NoteEditorEvent
     data object Save : NoteEditorEvent
     data object RestoreLastSaved : NoteEditorEvent
 
@@ -110,8 +114,60 @@ class NoteEditorViewModel(
             is NoteEditorEvent.AddBlock -> addBlock(event.type)
             is NoteEditorEvent.RemoveBlock -> removeBlock(event.blockId)
             is NoteEditorEvent.MoveBlock -> moveBlock(event.blockId, event.direction)
+            is NoteEditorEvent.AiProposalReady -> setAiProposal(event.proposal)
+            NoteEditorEvent.ApplyAiProposal -> applyAiProposal()
+            NoteEditorEvent.RejectAiProposal -> rejectAiProposal()
             NoteEditorEvent.Save -> save()
             NoteEditorEvent.RestoreLastSaved -> restoreLastSaved()
+        }
+    }
+
+    /** Called by the analyzer coordinator after it has built a new candidate. */
+    fun setAiProposal(candidate: NoteDocument, proposalId: String, createdAtEpochMs: Long) {
+        val current = _uiState.value
+        setAiProposal(NoteDocumentProposalBuilder.create(current.document, candidate, proposalId, createdAtEpochMs))
+    }
+
+    private fun setAiProposal(proposal: NoteDocumentProposal) {
+        val current = _uiState.value
+        _uiState.value = current.copy(aiProposal = proposal, errorMessage = null)
+    }
+
+    private fun applyAiProposal() {
+        val current = _uiState.value
+        val proposal = current.aiProposal ?: return
+        if (hasUnmaterializedDraft(current)) {
+            _uiState.value = current.copy(
+                saveState = NoteEditorSaveState.DIRTY,
+                errorMessage = "请先保存当前编辑，再应用 AI 建议。",
+            )
+            return
+        }
+        val merged = runCatching { NoteDocumentProposalApplier.apply(current.document, proposal) }
+        merged.fold(
+            onSuccess = { document ->
+                markDirty(current.copy(
+                    document = document,
+                    draftTitle = document.title,
+                    draftBlockTexts = emptyMap(),
+                    draftChapterTitles = emptyMap(),
+                    tagsInput = document.tags.joinToString(", "),
+                    aiProposal = proposal.copy(status = NoteProposalStatus.APPLIED),
+                ))
+            },
+            onFailure = { error ->
+                _uiState.value = current.copy(
+                    saveState = NoteEditorSaveState.FAILED,
+                    errorMessage = "AI 建议已过期，请重新生成：${error.message ?: "内容已变化"}",
+                )
+            },
+        )
+    }
+
+    private fun rejectAiProposal() {
+        val current = _uiState.value
+        current.aiProposal?.let { proposal ->
+            _uiState.value = current.copy(aiProposal = proposal.copy(status = NoteProposalStatus.REJECTED))
         }
     }
 
@@ -299,6 +355,11 @@ class NoteEditorViewModel(
             current.draftBlockTexts.isNotEmpty() ||
             current.draftChapterTitles.isNotEmpty() ||
             editorContentFingerprint(current.document) != editorContentFingerprint(savedDocument)
+
+    private fun hasUnmaterializedDraft(state: NoteEditorUiState): Boolean =
+        state.draftTitle != state.document.title ||
+            state.draftBlockTexts.isNotEmpty() ||
+            state.draftChapterTitles.isNotEmpty()
 
     private fun editorContentFingerprint(document: NoteDocument): String = document.copy(
         editing = NoteEditingState(),

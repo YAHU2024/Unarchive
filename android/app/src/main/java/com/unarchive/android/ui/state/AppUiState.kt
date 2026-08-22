@@ -2,6 +2,8 @@ package com.unarchive.android.ui.state
 
 import com.unarchive.android.UnarchiveViewModel
 import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.NoteDocument
+import com.unarchive.android.card.toNoteDocument
 
 internal data class UnarchiveUiState(
     val create: CreateUiState,
@@ -23,6 +25,7 @@ internal data class NotesUiState(
     val materialCount: Int,
     val noteTitles: List<String>,
     val noteCards: List<KnowledgeCard> = emptyList(),
+    val noteDocuments: List<NoteDocument> = emptyList(),
 )
 
 internal data class GraphUiState(
@@ -59,10 +62,11 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
             storedResultCount = storedResults.size,
         ),
         notes = NotesUiState(
-            noteCount = knowledgeCards.size,
+            noteCount = maxOf(knowledgeCards.size, noteDocuments.size),
             materialCount = storedResults.size,
-            noteTitles = knowledgeCards.map { it.title }.take(6),
+            noteTitles = noteDocuments.map { it.title }.ifEmpty { knowledgeCards.map { it.title } }.take(6),
             noteCards = knowledgeCards,
+            noteDocuments = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } },
         ),
         graph = GraphUiState(noteCount = knowledgeCards.size),
         me = MeUiState(),

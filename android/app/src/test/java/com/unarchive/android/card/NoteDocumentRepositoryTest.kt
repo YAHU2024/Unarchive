@@ -40,6 +40,25 @@ class NoteDocumentRepositoryTest {
     }
 
     @Test
+    fun listReturnsLatestVersionPerCardWhileListVersionsRetainsHistory() {
+        val repository = FileNoteDocumentRepository(
+            temporaryFolder.newFolder("notes"),
+            nowEpochMs = { 1_000L },
+        )
+        val first = document()
+        val second = first.copy(
+            generation = first.generation.copy(cardVersion = "card-version-2"),
+            updatedAtEpochMs = 3_000L,
+        )
+
+        repository.save(first)
+        repository.save(second)
+
+        assertEquals(listOf("card-version-2"), repository.list().map { it.generation.cardVersion })
+        assertEquals(2, repository.listVersions(first.cardId).size)
+    }
+
+    @Test
     fun incrementsRevisionOnlyWhenContentChanges() {
         val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"), nowEpochMs = { 7_000L })
         val first = repository.save(document()).document
@@ -160,11 +179,59 @@ class NoteDocumentRepositoryTest {
         assertNotNull(repository.find(document().cardId, document().generation.cardVersion))
     }
 
+    @Test
+    fun synchronizerMigratesLegacyCardsOnceAndRestoresAfterRestart() {
+        val directory = temporaryFolder.newFolder("notes")
+        val first = card("BV1sync-a", "sync-version-a")
+        val second = card("BV1sync-b", "sync-version-b")
+        val repository = FileNoteDocumentRepository(directory, nowEpochMs = { 5_000L })
+        val synchronizer = NoteDocumentSynchronizer(repository)
+
+        val migrated = synchronizer.sync(listOf(first, second))
+        val repeated = synchronizer.sync(listOf(first, second))
+        val restarted = NoteDocumentSynchronizer(
+            FileNoteDocumentRepository(directory, nowEpochMs = { 99_000L }),
+        ).sync(listOf(first, second))
+
+        assertEquals(2, migrated.size)
+        assertEquals(migrated, repeated)
+        assertEquals(migrated, restarted)
+        assertEquals(0L, migrated.single { it.cardId == first.cardId }.editing.contentRevision)
+    }
+
+    @Test
+    fun synchronizerKeepsOtherCardsWhenOneMigrationFails() {
+        val directory = temporaryFolder.newFolder("notes")
+        val failedCard = card("BV1sync-failed", "sync-version-failed")
+        val goodCard = card("BV1sync-good", "sync-version-good")
+        val failedDirectory = KnowledgeCard.sha256(failedCard.cardId.value.toByteArray(Charsets.UTF_8))
+        val repository = FileNoteDocumentRepository(
+            directory = directory,
+            writer = NoteDocumentAtomicWriter { target, bytes ->
+                if (target.path.contains(failedDirectory)) throw IOException("card migration failed")
+                target.parentFile!!.mkdirs()
+                target.writeBytes(bytes)
+            },
+        )
+
+        val documents = NoteDocumentSynchronizer(repository).sync(listOf(failedCard, goodCard))
+
+        assertEquals(listOf(goodCard.cardId), documents.map { it.cardId })
+        assertTrue(repository.find(failedCard.cardId, failedCard.cardVersion) == null)
+        assertNotNull(repository.find(goodCard.cardId, goodCard.cardVersion))
+    }
+
     private fun document(): NoteDocument {
-        val card = KnowledgeCard(
-            cardId = KnowledgeCardId("bilibili", "BV1persist"),
-            cardVersion = "card-version-1",
-            canonicalUrl = "https://www.bilibili.com/video/BV1persist",
+        return card().toNoteDocument()
+    }
+
+    private fun card(
+        videoId: String = "BV1persist",
+        version: String = "card-version-1",
+    ): KnowledgeCard = KnowledgeCard(
+            cardId = KnowledgeCardId("bilibili", videoId),
+            cardVersion = version,
+            canonicalUrl = "https://www.bilibili.com/video/$videoId",
             title = "测试笔记",
             ownerName = "UP 主",
             videoDurationSeconds = 20,
@@ -177,6 +244,4 @@ class NoteDocumentRepositoryTest {
             updatedAtEpochMs = 2_000L,
             markdown = "# 旧卡片",
         )
-        return card.toNoteDocument()
-    }
 }

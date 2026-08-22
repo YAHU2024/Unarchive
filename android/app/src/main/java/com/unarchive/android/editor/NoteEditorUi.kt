@@ -130,6 +130,11 @@ internal fun NoteEditorScreen(
             item {
                 EditorStatus(state = state)
             }
+            if (state.aiProposal?.status == NoteProposalStatus.PENDING) {
+                item {
+                    AiProposalCard(state = state, onEvent = onEvent)
+                }
+            }
             item {
                 GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -175,6 +180,40 @@ internal fun NoteEditorScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("恢复上次保存")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiProposalCard(
+    state: NoteEditorUiState,
+    onEvent: (NoteEditorEvent) -> Unit,
+) {
+    val proposal = state.aiProposal ?: return
+    GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("有一份 AI 整理建议", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${proposal.changes.size} 处内容变化。应用前会保留你的用户内容。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (proposal.status == NoteProposalStatus.PENDING) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onEvent(NoteEditorEvent.ApplyAiProposal) }) {
+                        Text("应用建议")
+                    }
+                    OutlinedButton(onClick = { onEvent(NoteEditorEvent.RejectAiProposal) }) {
+                        Text("保留当前笔记")
+                    }
+                }
+            } else {
+                Text(
+                    if (proposal.status == NoteProposalStatus.APPLIED) "已应用建议，保存后写入笔记。"
+                    else "已保留当前笔记。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

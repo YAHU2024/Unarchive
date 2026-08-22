@@ -50,7 +50,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.unarchive.android.ui.components.GlassSurface
-import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.editor.NoteEditorRoute
@@ -74,8 +74,8 @@ internal object AppRoutes {
     const val LEGACY_LOG = "legacy/log"
     const val LEGACY_SETTINGS = "legacy/settings"
 
-    fun noteEditor(card: KnowledgeCard): String =
-        "notes/${Uri.encode(card.cardId.platform)}/${Uri.encode(card.cardId.videoId)}/${Uri.encode(card.cardVersion)}/edit"
+    fun noteEditor(document: NoteDocument): String =
+        "notes/${Uri.encode(document.cardId.platform)}/${Uri.encode(document.cardId.videoId)}/${Uri.encode(document.generation.cardVersion)}/edit"
 }
 
 private data class MainDestination(
@@ -142,26 +142,26 @@ internal fun UnarchiveNavigationHost(
                     state = state.notes,
                     onEvent = onNotesEvent,
                     onOpenLegacyNotes = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
-                    onOpenEditor = { card -> navController.navigate(AppRoutes.noteEditor(card)) },
+                    onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
                 )
             }
             composable(AppRoutes.NOTE_EDITOR) { entry ->
                 val platform = entry.arguments?.getString("platform")
                 val videoId = entry.arguments?.getString("videoId")
                 val cardVersion = entry.arguments?.getString("cardVersion")
-                val card = state.notes.noteCards.firstOrNull {
+                val document = state.notes.noteDocuments.firstOrNull {
                     it.cardId.platform == platform &&
                         it.cardId.videoId == videoId &&
-                        it.cardVersion == cardVersion
+                        it.generation.cardVersion == cardVersion
                 }
-                if (card == null || noteDocumentRepository == null) {
+                if (document == null || noteDocumentRepository == null) {
                     Column(modifier = Modifier.padding(20.dp)) {
                         Text("找不到这篇笔记")
                         TextButton(onClick = { navController.popBackStack() }) { Text("返回") }
                     }
                 } else {
                     NoteEditorRoute(
-                        document = card.toNoteDocument(),
+                        document = document,
                         repository = noteDocumentRepository,
                         onBack = { navController.popBackStack() },
                     )
@@ -341,7 +341,7 @@ private fun NotesScreen(
     state: NotesUiState,
     onEvent: (NotesEvent) -> Unit,
     onOpenLegacyNotes: () -> Unit,
-    onOpenEditor: (KnowledgeCard) -> Unit,
+    onOpenEditor: (NoteDocument) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -378,17 +378,18 @@ private fun NotesScreen(
                 }
             }
         } else {
-            items(state.noteCards, key = { it.cardId.value }) { card ->
+            val documents = state.noteDocuments.ifEmpty { state.noteCards.map { it.toNoteDocument() } }
+            items(documents, key = { "${it.cardId.value}:${it.generation.cardVersion}" }) { document ->
                 GlassSurface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onOpenEditor(card) }
-                        .testTag("note-card-${card.cardId.value}"),
+                        .clickable { onOpenEditor(document) }
+                        .testTag("note-card-${document.cardId.value}"),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(card.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(document.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${card.ownerName} · 点击编辑结构化笔记",
+                            "${document.source.ownerName} · 点击编辑结构化笔记",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

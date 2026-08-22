@@ -40,7 +40,9 @@ import com.unarchive.android.card.FileNoteDocumentRepository
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.KnowledgeCardRepository
+import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
+import com.unarchive.android.card.NoteDocumentSynchronizer
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.log.AppLogger
@@ -149,6 +151,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
     val noteDocumentRepository: NoteDocumentRepository =
         FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
+    private val noteDocumentSynchronizer = NoteDocumentSynchronizer(noteDocumentRepository)
     val modelRepository = ModelRepository(File(context.filesDir, "models"))
     private val apiKeyStore = ApiKeyStore(context)
     private val siliconFlowKeyStore = SiliconFlowKeyStore(context)
@@ -237,6 +240,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var selectedStoredResult by mutableStateOf(storedResults.firstOrNull())
     var knowledgeCards by mutableStateOf(knowledgeCardRepository.list())
         private set
+    var noteDocuments by mutableStateOf<List<NoteDocument>>(noteDocumentRepository.list())
+        private set
+    private var noteDocumentsRefreshGeneration = 0L
     var selectedKnowledgeCard by mutableStateOf(knowledgeCards.firstOrNull())
         private set
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
@@ -344,6 +350,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         }
         AppLogger.info(TAG, "视图模型已初始化")
         refreshStorageStats()
+        refreshNoteDocuments()
     }
 
     fun refreshStorageStats() {
@@ -743,6 +750,25 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
             knowledgeCards.firstOrNull { it.cardId == current.cardId } ?: knowledgeCards.firstOrNull()
         } ?: knowledgeCards.firstOrNull()
+        refreshNoteDocuments()
+    }
+
+    /**
+     * Keeps the v2 document store as the note-library source while importing
+     * legacy cards once. A failed migration is isolated to that card and does
+     * not hide already readable notes.
+     */
+    fun refreshNoteDocuments() {
+        val cards = knowledgeCards
+        val refreshGeneration = ++noteDocumentsRefreshGeneration
+        viewModelScope.launch {
+            val documents = withContext(Dispatchers.IO) {
+                noteDocumentSynchronizer.sync(cards)
+            }
+            if (refreshGeneration == noteDocumentsRefreshGeneration) {
+                noteDocuments = documents
+            }
+        }
     }
 
     fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> {

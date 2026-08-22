@@ -125,6 +125,92 @@ class NoteEditorViewModelTest {
         }
     }
 
+    @Test
+    fun aiProposalRequiresExplicitApplyAndSavePreservesUserBlocks() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document().copy(
+                blocks = document().blocks + NoteBlock(
+                    "user-note", NoteBlockType.USER_NOTE, NoteBlockOrigin.USER, text = "我的补充",
+                ),
+            )
+            val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val viewModel = NoteEditorViewModel(original, repository, dispatcher)
+            advanceUntilIdle()
+            val candidate = original.copy(
+                blocks = original.blocks.map { block ->
+                    if (block.type == NoteBlockType.SUMMARY) block.copy(text = "AI 新摘要") else block
+                },
+            )
+
+            viewModel.setAiProposal(candidate, "proposal-vm", 10L)
+            assertEquals(NoteProposalStatus.PENDING, viewModel.uiState.value.aiProposal?.status)
+            assertEquals("AI 摘要", viewModel.uiState.value.document.blocks.first { it.type == NoteBlockType.SUMMARY }.text)
+
+            viewModel.onEvent(NoteEditorEvent.ApplyAiProposal)
+
+            val stateAfterApply = viewModel.uiState.value
+            assertEquals(NoteEditorSaveState.DIRTY, stateAfterApply.saveState)
+            assertEquals("AI 新摘要", stateAfterApply.document.blocks.first { it.type == NoteBlockType.SUMMARY }.text)
+            assertEquals("我的补充", stateAfterApply.document.blocks.first { it.id == "user-note" }.text)
+            assertTrue(stateAfterApply.document.editing.dirty)
+
+            viewModel.onEvent(NoteEditorEvent.Save)
+            advanceUntilIdle()
+            assertEquals(NoteEditorSaveState.SAVED, viewModel.uiState.value.saveState)
+            assertEquals("AI 新摘要", repository.find(original.cardId, original.generation.cardVersion)
+                ?.blocks?.first { it.type == NoteBlockType.SUMMARY }?.text)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun staleAiProposalDoesNotOverwriteAnEditMadeAfterProposal() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val viewModel = NoteEditorViewModel(original, repository, dispatcher)
+            advanceUntilIdle()
+            val candidate = original.copy(title = "AI 标题")
+
+            viewModel.setAiProposal(candidate, "proposal-stale", 11L)
+            viewModel.onEvent(NoteEditorEvent.TitleChanged("用户刚刚编辑的标题"))
+            viewModel.onEvent(NoteEditorEvent.ApplyAiProposal)
+
+            val state = viewModel.uiState.value
+            assertEquals("用户刚刚编辑的标题", state.document.title)
+            assertEquals(NoteEditorSaveState.FAILED, state.saveState)
+            assertTrue(state.errorMessage?.contains("过期") == true)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun rejectAiProposalLeavesDocumentUntouchedAndMarksProposalRejected() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val viewModel = NoteEditorViewModel(original, repository, dispatcher)
+            advanceUntilIdle()
+            viewModel.setAiProposal(original.copy(title = "AI 标题"), "proposal-reject", 12L)
+
+            viewModel.onEvent(NoteEditorEvent.RejectAiProposal)
+
+            assertEquals("编辑器测试", viewModel.uiState.value.document.title)
+            assertEquals(NoteProposalStatus.REJECTED, viewModel.uiState.value.aiProposal?.status)
+            assertEquals(NoteEditorSaveState.CLEAN, viewModel.uiState.value.saveState)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun document(): NoteDocument {
         val source = NoteSource(
             canonicalUrl = "https://www.bilibili.com/video/BV1editor",

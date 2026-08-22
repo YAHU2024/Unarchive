@@ -43,6 +43,20 @@ interface NoteDocumentRepository {
     fun save(document: NoteDocument): NoteDocumentSaveResult
 }
 
+/** Imports legacy cards into the v2 note source without allowing one failure to stop the rest. */
+class NoteDocumentSynchronizer(
+    private val repository: NoteDocumentRepository,
+) {
+    fun sync(cards: List<KnowledgeCard>): List<NoteDocument> {
+        cards.forEach { card ->
+            if (repository.find(card.cardId, card.cardVersion) == null) {
+                runCatching { repository.save(card.toNoteDocument()) }
+            }
+        }
+        return repository.list()
+    }
+}
+
 /**
  * Versioned file-backed note store. JSON is the editing source; Markdown is a
  * rebuildable projection and is intentionally written after JSON succeeds.
@@ -56,10 +70,11 @@ class FileNoteDocumentRepository(
     override fun list(): List<NoteDocument> = synchronized(this) {
         directory.listFiles { file -> file.isDirectory }
             .orEmpty()
-            .flatMap { cardDirectory ->
+            .mapNotNull { cardDirectory ->
                 cardDirectory.listFiles { file -> file.isDirectory }
                     .orEmpty()
                     .mapNotNull { versionDirectory -> readDocument(File(versionDirectory, JSON_FILE_NAME)) }
+                    .maxByOrNull { it.updatedAtEpochMs }
             }
             .sortedByDescending { it.updatedAtEpochMs }
     }
