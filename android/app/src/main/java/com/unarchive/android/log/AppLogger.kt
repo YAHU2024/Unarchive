@@ -37,6 +37,7 @@ data class LogEntry(
  */
 object AppLogger {
     private const val MAX_ENTRIES = 2000
+    private const val MAX_FILE_BYTES = 1024L * 1024L
 
     val entries: SnapshotStateList<LogEntry> = mutableStateListOf()
 
@@ -51,6 +52,7 @@ object AppLogger {
     fun attachFileSink(directory: File) {
         val file = File(directory, "app.log")
         file.parentFile?.mkdirs()
+        if (file.length() > MAX_FILE_BYTES) file.writeText("")
         fileSink = file
     }
 
@@ -61,16 +63,18 @@ object AppLogger {
 
     fun clear() {
         synchronized(entries) { entries.clear() }
+        runCatching { fileSink?.writeText("") }
     }
 
     private fun append(level: LogLevel, tag: String, msg: String) {
+        val safeMessage = LogRedactor.redact(msg)
         when (level) {
-            LogLevel.DEBUG -> Log.d(tag, msg)
-            LogLevel.INFO -> Log.i(tag, msg)
-            LogLevel.WARN -> Log.w(tag, msg)
-            LogLevel.ERROR -> Log.e(tag, msg)
+            LogLevel.DEBUG -> Log.d(tag, safeMessage)
+            LogLevel.INFO -> Log.i(tag, safeMessage)
+            LogLevel.WARN -> Log.w(tag, safeMessage)
+            LogLevel.ERROR -> Log.e(tag, safeMessage)
         }
-        val entry = LogEntry(System.currentTimeMillis(), level, tag, msg)
+        val entry = LogEntry(System.currentTimeMillis(), level, tag, safeMessage)
         synchronized(entries) {
             if (entries.size >= MAX_ENTRIES) {
                 entries.removeRange(0, entries.size - MAX_ENTRIES + 1)
@@ -83,6 +87,7 @@ object AppLogger {
     private fun persist(entry: LogEntry) {
         val file = fileSink ?: return
         runCatching {
+            if (file.length() >= MAX_FILE_BYTES) file.writeText("")
             file.appendText(
                 "${fileDateFormat.format(Date(entry.at))} ${entry.level.name} ${entry.tag}: ${entry.msg}\n",
             )

@@ -29,7 +29,12 @@ class KeystoreSecretStore(context: Context, private val name: String) {
         preferences.edit().putString(name, Base64.encodeToString(payload, Base64.NO_WRAP)).apply()
     }
 
-    fun clear() { preferences.edit().remove(name).apply() }
+    fun clear() {
+        preferences.edit().remove(name).apply()
+        runCatching {
+            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(name)
+        }
+    }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }

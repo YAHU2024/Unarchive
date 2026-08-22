@@ -60,6 +60,14 @@ class StoragePreflightTest {
     }
 
     @Test
+    fun recoveryMessageDistinguishesCacheBudgetFromDeviceSpace() {
+        val budget = InsufficientStorageException("视频下载", 2L * GiB, 164L * GiB, 614L * MiB, 0L)
+        assertTrue(budget.recoveryMessage().contains("提高缓存预算"))
+        val device = InsufficientStorageException("视频下载", 2L * GiB, 1L * GiB, 4L * GiB, 0L)
+        assertTrue(device.recoveryMessage().contains("清理可重建缓存"))
+    }
+
+    @Test
     fun imaBudgetAccountsForFinalJsonUtf8Bytes() {
         val under = "x".repeat(ImaRequestBudget.MAX_JSON_BYTES.toInt() - 128)
         val over = "x".repeat(ImaRequestBudget.MAX_JSON_BYTES.toInt())

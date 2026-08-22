@@ -59,5 +59,10 @@ class RebuildableCacheCleaner(
 }
 
 fun InsufficientStorageException.recoveryMessage(): String =
-    "空间不足：需要约 " + formatStorageBytes(requiredBytes) + "，当前可分配 " +
-        formatStorageBytes(allocatableBytes) + "；可先在「设置」清理可重建缓存后重试。"
+    if (cacheBudgetExceeded) {
+        "缓存预算不足：预计需要约 " + formatStorageBytes(requiredBytes) + "，当前预算 " +
+            formatStorageBytes(cacheBudgetBytes) + "；请提高缓存预算后重试。"
+    } else {
+        "设备空间不足：需要约 " + formatStorageBytes(requiredBytes) + "，当前可分配 " +
+            formatStorageBytes(allocatableBytes) + "；可清理可重建缓存后重试。"
+    }

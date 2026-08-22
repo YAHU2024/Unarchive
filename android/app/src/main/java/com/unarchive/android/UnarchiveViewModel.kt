@@ -1561,6 +1561,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val screenshotBytes = mutableListOf<ByteArray?>()
                 var screenshotsState = CardStageState.SKIPPED
+                var screenshotStorageError: InsufficientStorageException? = null
                 if (analysis != null && analysis.chapters.isNotEmpty() &&
                     stored.key.platform != LOCAL_AUDIO_PLATFORM &&
                     stored.timingAccuracy != TranscriptTimingAccuracy.ESTIMATED
@@ -1597,6 +1598,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         throw error
                     } catch (error: Exception) {
                         screenshotsState = CardStageState.FAILED
+                        screenshotStorageError = error as? InsufficientStorageException
                         CardProcessingLog.event(
                             operationId, CardProcessingLog.Stage.SCREENSHOTS, CardProcessingLog.State.FAILED, cardId,
                             elapsedMs = SystemClock.elapsedRealtime() - screenshotStartedAt,
@@ -1633,7 +1635,6 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 val assetsStartedAt = SystemClock.elapsedRealtime()
                 val savedAssets = mutableListOf<CardAsset>()
-                var screenshotStorageError: InsufficientStorageException? = null
                 validBytes.forEach { (index, bytes) ->
                     try {
                         storagePreflight.checkPersistent("截图保存", bytes.size.toLong())

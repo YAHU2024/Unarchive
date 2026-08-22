@@ -11,6 +11,9 @@ class InsufficientStorageException(
     val cacheBytes: Long,
 ) : IOException("$stage 需要约 ${formatStorageBytes(requiredBytes)}，当前可分配 ${formatStorageBytes(allocatableBytes)}；可清理缓存预算 ${formatStorageBytes(cacheBudgetBytes)}，当前缓存 ${formatStorageBytes(cacheBytes)}")
 
+val InsufficientStorageException.cacheBudgetExceeded: Boolean
+    get() = cacheBytes + requiredBytes > cacheBudgetBytes && allocatableBytes >= requiredBytes
+
 class StoragePreflight(
     private val readSnapshot: () -> AppStorageSnapshot,
     private val cacheBudgetBytes: () -> Long,
