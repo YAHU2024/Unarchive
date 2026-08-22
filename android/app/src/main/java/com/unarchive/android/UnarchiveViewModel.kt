@@ -94,6 +94,7 @@ import java.io.File
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -293,6 +294,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private var activeBatchManifest: BatchManifest? = null
     private var batchGeneratingCard = false
     private var batchCardJob: Job? = null
+    private var batchRunGeneration = 0L
 
     private fun refreshPublishedState() {
         storedResults = resultRepository.list()
@@ -708,7 +710,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         val retryable = manifest.items.filter {
-            it.state == BatchItemState.FAILED && it.retryability != BatchFailureRetryability.NON_RETRYABLE
+            it.state in setOf(BatchItemState.FAILED, BatchItemState.CANCELLED, BatchItemState.QUEUED, BatchItemState.SUCCEEDED) &&
+                it.cardState != CardStageState.SUCCEEDED &&
+                it.retryability != BatchFailureRetryability.NON_RETRYABLE
         }
         val nonRetryable = manifest.items.count {
             it.state == BatchItemState.FAILED && it.retryability == BatchFailureRetryability.NON_RETRYABLE
@@ -718,7 +722,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             status = "没有可自动重试的失败项目。"
             return
         }
-        runStoredBatch(setOf(BatchItemState.FAILED), retryable.map { it.videoId }.toSet())
+        runStoredBatch(setOf(BatchItemState.FAILED, BatchItemState.CANCELLED, BatchItemState.QUEUED), retryable.map { it.videoId }.toSet())
     }
 
     fun selectStoredResult(stored: StoredVideoResult) {
@@ -998,7 +1002,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         progress = 0f
         checkpointSegmentCount = 0
         batchSummary = null
-        runningJob = viewModelScope.launch {
+        val generation = ++batchRunGeneration
+        val batchJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val summary = batchProcessor.run(
                     items = items,
@@ -1109,9 +1114,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 if (batchGeneratingCard) generateJob?.cancel()
                 batchCardJob = null
                 batchGeneratingCard = false
-                clearRunningJobIfCurrent(coroutineContext[Job])
+                if (batchRunGeneration == generation) runningJob = null
             }
         }
+        runningJob = batchJob
+        batchJob.start()
     }
 
     private fun persistBatchItemState(item: BilibiliFavoriteVideo, state: BatchItemState, errorMessage: String?, apiCode: Int?) {
