@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.GraphEvent
 import com.unarchive.android.ui.state.NotesEvent
 import com.unarchive.android.ui.state.toUnarchiveUiState
 import com.unarchive.android.ui.theme.UnarchiveTheme
@@ -63,6 +64,19 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         onNotesEvent = { event ->
             when (event) {
                 NotesEvent.Refresh -> vm.refreshKnowledgeCards()
+            }
+        },
+        onGraphEvent = { event ->
+            when (event) {
+                is GraphEvent.SelectNote -> vm.selectGraphNote(event.cardId)
+                GraphEvent.StartAddRelation -> vm.startGraphRelation()
+                GraphEvent.CancelAddRelation -> vm.cancelGraphRelation()
+                is GraphEvent.TargetChanged -> vm.setGraphTargetCardId(event.value)
+                is GraphEvent.LabelChanged -> vm.setGraphRelationLabel(event.value)
+                is GraphEvent.DescriptionChanged -> vm.setGraphRelationDescription(event.value)
+                GraphEvent.CreateUserLink -> vm.createGraphUserLink()
+                is GraphEvent.RemoveRelation -> vm.removeGraphRelation(event.relationId)
+                GraphEvent.ClearStatus -> vm.clearGraphStatus()
             }
         },
         onMeEvent = {},

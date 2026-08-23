@@ -2,8 +2,11 @@ package com.unarchive.android.ui.state
 
 import com.unarchive.android.UnarchiveViewModel
 import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.GraphRelationItem
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.toNoteDocument
+
+enum class GraphRelationOperationState { IDLE, SAVING, SAVED, FAILED }
 
 internal data class UnarchiveUiState(
     val create: CreateUiState,
@@ -32,6 +35,17 @@ internal data class NotesUiState(
 internal data class GraphUiState(
     val noteCount: Int,
     val relationCount: Int = 0,
+    val noteDocuments: List<NoteDocument> = emptyList(),
+    val selectedCardId: String? = null,
+    val selectedTitle: String? = null,
+    val outgoing: List<GraphRelationItem> = emptyList(),
+    val incoming: List<GraphRelationItem> = emptyList(),
+    val isAddingRelation: Boolean = false,
+    val targetCardIdInput: String = "",
+    val relationLabelInput: String = "",
+    val relationDescriptionInput: String = "",
+    val operationState: GraphRelationOperationState = GraphRelationOperationState.IDLE,
+    val errorMessage: String? = null,
 )
 
 internal data class MeUiState(
@@ -47,6 +61,18 @@ internal sealed interface CreateEvent {
 
 internal sealed interface NotesEvent {
     data object Refresh : NotesEvent
+}
+
+internal sealed interface GraphEvent {
+    data class SelectNote(val cardId: String) : GraphEvent
+    data object StartAddRelation : GraphEvent
+    data object CancelAddRelation : GraphEvent
+    data class TargetChanged(val value: String) : GraphEvent
+    data class LabelChanged(val value: String) : GraphEvent
+    data class DescriptionChanged(val value: String) : GraphEvent
+    data object CreateUserLink : GraphEvent
+    data class RemoveRelation(val relationId: String) : GraphEvent
+    data object ClearStatus : GraphEvent
 }
 
 internal sealed interface MeEvent {
@@ -72,6 +98,35 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
             noteCards = knowledgeCards,
             noteDocuments = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } },
         ),
-        graph = GraphUiState(noteCount = knowledgeCards.size),
+        graph = run {
+            val documents = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } }
+            val selectedCardId = graphSelectedCardId
+                ?.takeIf { id -> documents.any { it.cardId.value == id } }
+                ?: documents.firstOrNull()?.cardId?.value
+            val snapshot = selectedCardId?.let { id ->
+                noteRelationRepository.snapshot(
+                    documents,
+                    com.unarchive.android.card.KnowledgeCardId(
+                        platform = id.substringBefore(":"),
+                        videoId = id.substringAfter(":", missingDelimiterValue = ""),
+                    ),
+                )
+            }
+            GraphUiState(
+                noteCount = documents.size,
+                relationCount = snapshot?.all?.size ?: 0,
+                noteDocuments = documents,
+                selectedCardId = selectedCardId,
+                selectedTitle = documents.firstOrNull { it.cardId.value == selectedCardId }?.title,
+                outgoing = snapshot?.outgoing.orEmpty(),
+                incoming = snapshot?.incoming.orEmpty(),
+                isAddingRelation = graphIsAddingRelation,
+                targetCardIdInput = graphTargetCardIdInput,
+                relationLabelInput = graphRelationLabelInput,
+                relationDescriptionInput = graphRelationDescriptionInput,
+                operationState = graphRelationOperationState,
+                errorMessage = graphRelationError,
+            )
+        },
         me = MeUiState(),
     )

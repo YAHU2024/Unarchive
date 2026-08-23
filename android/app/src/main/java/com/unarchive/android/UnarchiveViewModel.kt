@@ -43,6 +43,8 @@ import com.unarchive.android.card.KnowledgeCardRepository
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.NoteDocumentSynchronizer
+import com.unarchive.android.card.NoteRelationRepository
+import com.unarchive.android.ui.state.GraphRelationOperationState
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.log.AppLogger
@@ -155,6 +157,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
     val noteDocumentRepository: NoteDocumentRepository =
         FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
+    val noteRelationRepository = NoteRelationRepository(noteDocumentRepository)
     val noteDocumentProposalRepository: NoteDocumentProposalRepository =
         FileNoteDocumentProposalRepository(File(context.filesDir, "knowledge-note-proposals"))
     private val noteDocumentSynchronizer = NoteDocumentSynchronizer(noteDocumentRepository)
@@ -249,6 +252,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var noteDocuments by mutableStateOf<List<NoteDocument>>(noteDocumentRepository.list())
         private set
     private var noteDocumentsRefreshGeneration = 0L
+    var graphSelectedCardId by mutableStateOf<String?>(null)
+    var graphIsAddingRelation by mutableStateOf(false)
+    var graphTargetCardIdInput by mutableStateOf("")
+    var graphRelationLabelInput by mutableStateOf("")
+    var graphRelationDescriptionInput by mutableStateOf("")
+    var graphRelationOperationState by mutableStateOf(GraphRelationOperationState.IDLE)
+    var graphRelationError by mutableStateOf<String?>(null)
     var selectedKnowledgeCard by mutableStateOf(knowledgeCards.firstOrNull())
         private set
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
@@ -769,12 +779,127 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val refreshGeneration = ++noteDocumentsRefreshGeneration
         viewModelScope.launch {
             val documents = withContext(Dispatchers.IO) {
-                noteDocumentSynchronizer.sync(cards)
+                val migrated = noteDocumentSynchronizer.sync(cards)
+                noteRelationRepository.ensureSystemRelations(migrated)
             }
             if (refreshGeneration == noteDocumentsRefreshGeneration) {
                 noteDocuments = documents
+                if (graphSelectedCardId == null || documents.none { it.cardId.value == graphSelectedCardId }) {
+                    graphSelectedCardId = documents.firstOrNull()?.cardId?.value
+                }
             }
         }
+    }
+
+    fun selectGraphNote(cardId: String) {
+        if (noteDocuments.any { it.cardId.value == cardId }) {
+            graphSelectedCardId = cardId
+            graphRelationError = null
+            graphRelationOperationState = GraphRelationOperationState.IDLE
+        }
+    }
+
+    fun startGraphRelation() {
+        graphIsAddingRelation = true
+        graphTargetCardIdInput = ""
+        graphRelationLabelInput = ""
+        graphRelationDescriptionInput = ""
+        graphRelationError = null
+        graphRelationOperationState = GraphRelationOperationState.IDLE
+    }
+
+    fun cancelGraphRelation() {
+        graphIsAddingRelation = false
+        graphRelationError = null
+        graphRelationOperationState = GraphRelationOperationState.IDLE
+    }
+
+    fun setGraphTargetCardId(value: String) {
+        graphTargetCardIdInput = value
+    }
+
+    fun setGraphRelationLabel(value: String) {
+        graphRelationLabelInput = value
+    }
+
+    fun setGraphRelationDescription(value: String) {
+        graphRelationDescriptionInput = value
+    }
+
+    fun createGraphUserLink() {
+        if (graphRelationOperationState == GraphRelationOperationState.SAVING) return
+        val source = graphSelectedCardId?.let(::parseCardId)
+        val target = parseCardId(graphTargetCardIdInput.trim())
+        if (source == null || target == null) {
+            graphRelationError = "请选择一篇目标笔记。"
+            graphRelationOperationState = GraphRelationOperationState.FAILED
+            return
+        }
+        graphRelationOperationState = GraphRelationOperationState.SAVING
+        graphRelationError = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                noteRelationRepository.addUserLink(
+                    sourceCardId = source,
+                    targetCardId = target,
+                    label = graphRelationLabelInput,
+                    description = graphRelationDescriptionInput,
+                )
+            }
+            result.document?.let { updated ->
+                noteDocuments = noteDocuments.map { document ->
+                    if (document.cardId == updated.cardId &&
+                        document.generation.cardVersion == updated.generation.cardVersion
+                    ) updated else document
+                }
+            }
+            if (result.error == null) {
+                graphIsAddingRelation = false
+                graphRelationOperationState = GraphRelationOperationState.SAVED
+                graphRelationError = null
+            } else {
+                graphRelationOperationState = GraphRelationOperationState.FAILED
+                graphRelationError = result.error
+            }
+        }
+    }
+
+    fun removeGraphRelation(relationId: String) {
+        if (graphRelationOperationState == GraphRelationOperationState.SAVING) return
+        val source = graphSelectedCardId?.let(::parseCardId) ?: return
+        graphRelationOperationState = GraphRelationOperationState.SAVING
+        graphRelationError = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                noteRelationRepository.removeRelation(source, relationId)
+            }
+            result.document?.let { updated ->
+                noteDocuments = noteDocuments.map { document ->
+                    if (document.cardId == updated.cardId &&
+                        document.generation.cardVersion == updated.generation.cardVersion
+                    ) updated else document
+                }
+            }
+            graphRelationOperationState = if (result.error == null) {
+                GraphRelationOperationState.SAVED
+            } else {
+                graphRelationError = result.error
+                GraphRelationOperationState.FAILED
+            }
+        }
+    }
+
+    fun clearGraphStatus() {
+        graphRelationOperationState = GraphRelationOperationState.IDLE
+        graphRelationError = null
+    }
+
+    private fun parseCardId(value: String): KnowledgeCardId? {
+        val separator = value.indexOf(':')
+        if (separator <= 0 || separator == value.lastIndex) return null
+        return runCatching {
+            KnowledgeCardId(value.substring(0, separator), value.substring(separator + 1))
+        }.getOrNull()
     }
 
     /**

@@ -2,6 +2,7 @@ package com.unarchive.android
 
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,8 +13,14 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -52,6 +59,8 @@ import androidx.navigation.compose.rememberNavController
 import com.unarchive.android.ui.components.GlassSurface
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
+import com.unarchive.android.card.CardRelationType
+import com.unarchive.android.card.GraphRelationItem
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
@@ -59,6 +68,8 @@ import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
+import com.unarchive.android.ui.state.GraphEvent
+import com.unarchive.android.ui.state.GraphRelationOperationState
 import com.unarchive.android.ui.state.MeEvent
 import com.unarchive.android.ui.state.MeUiState
 import com.unarchive.android.ui.state.NotesEvent
@@ -98,6 +109,7 @@ internal fun UnarchiveNavigationHost(
     state: UnarchiveUiState,
     onCreateEvent: (CreateEvent) -> Unit,
     onNotesEvent: (NotesEvent) -> Unit,
+    onGraphEvent: (GraphEvent) -> Unit = {},
     onMeEvent: (MeEvent) -> Unit,
     aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
     proposalRepository: NoteDocumentProposalRepository? = null,
@@ -175,7 +187,7 @@ internal fun UnarchiveNavigationHost(
                 }
             }
             composable(AppRoutes.GRAPH) {
-                GraphScreen(state = state.graph)
+                GraphScreen(state = state.graph, onEvent = onGraphEvent)
             }
             composable(AppRoutes.ME) {
                 MeScreen(
@@ -455,33 +467,324 @@ private fun FilterPill(label: String, selected: Boolean = false) {
 }
 
 @Composable
-private fun GraphScreen(state: GraphUiState) {
-    Column(
+private fun GraphScreen(
+    state: GraphUiState,
+    onEvent: (GraphEvent) -> Unit,
+) {
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = 20.dp)
+            .testTag("graph-scroll"),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
     ) {
-        Text("图谱", style = MaterialTheme.typography.headlineLarge)
-        Text(
-            "从当前笔记出发，查看可解释的局部连接。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("局部关系", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    if (state.noteCount == 0) {
-                        "生成第一篇笔记后，这里会显示来源视频、标签和手动关联。"
-                    } else {
-                        "当前有 ${state.noteCount} 篇笔记，关系图谱将在 D3 接入。"
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text("首期同时提供关系列表，确保放大字体和 TalkBack 下仍可操作。")
+        item {
+            Text("图谱", style = MaterialTheme.typography.headlineLarge)
+            Text(
+                "从一篇笔记出发，查看可解释、可编辑的一跳连接。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (state.noteDocuments.isEmpty()) {
+            item {
+                GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("局部关系", style = MaterialTheme.typography.titleLarge)
+                        Text("还没有可显示的关系", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "先从创作页生成一篇笔记，再添加第一个关联。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        } else {
+            item {
+                Text("当前笔记", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    state.noteDocuments.forEach { document ->
+                        AssistChip(
+                            onClick = { onEvent(GraphEvent.SelectNote(document.cardId.value)) },
+                            label = { Text(document.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            modifier = Modifier.testTag("graph-note-${document.cardId.value}"),
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = if (document.cardId.value == state.selectedCardId) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+                                },
+                            ),
+                        )
+                    }
+                }
+            }
+            item {
+                GraphPreview(state)
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text("关系列表", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "${state.relationCount} 条一跳关系 · 图形不可用时仍可操作",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Button(
+                        onClick = { onEvent(GraphEvent.StartAddRelation) },
+                        enabled = !state.isAddingRelation && state.noteDocuments.size > 1,
+                        modifier = Modifier.testTag("graph-add-relation"),
+                    ) { Text("添加关联") }
+                }
+            }
+            if (state.isAddingRelation) {
+                item {
+                    RelationEditor(state = state, onEvent = onEvent)
+                }
+            }
+            if (state.errorMessage != null) {
+                item {
+                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            state.errorMessage,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .testTag("graph-error")
+                                .semantics { contentDescription = "关系操作失败：${state.errorMessage}" },
+                        )
+                    }
+                }
+            }
+            if (state.operationState == GraphRelationOperationState.SAVED) {
+                item {
+                    Text(
+                        "关系已保存",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .testTag("graph-saved")
+                            .semantics { contentDescription = "关系操作状态：已保存" },
+                    )
+                }
+            }
+            if (state.outgoing.isEmpty() && state.incoming.isEmpty()) {
+                item {
+                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "还没有可显示的关系。可以先添加一个用户关联。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            } else {
+                items(state.outgoing, key = { "out-${it.relation.relationId}" }) { item ->
+                    RelationListItem(item, onEvent)
+                }
+                items(state.incoming, key = { "in-${it.relation.relationId}-${it.sourceCardId}" }) { item ->
+                    RelationListItem(item, onEvent)
+                }
             }
         }
     }
+}
+
+@Composable
+private fun GraphPreview(state: GraphUiState) {
+    val nodes = (state.outgoing.map { it.targetTitle } + state.incoming.map { it.sourceTitle })
+        .distinct()
+    val relationLineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(188.dp)
+            .testTag("graph-one-hop")
+            .semantics {
+                contentDescription = buildString {
+                    append("当前笔记局部图谱：${state.selectedTitle.orEmpty()}。")
+                    if (nodes.isEmpty()) append("暂无连接。")
+                    else append("连接到：${nodes.joinToString("、") }。")
+                }
+            },
+        emphasized = true,
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val centerY = size.height / 2f
+                val centerX = size.width / 2f
+                nodes.forEachIndexed { index, _ ->
+                    val x = size.width * (0.18f + (index % 4) * 0.22f)
+                    drawLine(
+                        color = relationLineColor,
+                        start = androidx.compose.ui.geometry.Offset(centerX, centerY),
+                        end = androidx.compose.ui.geometry.Offset(x, 48f + (index / 4) * 82f),
+                        strokeWidth = 3f,
+                    )
+                }
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.align(Alignment.Center),
+            ) {
+                Text(
+                    state.selectedTitle.orEmpty(),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 12.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                nodes.take(4).forEach { node ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            node,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RelationEditor(
+    state: GraphUiState,
+    onEvent: (GraphEvent) -> Unit,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth().testTag("graph-relation-editor")) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("添加用户关联", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "关系只写入当前笔记，不会修改目标笔记或外部副本。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text("选择目标笔记", style = MaterialTheme.typography.labelLarge)
+            state.noteDocuments
+                .filter { it.cardId.value != state.selectedCardId }
+                .forEach { document ->
+                    AssistChip(
+                        onClick = { onEvent(GraphEvent.TargetChanged(document.cardId.value)) },
+                        label = { Text(document.title) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("graph-target-${document.cardId.value}"),
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (document.cardId.value == state.targetCardIdInput) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+                            },
+                        ),
+                    )
+                }
+            OutlinedTextField(
+                value = state.relationLabelInput,
+                onValueChange = { onEvent(GraphEvent.LabelChanged(it)) },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "关系名称" },
+                label = { Text("关系名称（可选）") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = state.relationDescriptionInput,
+                onValueChange = { onEvent(GraphEvent.DescriptionChanged(it)) },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "关系说明" },
+                label = { Text("关系说明（可选）") },
+                minLines = 2,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { onEvent(GraphEvent.CreateUserLink) },
+                    enabled = state.targetCardIdInput.isNotBlank() &&
+                        state.operationState != GraphRelationOperationState.SAVING,
+                    modifier = Modifier.testTag("graph-save-relation"),
+                ) { Text(if (state.operationState == GraphRelationOperationState.SAVING) "保存中..." else "保存关联") }
+                TextButton(onClick = { onEvent(GraphEvent.CancelAddRelation) }) { Text("取消") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RelationListItem(
+    item: GraphRelationItem,
+    onEvent: (GraphEvent) -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("graph-relation-${item.relation.relationId}")
+            .semantics {
+                contentDescription = buildString {
+                    val displayTitle = if (item.direction.name == "INCOMING") item.sourceTitle else item.targetTitle
+                    append(if (item.direction.name == "INCOMING") "反向链接：" else "关系：")
+                    append(displayTitle)
+                    append("，${relationTypeLabel(item.relation.type)}")
+                    if (item.relation.description.isNotBlank()) append("，${item.relation.description}")
+                }
+            },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (item.direction.name == "INCOMING") "反向链接 · ${item.sourceTitle}" else item.targetTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        relationTypeLabel(item.relation.type),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (item.canDelete && item.direction.name == "OUTGOING") {
+                    TextButton(
+                        onClick = { onEvent(GraphEvent.RemoveRelation(item.relation.relationId)) },
+                        modifier = Modifier.testTag("graph-remove-${item.relation.relationId}"),
+                    ) { Text("移除") }
+                } else {
+                    Text("来源事实", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            if (item.relation.description.isNotBlank()) {
+                Text(item.relation.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+private fun relationTypeLabel(type: CardRelationType): String = when (type) {
+    CardRelationType.USER_LINK -> "用户关联"
+    CardRelationType.TAG -> "标签关系"
+    CardRelationType.SOURCE_VIDEO -> "来源视频"
+    CardRelationType.FAVORITE_FOLDER -> "收藏夹关系"
 }
 
 @Composable

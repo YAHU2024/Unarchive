@@ -35,6 +35,10 @@ data class CardRelation(
     val targetId: String,
     val label: String,
     val createdAtEpochMs: Long,
+    /** Stable ID of the note that owns this relation. Empty for legacy cards. */
+    val sourceCardId: String = "",
+    /** Optional user-facing explanation for the relation. */
+    val description: String = "",
 )
 
 /** Stable local card identity. Titles and generated text are intentionally excluded. */
@@ -441,6 +445,7 @@ private fun CardAsset.toJson() = JSONObject()
 private fun CardRelation.toJson() = JSONObject()
     .put("relation_id", relationId).put("type", type.name).put("target_id", targetId)
     .put("label", label).put("created_at_epoch_ms", createdAtEpochMs)
+    .put("source_card_id", sourceCardId).put("description", description)
 
 private fun KnowledgeSyncKey.storageKey(): String = listOf(
     cardId.platform, cardId.videoId, cardVersion, targetType, targetId, folderId,
@@ -500,6 +505,8 @@ private fun jsonRelationList(array: JSONArray?): List<CardRelation> = buildList 
             type = runCatching { CardRelationType.valueOf(item.optString("type")) }.getOrDefault(CardRelationType.USER_LINK),
             targetId = item.getString("target_id"), label = item.optString("label"),
             createdAtEpochMs = item.getLong("created_at_epoch_ms"),
+            sourceCardId = item.optString("source_card_id"),
+            description = item.optString("description"),
         ))
     }
 }

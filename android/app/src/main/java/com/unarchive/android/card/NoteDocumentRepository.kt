@@ -190,15 +190,16 @@ class FileNoteDocumentRepository(
     }
 
     private fun prepareForSave(document: NoteDocument, existing: NoteDocument?): NoteDocument {
-        val contentChanged = existing == null || contentFingerprint(existing) != contentFingerprint(document)
+        val normalized = NoteRelationPolicy.normalizeSystemRelations(document)
+        val contentChanged = existing == null || contentFingerprint(existing) != contentFingerprint(normalized)
         val revision = when {
-            existing == null -> document.editing.contentRevision
-            contentChanged -> maxOf(existing.editing.contentRevision + 1L, document.editing.contentRevision)
-            else -> maxOf(existing.editing.contentRevision, document.editing.contentRevision)
+            existing == null -> normalized.editing.contentRevision
+            contentChanged -> maxOf(existing.editing.contentRevision + 1L, normalized.editing.contentRevision)
+            else -> maxOf(existing.editing.contentRevision, normalized.editing.contentRevision)
         }
-        val now = maxOf(nowEpochMs(), document.updatedAtEpochMs, document.createdAtEpochMs)
-        return document.copy(
-            editing = document.editing.copy(
+        val now = maxOf(nowEpochMs(), normalized.updatedAtEpochMs, normalized.createdAtEpochMs)
+        return normalized.copy(
+            editing = normalized.editing.copy(
                 contentRevision = revision,
                 dirty = false,
                 lastSavedAtEpochMs = now,
@@ -395,10 +396,12 @@ private fun JSONObject.toCardAsset() = CardAsset(
 private fun CardRelation.toJson() = JSONObject()
     .put("relation_id", relationId).put("type", type.name).put("target_id", targetId)
     .put("label", label).put("created_at_epoch_ms", createdAtEpochMs)
+    .put("source_card_id", sourceCardId).put("description", description)
 
 private fun JSONObject.toCardRelation() = CardRelation(
     relationId = getString("relation_id"), type = enumOrDefault("type", CardRelationType.USER_LINK),
     targetId = getString("target_id"), label = optString("label"), createdAtEpochMs = getLong("created_at_epoch_ms"),
+    sourceCardId = optString("source_card_id"), description = optString("description"),
 )
 
 private fun jsonStringList(array: JSONArray?): List<String> = buildList {
