@@ -153,7 +153,7 @@ internal fun NoteEditorScreen(
             item {
                 EditorStatus(state = state)
             }
-            if (state.aiProposal?.status == NoteProposalStatus.PENDING ||
+            if (state.aiProposal != null ||
                 state.aiProposalState == NoteAiProposalState.RUNNING ||
                 state.aiProposalError != null
             ) {
@@ -216,7 +216,12 @@ private fun AiProposalCard(
     state: NoteEditorUiState,
     onEvent: (NoteEditorEvent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("note-editor-ai-proposal-card"),
+        emphasized = true,
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.aiProposalState == NoteAiProposalState.RUNNING) {
                 Text("正在生成 AI 整理建议", style = MaterialTheme.typography.titleMedium)
@@ -241,13 +246,17 @@ private fun AiProposalCard(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { onEvent(NoteEditorEvent.ApplyAiProposal) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "应用建议" },
                     ) {
                         Text("应用建议")
                     }
                     OutlinedButton(
                         onClick = { onEvent(NoteEditorEvent.RejectAiProposal) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "保留当前笔记" },
                     ) {
                         Text("保留当前笔记")
                     }

@@ -306,7 +306,9 @@ class NoteEditorViewModelTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
         try {
-            val original = document()
+            val original = document().copy(
+                editing = document().editing.copy(lastSavedAtEpochMs = 12L),
+            )
             val noteRepository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
             val proposalDirectory = temporaryFolder.newFolder("proposals")
             val proposalRepository = FileNoteDocumentProposalRepository(proposalDirectory)

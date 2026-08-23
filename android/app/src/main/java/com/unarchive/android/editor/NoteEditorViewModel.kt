@@ -121,7 +121,11 @@ class NoteEditorViewModel(
                 }
             }
             val current = _uiState.value
-            if (current.document == initial && current.saveState == NoteEditorSaveState.CLEAN) {
+            if (current.document == initial &&
+                !current.isDirty &&
+                current.aiProposal == null &&
+                current.aiProposalState == NoteAiProposalState.IDLE
+            ) {
                 _uiState.value = NoteEditorUiState(restored, aiProposal = pendingProposal)
             }
         }
