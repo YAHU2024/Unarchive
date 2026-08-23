@@ -11,6 +11,7 @@ import com.unarchive.android.card.KnowledgeSyncRecord
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImaSyncServiceTest {
@@ -83,5 +84,35 @@ class ImaSyncServiceTest {
         assertEquals(0, gateway.imports)
         assertEquals(0, gateway.associations)
         root.deleteRecursively()
+    }
+
+    @Test
+    fun editedContentRevisionDoesNotReuseEarlierSyncedRecord() {
+        val root = kotlin.io.path.createTempDirectory("ima-sync-revision-test").toFile()
+        val gateway = FakeGateway().also { it.failAssociation = false }
+        val repo = FileKnowledgeSyncRepository(File(root, "sync.json"))
+        val card = KnowledgeCard(
+            cardId = KnowledgeCardId("bilibili", "BV_REVISION"), cardVersion = "v1", canonicalUrl = "https://example.test",
+            title = "可编辑", ownerName = "", videoDurationSeconds = 1, timingAccuracy = TranscriptTimingAccuracy.EXACT,
+            transcript = listOf(TranscriptSegment(0, 1000, "内容")), createdAtEpochMs = 1, updatedAtEpochMs = 1,
+            markdown = "# 可编辑",
+        )
+
+        val service = ImaSyncService(gateway, repo)
+        kotlinx.coroutines.runBlocking { service.sync(card, "kb-test", contentRevision = 0L) }
+        val edited = kotlinx.coroutines.runBlocking { service.sync(card, "kb-test", contentRevision = 1L) }
+
+        assertEquals(KnowledgeSyncState.SYNCED, edited.state)
+        assertEquals(2, gateway.imports)
+        assertEquals(2, repo.list().size)
+        assertTrue(repo.list().any { it.key.contentRevision == 1L })
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun providerErrorIsReducedToSafeBatchMessage() {
+        assertEquals("目标配额已用尽", safeImaErrorMessage("HTTP 400 code=200005: private quota-id"))
+        assertEquals("凭据或权限无效", safeImaErrorMessage("HTTP 401 secret-token"))
+        assertEquals("同步请求失败", safeImaErrorMessage("provider stack trace and note-id"))
     }
 }

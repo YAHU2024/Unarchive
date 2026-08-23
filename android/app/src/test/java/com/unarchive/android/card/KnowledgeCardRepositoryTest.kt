@@ -117,6 +117,37 @@ class KnowledgeCardRepositoryTest {
     }
 
     @Test
+    fun syncStateIsolatedByContentRevision() {
+        val file = temporaryFolder.newFile("revision-sync.json")
+        val repository = FileKnowledgeSyncRepository(file)
+        val cardId = KnowledgeCardId("bilibili", "BV_revision")
+        val beforeEdit = KnowledgeSyncKey(cardId, "v1", "ima", "kb", "", contentRevision = 0L)
+        val afterEdit = beforeEdit.copy(contentRevision = 1L)
+
+        repository.save(KnowledgeSyncRecord(beforeEdit, KnowledgeSyncState.SYNCED, "note-old", true, updatedAtEpochMs = 1))
+        repository.save(KnowledgeSyncRecord(afterEdit, KnowledgeSyncState.RETRYABLE_FAILURE, "note-new", false, updatedAtEpochMs = 2))
+
+        assertEquals(2, repository.list().size)
+        assertEquals("note-old", repository.find(beforeEdit)?.remoteNoteId)
+        assertEquals(KnowledgeSyncState.RETRYABLE_FAILURE, repository.find(afterEdit)?.state)
+    }
+
+    @Test
+    fun corruptSyncStateIsReportedAndCanBeReplacedByNextSave() {
+        val file = temporaryFolder.newFile("corrupt-sync.json")
+        file.writeText("not-json")
+        val repository = FileKnowledgeSyncRepository(file)
+
+        assertTrue(repository.list().isEmpty())
+        assertEquals(KnowledgeSyncStoreHealth.CORRUPTED, repository.health())
+
+        val key = KnowledgeSyncKey(KnowledgeCardId("bilibili", "BV_recover"), "v1", "ima", "kb")
+        repository.save(KnowledgeSyncRecord(key, KnowledgeSyncState.RETRYABLE_FAILURE, updatedAtEpochMs = 1))
+        assertEquals(KnowledgeSyncStoreHealth.HEALTHY, repository.health())
+        assertEquals(KnowledgeSyncState.RETRYABLE_FAILURE, repository.find(key)?.state)
+    }
+
+    @Test
     fun versionHashChangesWhenGenerationInputsChange() {
         val base = listOf(TranscriptSegment(0, 1_000, "hello"))
         val first = KnowledgeCard.version("https://example/video", "Title", "Owner", base, null, emptyList(), "model-1")

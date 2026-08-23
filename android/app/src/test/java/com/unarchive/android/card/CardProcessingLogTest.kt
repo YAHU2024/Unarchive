@@ -19,7 +19,7 @@ class CardProcessingLogTest {
         assertTrue(line.contains("operationId=op-1"))
         assertTrue(line.contains("stage=卡片导出"))
         assertTrue(line.contains("state=完成"))
-        assertTrue(line.contains("cardId=bilibili:BV1"))
+        assertFalse(line.contains("bilibili:BV1"))
         assertTrue(line.contains("assetCount=2"))
         assertTrue(line.contains("note=a_value:x"))
     }

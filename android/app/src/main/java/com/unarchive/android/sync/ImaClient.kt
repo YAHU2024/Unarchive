@@ -15,6 +15,7 @@ data class ImaFolder(val id: String, val name: String, val depth: Int = 0)
 class ImaQuotaExceededException(message: String) : IOException(message)
 class ImaRateLimitException(message: String) : IOException(message)
 class ImaAlreadyAddedException(message: String) : IOException(message)
+class ImaCredentialException(message: String) : IOException(message)
 
 /** Minimal ima OpenAPI client. Business errors are classified before HTTP errors. */
 interface ImaGateway {
@@ -109,6 +110,7 @@ class ImaClient(
                     return@withContext call(path, body, attempt + 1)
                 } else throw ImaRateLimitException(message.ifBlank { "请求频率超限，重试次数已用尽" })
                 200005 -> throw ImaQuotaExceededException(message.ifBlank { "配额耗尽" })
+                200002 -> throw ImaCredentialException(message.ifBlank { "凭据或权限无效" })
                 220001 -> throw ImaAlreadyAddedException(message.ifBlank { "已关联" })
                 else -> throw IOException("ima API 错误：$message (code=$code)")
             }

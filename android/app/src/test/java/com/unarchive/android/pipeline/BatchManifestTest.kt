@@ -102,6 +102,8 @@ class BatchManifestTest {
         assertEquals("folder-test", restored.imaFolderId)
         assertEquals(ImaBatchStageState.RETRYABLE_FAILURE, restored.items.single().imaState)
         assertEquals("note-1", restored.items.single().imaNoteId)
+        assertEquals("同步请求失败", restored.items.single().imaErrorMessage)
+        assertTrue(!requireNotNull(restored.items.single().imaErrorMessage).contains("网络超时"))
         assertTrue(restored.unfinished())
     }
 

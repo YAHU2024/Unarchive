@@ -295,11 +295,14 @@ data class KnowledgeSyncKey(
     val targetType: String,
     val targetId: String,
     val folderId: String = "",
+    /** Structured user edits are a separate sync identity from generation. */
+    val contentRevision: Long = 0L,
 ) {
     init {
         require(cardVersion.isNotBlank()) { "cardVersion cannot be blank" }
         require(targetType.isNotBlank()) { "targetType cannot be blank" }
         require(targetId.isNotBlank()) { "targetId cannot be blank" }
+        require(contentRevision >= 0L) { "contentRevision cannot be negative" }
     }
 }
 
@@ -329,29 +332,67 @@ data class KnowledgeSyncRecord(
     val updatedAtEpochMs: Long,
     val targetName: String = "",
     val folderName: String = "",
+    /** Persisted image delivery facts; kept as strings for schema compatibility. */
+    val imageMode: String = "",
+    val imageRequestedCount: Int = 0,
+    val imageEmbeddedCount: Int = 0,
+    val imageMissingCount: Int = 0,
+    val imageEmbeddedBytes: Long = 0L,
 )
+
+enum class KnowledgeSyncStoreHealth { MISSING, HEALTHY, CORRUPTED }
 
 interface KnowledgeSyncRepository {
     fun list(): List<KnowledgeSyncRecord>
     fun find(key: KnowledgeSyncKey): KnowledgeSyncRecord?
     fun save(record: KnowledgeSyncRecord): KnowledgeSyncRecord
+    fun health(): KnowledgeSyncStoreHealth = KnowledgeSyncStoreHealth.HEALTHY
 }
 
 /** Atomic JSON state store isolated by card version and sync target. */
 class FileKnowledgeSyncRepository(private val file: File) : KnowledgeSyncRepository {
+    private var lastHealth: KnowledgeSyncStoreHealth =
+        if (file.isFile) KnowledgeSyncStoreHealth.HEALTHY else KnowledgeSyncStoreHealth.MISSING
+    private var hasLoaded = false
+
+    override fun health(): KnowledgeSyncStoreHealth = synchronized(this) {
+        if (!file.isFile) {
+            lastHealth = KnowledgeSyncStoreHealth.MISSING
+        } else if (!hasLoaded) {
+            // Force one parse so a malformed file is not reported as healthy
+            // before the first list/find call.
+            loadJson()
+        }
+        lastHealth
+    }
+
     override fun list(): List<KnowledgeSyncRecord> = synchronized(this) {
         val json = loadJson()
         buildList {
             val keys = json.keys()
             while (keys.hasNext()) {
-                val value = json.optJSONObject(keys.next()) ?: continue
-                runCatching { value.toSyncRecord() }.getOrNull()?.let(::add)
+                val value = json.optJSONObject(keys.next())
+                if (value == null) {
+                    lastHealth = KnowledgeSyncStoreHealth.CORRUPTED
+                    continue
+                }
+                runCatching { value.toSyncRecord() }
+                    .onFailure { lastHealth = KnowledgeSyncStoreHealth.CORRUPTED }
+                    .getOrNull()?.let(::add)
             }
         }
     }
 
     override fun find(key: KnowledgeSyncKey): KnowledgeSyncRecord? = synchronized(this) {
-        loadJson().optJSONObject(key.storageKey())?.toSyncRecord()
+        val json = loadJson()
+        if (json.has(key.storageKey()) && json.optJSONObject(key.storageKey()) == null) {
+            lastHealth = KnowledgeSyncStoreHealth.CORRUPTED
+        }
+        json.optJSONObject(key.storageKey())?.let { value ->
+            runCatching { value.toSyncRecord() }
+                .onFailure { lastHealth = KnowledgeSyncStoreHealth.CORRUPTED }
+                .getOrNull()
+        }
     }
 
     override fun save(record: KnowledgeSyncRecord): KnowledgeSyncRecord = synchronized(this) {
@@ -368,12 +409,24 @@ class FileKnowledgeSyncRepository(private val file: File) : KnowledgeSyncReposit
         } finally {
             temporary.delete()
         }
+        lastHealth = KnowledgeSyncStoreHealth.HEALTHY
         record
     }
 
     private fun loadJson(): JSONObject = runCatching {
-        if (!file.isFile) JSONObject() else JSONObject(file.readText(Charsets.UTF_8))
-    }.getOrElse { JSONObject() }
+        hasLoaded = true
+        if (!file.isFile) {
+            lastHealth = KnowledgeSyncStoreHealth.MISSING
+            JSONObject()
+        } else {
+            JSONObject(file.readText(Charsets.UTF_8)).also {
+                lastHealth = KnowledgeSyncStoreHealth.HEALTHY
+            }
+        }
+    }.getOrElse {
+        lastHealth = KnowledgeSyncStoreHealth.CORRUPTED
+        JSONObject()
+    }
 }
 
 private fun KnowledgeCard.toJson() = JSONObject()
@@ -447,9 +500,12 @@ private fun CardRelation.toJson() = JSONObject()
     .put("label", label).put("created_at_epoch_ms", createdAtEpochMs)
     .put("source_card_id", sourceCardId).put("description", description)
 
-private fun KnowledgeSyncKey.storageKey(): String = listOf(
-    cardId.platform, cardId.videoId, cardVersion, targetType, targetId, folderId,
-).joinToString(separator = "") { value -> "${value.length}:$value" }
+private fun KnowledgeSyncKey.storageKey(): String = buildList {
+    addAll(listOf(cardId.platform, cardId.videoId, cardVersion, targetType, targetId, folderId))
+    // Revision zero keeps the historical key hash so existing D4 records are
+    // readable; edited content gets a distinct key without a migration pass.
+    if (contentRevision > 0L) add(contentRevision.toString())
+}.joinToString(separator = "") { value -> "${value.length}:$value" }
     .toByteArray(Charsets.UTF_8)
     .let(KnowledgeCard::sha256)
 
@@ -457,15 +513,20 @@ private fun KnowledgeSyncRecord.toJson() = JSONObject()
     .put("platform", key.cardId.platform).put("video_id", key.cardId.videoId)
     .put("card_version", key.cardVersion).put("target_type", key.targetType)
     .put("target_id", key.targetId).put("folder_id", key.folderId)
+    .put("content_revision", key.contentRevision)
     .put("state", state.name).put("remote_note_id", remoteNoteId).put("kb_added", kbAdded)
     .put("last_error", lastError).put("updated_at_epoch_ms", updatedAtEpochMs)
     .put("target_name", targetName).put("folder_name", folderName)
+    .put("image_mode", imageMode).put("image_requested_count", imageRequestedCount)
+    .put("image_embedded_count", imageEmbeddedCount).put("image_missing_count", imageMissingCount)
+    .put("image_embedded_bytes", imageEmbeddedBytes)
 
 private fun JSONObject.toSyncRecord() = KnowledgeSyncRecord(
     key = KnowledgeSyncKey(
         cardId = KnowledgeCardId(getString("platform"), getString("video_id")),
         cardVersion = getString("card_version"), targetType = getString("target_type"),
         targetId = getString("target_id"), folderId = optString("folder_id"),
+        contentRevision = optLong("content_revision", 0L).coerceAtLeast(0L),
     ),
     state = runCatching { KnowledgeSyncState.valueOf(optString("state")) }.getOrDefault(KnowledgeSyncState.NOT_SYNCED),
     remoteNoteId = optString("remote_note_id").takeIf { it.isNotBlank() },
@@ -474,6 +535,11 @@ private fun JSONObject.toSyncRecord() = KnowledgeSyncRecord(
     updatedAtEpochMs = optLong("updated_at_epoch_ms", 0L),
     targetName = optString("target_name"),
     folderName = optString("folder_name"),
+    imageMode = optString("image_mode"),
+    imageRequestedCount = optInt("image_requested_count", 0).coerceAtLeast(0),
+    imageEmbeddedCount = optInt("image_embedded_count", 0).coerceAtLeast(0),
+    imageMissingCount = optInt("image_missing_count", 0).coerceAtLeast(0),
+    imageEmbeddedBytes = optLong("image_embedded_bytes", 0L).coerceAtLeast(0L),
 )
 
 private fun jsonStringList(array: JSONArray?): List<String> = buildList {

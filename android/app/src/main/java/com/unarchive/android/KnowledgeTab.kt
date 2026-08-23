@@ -63,7 +63,7 @@ internal fun KnowledgeTab(vm: UnarchiveViewModel) {
                 ) {
                     val marker = if (selected?.cardId == card.cardId) "▶ " else ""
                     Text(
-                        "$marker${card.title} · ${card.cardId.videoId}" +
+                        "$marker${card.title}" +
                             syncMarker?.let { " · $it" }.orEmpty(),
                         maxLines = 2,
                     )
@@ -83,14 +83,13 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(card.title, style = MaterialTheme.typography.titleLarge)
         if (card.ownerName.isNotBlank()) Text(card.ownerName)
-        Text("${card.cardId.platform} / ${card.cardId.videoId}", style = MaterialTheme.typography.bodySmall)
-        Text("版本：${card.cardVersion.take(12)}", style = MaterialTheme.typography.bodySmall)
+        Text("来源视频", style = MaterialTheme.typography.bodySmall)
         Text(
             "基础：${card.baseState.displayName()} · AI：${card.analysisState.displayName()} · 截图：${card.screenshotsState.displayName()}",
             style = MaterialTheme.typography.bodySmall,
         )
-        card.lastError?.let { error ->
-            Text("最近错误：$error", color = MaterialTheme.colorScheme.error, maxLines = 3)
+        card.lastError?.let {
+            Text("处理阶段有错误，可重新生成或导出。", color = MaterialTheme.colorScheme.error, maxLines = 2)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
@@ -122,8 +121,8 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
                         "：${syncStateText(record.state)}",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                record.lastError?.let { error ->
-                    Text("原因：$error", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
+                record.lastError?.let {
+                    Text("同步请求未完成，可从分享与去向重试。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
                 }
             }
         }

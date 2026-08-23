@@ -4,15 +4,62 @@ import com.unarchive.android.UnarchiveViewModel
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.GraphRelationItem
 import com.unarchive.android.card.NoteDocument
+import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.toNoteDocument
+import com.unarchive.android.sync.DestinationAction
+import com.unarchive.android.sync.DestinationTargetStateMapper
 
 enum class GraphRelationOperationState { IDLE, SAVING, SAVED, FAILED }
+
+enum class DestinationOperationState { IDLE, RUNNING, SUCCEEDED, FAILED }
+
+internal data class DestinationTargetOption(
+    val knowledgeBaseId: String,
+    val knowledgeBaseName: String,
+    val folderId: String = "",
+    val folderName: String = "根目录",
+)
+
+/** Stable internal retry handle; values are never rendered or announced. */
+internal data class DestinationTargetRef(
+    val targetType: String,
+    val targetId: String,
+    val folderId: String,
+    val contentRevision: Long,
+)
+
+internal data class DestinationTargetUiState(
+    val targetLabel: String,
+    val folderLabel: String,
+    val state: KnowledgeSyncState,
+    val stateLabel: String,
+    val detail: String? = null,
+    val canRetry: Boolean = false,
+    val isCurrent: Boolean = false,
+    val retryRef: DestinationTargetRef? = null,
+)
+
+internal data class DestinationUiState(
+    val card: KnowledgeCard? = null,
+    val localSaved: Boolean = false,
+    val exportState: DestinationOperationState = DestinationOperationState.IDLE,
+    val exportMessage: String = "",
+    val exportEmbeddedAssetCount: Int = 0,
+    val exportMissingAssetCount: Int = 0,
+    val imaConfigured: Boolean = false,
+    val imaSyncing: Boolean = false,
+    val currentTargetLabel: String = "",
+    val imaStateWarning: String? = null,
+    val targetOptions: List<DestinationTargetOption> = emptyList(),
+    val targetRecords: List<DestinationTargetUiState> = emptyList(),
+)
 
 internal data class UnarchiveUiState(
     val create: CreateUiState,
     val notes: NotesUiState,
     val graph: GraphUiState,
     val me: MeUiState,
+    val destinations: DestinationUiState = DestinationUiState(),
 )
 
 internal data class CreateUiState(
@@ -61,6 +108,15 @@ internal sealed interface CreateEvent {
 
 internal sealed interface NotesEvent {
     data object Refresh : NotesEvent
+}
+
+internal sealed interface DestinationEvent {
+    data class OpenCard(val cardId: String, val cardVersion: String? = null) : DestinationEvent
+    data object ExportMarkdown : DestinationEvent
+    data object SyncIma : DestinationEvent
+    data class RetryIma(val ref: DestinationTargetRef) : DestinationEvent
+    data class SelectTarget(val knowledgeBaseId: String, val folderId: String) : DestinationEvent
+    data object OpenSecuritySettings : DestinationEvent
 }
 
 internal sealed interface GraphEvent {
@@ -129,4 +185,56 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
             )
         },
         me = MeUiState(),
+        destinations = run {
+            val card = destinationCardForUi()
+            val targetRecords = card?.let(::knowledgeSyncRecords).orEmpty()
+            val targetStates = targetRecords.map(DestinationTargetStateMapper::fromRecord)
+            // Only the selected KB's folders are known. Do not attach one
+            // KB's folder IDs to every other target.
+            val options = imaKnowledgeBases.flatMap { base ->
+                val baseName = base.name.ifBlank { "ima 知识库" }
+                val root = listOf(DestinationTargetOption(base.id, baseName))
+                if (base.id != imaKnowledgeBaseId) root
+                else root + imaFolders.filter { it.id.isNotBlank() }.map { folder ->
+                    DestinationTargetOption(base.id, baseName, folder.id, folder.name.ifBlank { "文件夹" })
+                }
+            }
+            DestinationUiState(
+                card = card,
+                localSaved = card != null,
+                exportState = when {
+                    exportJob?.isActive == true -> DestinationOperationState.RUNNING
+                    destinationExportFailed -> DestinationOperationState.FAILED
+                    destinationExportSucceeded -> DestinationOperationState.SUCCEEDED
+                    else -> DestinationOperationState.IDLE
+                },
+                exportMessage = destinationExportMessage,
+                exportEmbeddedAssetCount = destinationExportEmbeddedAssetCount,
+                exportMissingAssetCount = destinationExportMissingAssetCount,
+                imaConfigured = imaCredentialsConfigured,
+                imaSyncing = imaSyncing,
+                currentTargetLabel = currentImaTargetDisplayName,
+                imaStateWarning = imaSyncStateWarning,
+                targetOptions = options,
+                targetRecords = targetStates.mapIndexed { index, target ->
+                    val record = targetRecords[index]
+                    DestinationTargetUiState(
+                        targetLabel = target.targetName,
+                        folderLabel = target.folderName ?: "根目录",
+                        state = target.state,
+                        stateLabel = target.statusText,
+                        detail = target.imageDelivery.userMessage,
+                        canRetry = !imaSyncing && (target.action == DestinationAction.RETRY ||
+                            target.action == DestinationAction.REPAIR_CONFIGURATION),
+                        isCurrent = false,
+                        retryRef = DestinationTargetRef(
+                            targetType = record.key.targetType,
+                            targetId = record.key.targetId,
+                            folderId = record.key.folderId,
+                            contentRevision = record.key.contentRevision,
+                        ),
+                    )
+                },
+            )
+        },
     )

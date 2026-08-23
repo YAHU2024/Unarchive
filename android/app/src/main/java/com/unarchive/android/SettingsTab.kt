@@ -13,24 +13,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.model.ModelManagementSection
@@ -120,70 +112,12 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
 
         HorizontalDivider()
 
-        Text("ima 同步（单卡）", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(value = vm.imaClientIdInput, onValueChange = { vm.imaClientIdInput = it }, modifier = Modifier.fillMaxWidth(), enabled = vm.runningJob == null && vm.generateJob == null, label = { Text("ima Client ID") })
-        OutlinedTextField(value = vm.imaApiKeyInput, onValueChange = { vm.imaApiKeyInput = it }, modifier = Modifier.fillMaxWidth(), enabled = vm.runningJob == null && vm.generateJob == null, label = { Text("ima API Key") }, visualTransformation = PasswordVisualTransformation())
-        ImaKnowledgeBaseSelector(vm)
-        ImaFolderSelector(vm)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::saveImaSettings) { Text("保存 ima 设置") }
-            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::checkImaConnection) { Text("检查连接") }
-            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::discoverImaFolders) { Text("查看文件夹") }
-            OutlinedButton(enabled = vm.runningJob == null && vm.generateJob == null, onClick = vm::clearImaSettings) { Text("清除 ima") }
-        }
-        if (vm.imaDiscoveryStatus.isNotBlank()) Text(vm.imaDiscoveryStatus, style = MaterialTheme.typography.bodySmall)
-        if (vm.imaFolderDiscoveryStatus.isNotBlank()) Text(vm.imaFolderDiscoveryStatus, style = MaterialTheme.typography.bodySmall)
-
-        HorizontalDivider()
-        Text("云端转写（可选）", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = vm.siliconFlowKeyInput,
-            onValueChange = { vm.siliconFlowKeyInput = it },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = vm.runningJob == null,
-            label = { Text("SiliconFlow API Key") },
-            visualTransformation = PasswordVisualTransformation(),
+        Text("服务凭据", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "凭据编辑、连接检查和清除确认已集中到“安全设置”。此开发者页不再显示或修改密钥。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(
-                enabled = vm.runningJob == null && vm.siliconFlowKeyInput.isNotBlank(),
-                onClick = { vm.saveSiliconFlowKey() },
-            ) {
-                Text("保存 Key")
-            }
-            OutlinedButton(
-                enabled = vm.runningJob == null,
-                onClick = { vm.clearSiliconFlowKey() },
-            ) {
-                Text("清除")
-            }
-        }
-
-        HorizontalDivider()
-
-        Text("AI 卡片（可选）", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = vm.apiKeyInput,
-            onValueChange = { vm.apiKeyInput = it },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = vm.runningJob == null && vm.generateJob == null,
-            label = { Text("DeepSeek API Key") },
-            visualTransformation = PasswordVisualTransformation(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(
-                enabled = vm.runningJob == null && vm.generateJob == null && vm.apiKeyInput.isNotBlank(),
-                onClick = { vm.saveApiKey() },
-            ) {
-                Text("保存 Key")
-            }
-            OutlinedButton(
-                enabled = vm.runningJob == null && vm.generateJob == null,
-                onClick = { vm.clearApiKey() },
-            ) {
-                Text("清除")
-            }
-        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -290,61 +224,5 @@ private fun StorageManagementSection(vm: UnarchiveViewModel) {
     OutlinedButton(onClick = vm::saveCustomCacheBudget) { Text("保存自定义预算") }
     if (vm.cacheBudgetStatus.isNotBlank()) {
         Text(vm.cacheBudgetStatus, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun ImaKnowledgeBaseSelector(vm: UnarchiveViewModel) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedName = vm.imaKnowledgeBases.firstOrNull { it.id == vm.imaKnowledgeBaseId }?.name
-        ?.takeIf(String::isNotBlank)
-        ?: if (vm.imaKnowledgeBases.isEmpty()) "请先点击“检查连接”" else "请选择测试知识库"
-    val enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBases.isNotEmpty()
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("测试知识库", style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            enabled = enabled,
-            onClick = { expanded = true },
-        ) {
-            Text(selectedName, modifier = Modifier.weight(1f), maxLines = 1)
-            androidx.compose.material3.Icon(Icons.Default.ArrowDropDown, contentDescription = "选择测试知识库")
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            vm.imaKnowledgeBases.forEach { base ->
-                DropdownMenuItem(text = { Text(base.name.ifBlank { "未命名知识库" }) }, onClick = {
-                    vm.selectImaKnowledgeBase(base.id)
-                    expanded = false
-                })
-            }
-        }
-    }
-}
-
-@Composable
-private fun ImaFolderSelector(vm: UnarchiveViewModel) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedName = vm.imaFolders.firstOrNull { it.id == vm.imaFolderId }?.name
-        ?.takeIf(String::isNotBlank) ?: "根目录"
-    val enabled = vm.runningJob == null && vm.generateJob == null && vm.imaKnowledgeBaseId.isNotBlank()
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("目标文件夹", style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            enabled = enabled,
-            onClick = { expanded = true },
-        ) {
-            Text(selectedName, modifier = Modifier.weight(1f), maxLines = 1)
-            androidx.compose.material3.Icon(Icons.Default.ArrowDropDown, contentDescription = "选择目标文件夹")
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("根目录") }, onClick = { vm.selectImaFolder(""); expanded = false })
-            vm.imaFolders.forEach { folder ->
-                DropdownMenuItem(text = { Text(folder.name.ifBlank { "未命名文件夹" }) }, onClick = {
-                    vm.selectImaFolder(folder.id)
-                    expanded = false
-                })
-            }
-        }
     }
 }

@@ -27,6 +27,9 @@ import com.unarchive.android.video.VideoDownloader
 import com.unarchive.android.video.VideoFrameExtractor
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -124,9 +127,7 @@ private fun Context.launchChooser(intent: Intent, title: String) {
 
 /** Writes [text] to the export dir and opens the share sheet as a .txt file. */
 internal fun Context.exportTextFile(fileName: String, text: String, title: String) {
-    val file = File(cacheDir, "export/$fileName")
-    file.parentFile?.mkdirs()
-    file.writeText(text)
+    val file = writeShareText(fileName, text)
     val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
     val intent = Intent(Intent.ACTION_SEND)
         .setType("text/plain")
@@ -187,9 +188,7 @@ internal fun Context.exportCard(stored: StoredVideoResult, markdown: String? = n
 }
 
 internal fun Context.shareMarkdownFile(fileName: String, markdown: String, title: String) {
-    val file = File(cacheDir, "export/$fileName")
-    file.parentFile?.mkdirs()
-    file.writeText(markdown)
+    val file = writeShareText(fileName, markdown)
     val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
     val intent = Intent(Intent.ACTION_SEND)
         .setType("text/markdown")
@@ -199,10 +198,30 @@ internal fun Context.shareMarkdownFile(fileName: String, markdown: String, title
     launchChooser(intent, "导出知识卡片")
 }
 
+/** Writes each share artifact to a unique directory and publishes it atomically. */
+private fun Context.writeShareText(fileName: String, text: String): File {
+    val directory = File(cacheDir, "export/${UUID.randomUUID()}").apply { mkdirs() }
+    val file = File(directory, fileName)
+    val temporary = File(directory, "$fileName.tmp")
+    temporary.writeText(text, Charsets.UTF_8)
+    try {
+        Files.move(
+            temporary.toPath(), file.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+        Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+        temporary.delete()
+    }
+    return file
+}
+
 /** Copy [source] into the export directory under a readable name. Safe on a background dispatcher. */
 internal fun Context.prepareAudioExport(stored: StoredVideoResult, source: File): File {
     val fileName = exportAudioFileName(stored.key.videoId, stored.title, source.extension)
-    val target = File(cacheDir, "export/$fileName")
+    val target = File(cacheDir, "export/${UUID.randomUUID()}/$fileName")
     target.parentFile?.mkdirs()
     source.copyTo(target, overwrite = true)
     return target

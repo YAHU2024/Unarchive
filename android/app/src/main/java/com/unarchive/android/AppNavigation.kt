@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -61,12 +65,18 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.CardRelationType
 import com.unarchive.android.card.GraphRelationItem
+import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
+import com.unarchive.android.ui.state.DestinationEvent
+import com.unarchive.android.ui.state.DestinationTargetOption
+import com.unarchive.android.ui.state.DestinationUiState
+import com.unarchive.android.ui.state.DestinationOperationState
 import com.unarchive.android.ui.state.GraphUiState
 import com.unarchive.android.ui.state.GraphEvent
 import com.unarchive.android.ui.state.GraphRelationOperationState
@@ -82,13 +92,18 @@ internal object AppRoutes {
     const val GRAPH = "graph"
     const val ME = "me"
     const val NOTE_EDITOR = "notes/{platform}/{videoId}/{cardVersion}/edit"
+    const val DESTINATIONS = "destinations/{platform}/{videoId}/{cardVersion}"
     const val LEGACY_TEST = "legacy/test"
     const val LEGACY_RESULTS = "legacy/results"
     const val LEGACY_LOG = "legacy/log"
     const val LEGACY_SETTINGS = "legacy/settings"
+    const val SECURITY = "me/security"
 
     fun noteEditor(document: NoteDocument): String =
         "notes/${Uri.encode(document.cardId.platform)}/${Uri.encode(document.cardId.videoId)}/${Uri.encode(document.generation.cardVersion)}/edit"
+
+    fun destinations(document: NoteDocument): String =
+        "destinations/${Uri.encode(document.cardId.platform)}/${Uri.encode(document.cardId.videoId)}/${Uri.encode(document.generation.cardVersion)}"
 }
 
 private data class MainDestination(
@@ -110,6 +125,7 @@ internal fun UnarchiveNavigationHost(
     onCreateEvent: (CreateEvent) -> Unit,
     onNotesEvent: (NotesEvent) -> Unit,
     onGraphEvent: (GraphEvent) -> Unit = {},
+    onDestinationEvent: (DestinationEvent) -> Unit = {},
     onMeEvent: (MeEvent) -> Unit,
     aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
     proposalRepository: NoteDocumentProposalRepository? = null,
@@ -117,6 +133,12 @@ internal fun UnarchiveNavigationHost(
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit,
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
     legacySettingsContent: @Composable (onBack: () -> Unit) -> Unit,
+    securityContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text("安全设置暂不可用")
+            TextButton(onClick = onBack) { Text("返回") }
+        }
+    },
     noteDocumentRepository: NoteDocumentRepository? = null,
 ) {
     val navController = rememberNavController()
@@ -160,6 +182,10 @@ internal fun UnarchiveNavigationHost(
                     onEvent = onNotesEvent,
                     onOpenLegacyNotes = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
                     onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
+                    onOpenDestinations = { document ->
+                        onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                        navController.navigate(AppRoutes.destinations(document))
+                    },
                 )
             }
             composable(AppRoutes.NOTE_EDITOR) { entry ->
@@ -189,6 +215,29 @@ internal fun UnarchiveNavigationHost(
             composable(AppRoutes.GRAPH) {
                 GraphScreen(state = state.graph, onEvent = onGraphEvent)
             }
+            composable(AppRoutes.DESTINATIONS) { entry ->
+                val card = state.destinations.card ?: run {
+                    val platform = entry.arguments?.getString("platform")
+                    val videoId = entry.arguments?.getString("videoId")
+                    val cardVersion = entry.arguments?.getString("cardVersion")
+                    state.notes.noteCards.firstOrNull {
+                        it.cardId.platform == platform &&
+                            it.cardId.videoId == videoId &&
+                            it.cardVersion == cardVersion
+                    }
+                }
+                if (state.destinations.card == null && card != null) {
+                    LaunchedEffect(card.cardId.value, card.cardVersion) {
+                        onDestinationEvent(DestinationEvent.OpenCard(card.cardId.value, card.cardVersion))
+                    }
+                }
+                DestinationScreen(
+                    state = state.destinations.copy(card = card),
+                    onEvent = onDestinationEvent,
+                    onBack = { navController.popBackStack() },
+                    onOpenSecuritySettings = { navController.navigate(AppRoutes.SECURITY) },
+                )
+            }
             composable(AppRoutes.ME) {
                 MeScreen(
                     state = state.me,
@@ -196,6 +245,7 @@ internal fun UnarchiveNavigationHost(
                     onOpenDeveloper = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
                     onOpenLogs = { navController.navigate(AppRoutes.LEGACY_LOG) },
                     onOpenTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
+                    onOpenSecurity = { navController.navigate(AppRoutes.SECURITY) },
                 )
             }
             composable(AppRoutes.LEGACY_TEST) {
@@ -212,6 +262,9 @@ internal fun UnarchiveNavigationHost(
             }
             composable(AppRoutes.LEGACY_SETTINGS) {
                 legacySettingsContent { navController.popBackStack() }
+            }
+            composable(AppRoutes.SECURITY) {
+                securityContent { navController.popBackStack() }
             }
         }
     }
@@ -382,6 +435,7 @@ private fun NotesScreen(
     onEvent: (NotesEvent) -> Unit,
     onOpenLegacyNotes: () -> Unit,
     onOpenEditor: (NoteDocument) -> Unit,
+    onOpenDestinations: (NoteDocument) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -426,13 +480,21 @@ private fun NotesScreen(
                         .clickable { onOpenEditor(document) }
                         .testTag("note-card-${document.cardId.value}"),
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(document.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
                             "${document.source.ownerName} · 点击编辑结构化笔记",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { onOpenEditor(document) }) { Text("编辑") }
+                            TextButton(onClick = { onOpenDestinations(document) }) {
+                                Icon(Icons.Filled.Share, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("分享与去向")
+                            }
+                        }
                     }
                 }
             }
@@ -788,12 +850,219 @@ private fun relationTypeLabel(type: CardRelationType): String = when (type) {
 }
 
 @Composable
+private fun DestinationScreen(
+    state: DestinationUiState,
+    onEvent: (DestinationEvent) -> Unit,
+    onBack: () -> Unit,
+    onOpenSecuritySettings: () -> Unit,
+) {
+    val card = state.card
+    if (card == null) {
+        LegacyRouteFrame(title = "分享与去向", onBack = onBack) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("找不到这篇本地笔记", style = MaterialTheme.typography.titleLarge)
+                Text("本地笔记可能已被移动或尚未完成保存。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+            .testTag("destination-scroll"),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("分享与去向", style = MaterialTheme.typography.headlineSmall)
+                    Text(card.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        item {
+            GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("本地笔记", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (state.localSaved) "已保存在本机。外部同步失败不会影响这份笔记。"
+                        else "本地笔记尚未保存。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = { onEvent(DestinationEvent.ExportMarkdown) },
+                        enabled = state.localSaved && state.exportState != DestinationOperationState.RUNNING,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("destination-export"),
+                    ) {
+                        Icon(Icons.Filled.Share, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (state.exportState == DestinationOperationState.RUNNING) "正在准备分享..." else "导出并分享 Markdown")
+                    }
+                    if (state.exportMessage.isNotBlank()) {
+                        Text(
+                            state.exportMessage,
+                            color = if (state.exportState == DestinationOperationState.FAILED) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .testTag("destination-export-status")
+                                .semantics { contentDescription = "导出状态：${state.exportMessage}" },
+                        )
+                    }
+                    if (state.exportEmbeddedAssetCount > 0 || state.exportMissingAssetCount > 0) {
+                        Text(
+                            "图片：已内嵌 ${state.exportEmbeddedAssetCount} 张" +
+                                if (state.exportMissingAssetCount > 0) "，${state.exportMissingAssetCount} 张缺失" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("ima", style = MaterialTheme.typography.titleMedium)
+                    if (!state.imaConfigured) {
+                        Text("尚未配置 ima 凭据。本地笔记不受影响。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
+                            Text("打开安全设置")
+                        }
+                    } else {
+                        Text(
+                            "当前目标：${state.currentTargetLabel}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        state.imaStateWarning?.let { warning ->
+                            Text(
+                                warning,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("destination-state-warning"),
+                            )
+                        }
+                        DestinationTargetChooser(state.targetOptions, onEvent)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { onEvent(DestinationEvent.SyncIma) },
+                                enabled = !state.imaSyncing,
+                                modifier = Modifier.testTag("destination-sync-ima"),
+                            ) { Text(if (state.imaSyncing) "同步中..." else "立即同步") }
+                            OutlinedButton(onClick = onOpenSecuritySettings) { Text("管理凭据") }
+                        }
+                    }
+                    if (state.targetRecords.isEmpty()) {
+                        Text("尚未同步到任何目标。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text("目标状态", style = MaterialTheme.typography.titleSmall)
+                        state.targetRecords.forEachIndexed { index, target ->
+                            DestinationTargetRow(target, onEvent, index)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DestinationTargetChooser(
+    options: List<DestinationTargetOption>,
+    onEvent: (DestinationEvent) -> Unit,
+) {
+    if (options.isEmpty()) {
+        Text("连接 ima 后可选择知识库和文件夹。", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("更换目标", modifier = Modifier.weight(1f))
+            Text("选择")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text("${option.knowledgeBaseName} / ${option.folderName}") },
+                    onClick = {
+                        onEvent(DestinationEvent.SelectTarget(option.knowledgeBaseId, option.folderId))
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DestinationTargetRow(
+    target: com.unarchive.android.ui.state.DestinationTargetUiState,
+    onEvent: (DestinationEvent) -> Unit,
+    index: Int,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("destination-target-$index")
+            .semantics {
+                contentDescription = "${target.targetLabel}，${target.folderLabel}，${target.stateLabel}"
+            },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(target.targetLabel, style = MaterialTheme.typography.titleSmall)
+                    Text(target.folderLabel, style = MaterialTheme.typography.bodySmall)
+                }
+                Text(target.stateLabel, color = destinationStateColor(target.state))
+            }
+            target.detail?.takeIf(String::isNotBlank)?.let {
+                Text("原因：${it.take(160)}", color = MaterialTheme.colorScheme.error, maxLines = 3)
+            }
+            if (target.canRetry) {
+                target.retryRef?.let { ref ->
+                    TextButton(onClick = { onEvent(DestinationEvent.RetryIma(ref)) }) {
+                        Text(if (target.state == KnowledgeSyncState.BLOCKED) "修复后重试" else "重试")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun destinationStateColor(state: KnowledgeSyncState) = when (state) {
+    KnowledgeSyncState.SYNCED -> MaterialTheme.colorScheme.primary
+    KnowledgeSyncState.BLOCKED, KnowledgeSyncState.PERMANENT_FAILURE -> MaterialTheme.colorScheme.error
+    KnowledgeSyncState.RETRYABLE_FAILURE -> MaterialTheme.colorScheme.tertiary
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+@Composable
 private fun MeScreen(
     state: MeUiState,
     onEvent: (MeEvent) -> Unit,
     onOpenDeveloper: () -> Unit,
     onOpenLogs: () -> Unit,
     onOpenTest: () -> Unit,
+    onOpenSecurity: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -811,6 +1080,11 @@ private fun MeScreen(
                 Text("本地优先", style = MaterialTheme.typography.titleMedium)
                 Text("笔记先保存在本机；同步和导出由你明确触发。")
             }
+        }
+        OutlinedButton(onClick = onOpenSecurity, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Settings, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("安全设置")
         }
         Text("开发者能力", style = MaterialTheme.typography.titleMedium)
         OutlinedButton(

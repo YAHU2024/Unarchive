@@ -2,6 +2,7 @@ package com.unarchive.android.pipeline
 
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.log.AppLogger
+import com.unarchive.android.sync.safeImaErrorMessage
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -157,7 +158,7 @@ private fun BatchManifest.toJson() = JSONObject()
                 .put("card_version", item.cardVersion)
                 .put("ima_state", item.imaState.name)
                 .put("ima_note_id", item.imaNoteId)
-                .put("ima_error_message", item.imaErrorMessage)
+                .put("ima_error_message", safeImaErrorMessage(item.imaErrorMessage))
                 .put("ima_updated_at_epoch_ms", item.imaUpdatedAtEpochMs)
                 .put("updated_at_epoch_ms", item.updatedAtEpochMs))
         }
@@ -189,7 +190,7 @@ private fun JSONObject.toManifest(): BatchManifest {
                     ImaBatchStageState.valueOf(item.optString("ima_state"))
                 }.getOrDefault(ImaBatchStageState.SKIPPED),
                 imaNoteId = item.optString("ima_note_id").takeIf { it.isNotBlank() },
-                imaErrorMessage = item.optString("ima_error_message").takeIf { it.isNotBlank() },
+                imaErrorMessage = safeImaErrorMessage(item.optString("ima_error_message")),
                 imaUpdatedAtEpochMs = item.optLong("ima_updated_at_epoch_ms", 0L),
                 updatedAtEpochMs = item.optLong("updated_at_epoch_ms", 0L),
             ))

@@ -25,14 +25,9 @@ internal object ImaSyncLog {
             "operationId" to operationId,
             "stage" to stage,
             "state" to state,
-            "cardId" to card.cardId.value,
-            "cardVersion" to card.cardVersion.take(12),
             "targetType" to key.targetType,
-            "targetId" to key.targetId,
             "targetName" to targetName,
-            "folderId" to key.folderId,
             "folderName" to folderName,
-            "noteId" to noteId,
             "elapsedMs" to (System.currentTimeMillis() - startedAtMs),
         )
         fields.putAll(metadata)
@@ -42,11 +37,12 @@ internal object ImaSyncLog {
         if (warning) AppLogger.warn(TAG, text) else AppLogger.info(TAG, text)
     }
 
-    fun safeError(error: Throwable): String = (error::class.simpleName ?: "Exception") + ":" +
-        error.message.orEmpty().lineSequence().firstOrNull().orEmpty()
-            .replace(Regex("https?://\\S+", RegexOption.IGNORE_CASE), "<url>")
-            .replace(Regex("(?i)(api[-_ ]?key|token|cookie|authorization)\\s*[:=]\\s*\\S+"), "$1=<redacted>")
-            .take(160)
+    fun safeError(error: Throwable): String = when (error) {
+        is ImaQuotaExceededException -> "目标配额已用尽"
+        is ImaRateLimitException -> "请求频率受限"
+        is ImaAlreadyAddedException -> "目标已关联"
+        else -> "同步请求失败"
+    }
 
     private fun sanitize(value: String): String = value
         .replace(Regex("\\s+"), "_")

@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.DestinationEvent
 import com.unarchive.android.ui.state.GraphEvent
 import com.unarchive.android.ui.state.NotesEvent
 import com.unarchive.android.ui.state.toUnarchiveUiState
@@ -79,6 +80,19 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 GraphEvent.ClearStatus -> vm.clearGraphStatus()
             }
         },
+        onDestinationEvent = { event ->
+            when (event) {
+                is DestinationEvent.OpenCard -> vm.knowledgeCards
+                    .firstOrNull { it.cardId.value == event.cardId &&
+                        (event.cardVersion == null || it.cardVersion == event.cardVersion) }
+                    ?.let(vm::openDestination)
+                DestinationEvent.ExportMarkdown -> vm.exportDestinationCard()
+                DestinationEvent.SyncIma -> vm.destinationCardForUi()?.let(vm::syncKnowledgeCard)
+                is DestinationEvent.RetryIma -> vm.destinationCardForUi()?.let { vm.retryDestinationTarget(it, event.ref) }
+                is DestinationEvent.SelectTarget -> vm.selectImaTarget(event.knowledgeBaseId, event.folderId)
+                DestinationEvent.OpenSecuritySettings -> Unit
+            }
+        },
         onMeEvent = {},
         legacyTestContent = { onBack, onOpenLogs ->
             LegacyRouteFrame(title = "开发者测试", onBack = onBack) {
@@ -98,6 +112,11 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         legacySettingsContent = { onBack ->
             LegacyRouteFrame(title = "设置", onBack = onBack) {
                 SettingsTab(vm)
+            }
+        },
+        securityContent = { onBack ->
+            LegacyRouteFrame(title = "安全设置", onBack = onBack) {
+                SecuritySettingsScreen(vm, onBack)
             }
         },
         noteDocumentRepository = vm.noteDocumentRepository,

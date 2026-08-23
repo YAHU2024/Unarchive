@@ -54,7 +54,8 @@ object CardProcessingLog {
         fields["operationId"] = operationId
         fields["stage"] = stage
         fields["state"] = state
-        cardId?.let { fields["cardId"] = it.value }
+        // Card identity is intentionally omitted. Diagnostics need the stage
+        // and outcome, but a private video/card identifier must not enter logs.
         elapsedMs?.let { fields["elapsedMs"] = it.toString() }
         metadata.toSortedMap().forEach { (key, value) ->
             if (value != null) fields[key] = value.toString()

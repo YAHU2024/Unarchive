@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.unarchive.android.analyzer.ApiKeyStore
 import com.unarchive.android.analyzer.CardAnalyzer
 import com.unarchive.android.asr.AndroidAsrEngineProvider
+import com.unarchive.android.asr.SiliconFlowKeyStore
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrEngineSelection
@@ -25,7 +26,6 @@ import com.unarchive.android.asr.AudioSource
 import com.unarchive.android.asr.BenchmarkResult
 import com.unarchive.android.asr.BenchmarkRunner
 import com.unarchive.android.asr.MonotonicClock
-import com.unarchive.android.asr.SiliconFlowKeyStore
 import com.unarchive.android.asr.signature
 import com.unarchive.android.audio.resolveCachedAudio
 import com.unarchive.android.auth.BilibiliAuthStore
@@ -38,7 +38,9 @@ import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.FileKnowledgeCardRepository
 import com.unarchive.android.card.FileNoteDocumentRepository
 import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.KnowledgeCardExport
 import com.unarchive.android.card.KnowledgeCardId
+import com.unarchive.android.card.NoteMarkdownProjection
 import com.unarchive.android.card.KnowledgeCardRepository
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
@@ -83,6 +85,9 @@ import com.unarchive.android.sync.ImaCredentialStore
 import com.unarchive.android.sync.ImaFolder
 import com.unarchive.android.sync.ImaKnowledgeBase
 import com.unarchive.android.sync.ImaSyncService
+import com.unarchive.android.sync.safeImaErrorMessage
+import com.unarchive.android.sync.DestinationTargetState
+import com.unarchive.android.sync.DestinationTargetStateMapper
 import com.unarchive.android.storage.AndroidStorageStatsProvider
 import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.storage.StorageBudgetPolicy
@@ -94,6 +99,19 @@ import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.card.FileKnowledgeSyncRepository
 import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
+import com.unarchive.android.card.KnowledgeSyncStoreHealth
+import com.unarchive.android.card.KnowledgeSyncTarget
+import com.unarchive.android.security.AndroidCredentialVault
+import com.unarchive.android.security.ConnectionCheckResult
+import com.unarchive.android.security.ConnectionFailureReason
+import com.unarchive.android.security.CredentialMutationResult
+import com.unarchive.android.security.CredentialConnectionChecker
+import com.unarchive.android.security.MapCredentialConnectionCheckerProvider
+import com.unarchive.android.security.HttpApiConnectionChecker
+import com.unarchive.android.security.SecurityProfile
+import com.unarchive.android.security.SecuritySettingsController
+import com.unarchive.android.security.SecuritySettingsState
+import com.unarchive.android.security.SecureCredential
 import com.unarchive.android.editor.NoteDocumentAiCandidateBuilder
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.editor.FileNoteDocumentProposalRepository
@@ -165,6 +183,38 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private val apiKeyStore = ApiKeyStore(context)
     private val siliconFlowKeyStore = SiliconFlowKeyStore(context)
     private val imaCredentialStore = ImaCredentialStore(context)
+    val securitySettingsController = SecuritySettingsController(
+        vault = AndroidCredentialVault(context),
+        loadOnInit = false,
+        checkerProvider = MapCredentialConnectionCheckerProvider(
+            mapOf(
+                SecurityProfile.DEEPSEEK to HttpApiConnectionChecker(
+                    apiKey = { apiKeyStore.get() },
+                    endpoint = "https://api.deepseek.com/models",
+                ),
+                SecurityProfile.SILICONFLOW to HttpApiConnectionChecker(
+                    apiKey = { siliconFlowKeyStore.get() },
+                    endpoint = "https://api.siliconflow.cn/v1/models",
+                ),
+                SecurityProfile.IMA to CredentialConnectionChecker {
+                    val clientId = imaCredentialStore.clientId().orEmpty()
+                    val apiKey = imaCredentialStore.apiKey().orEmpty()
+                    if (clientId.isBlank() || apiKey.isBlank()) {
+                        ConnectionCheckResult.Failure(ConnectionFailureReason.UNKNOWN)
+                    } else {
+                        runCatching {
+                            ImaClient(clientId, apiKey).connect()
+                            ConnectionCheckResult.Success
+                        }.getOrElse { error ->
+                            ConnectionCheckResult.Failure(
+                                com.unarchive.android.security.classifyConnectionFailure(error),
+                            )
+                        }
+                    }
+                },
+            ),
+        ),
+    )
     private val imaSyncStateRepository = FileKnowledgeSyncRepository(File(context.filesDir, "knowledge-cards/ima-sync.json"))
     private val cardAnalyzer = CardAnalyzer()
     private val storageStatsProvider = AndroidStorageStatsProvider(context)
@@ -180,19 +230,27 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var loggedIn by mutableStateOf(authStore.isLoggedIn())
         private set
 
-    var apiKeyInput by mutableStateOf(apiKeyStore.get().orEmpty())
-    var siliconFlowKeyInput by mutableStateOf(siliconFlowKeyStore.get().orEmpty())
-    var imaClientIdInput by mutableStateOf(imaCredentialStore.clientId().orEmpty())
-    var imaApiKeyInput by mutableStateOf(imaCredentialStore.apiKey().orEmpty())
     var imaKnowledgeBaseId by mutableStateOf(prefs.getString("ima_kb_id", "").orEmpty())
     var imaFolderId by mutableStateOf(prefs.getString("ima_folder_id", "").orEmpty())
     var imaSyncStatus by mutableStateOf<Map<String, String>>(emptyMap())
     var imaSyncing by mutableStateOf(false)
     private var knowledgeSyncRevision by mutableIntStateOf(0)
-    var imaDiscoveryStatus by mutableStateOf("")
-    var imaFolderDiscoveryStatus by mutableStateOf("")
     var imaKnowledgeBases by mutableStateOf<List<ImaKnowledgeBase>>(emptyList())
     var imaFolders by mutableStateOf<List<ImaFolder>>(emptyList())
+    var destinationCardId by mutableStateOf<String?>(null)
+    var destinationCardVersion by mutableStateOf<String?>(null)
+    var destinationExportMessage by mutableStateOf("")
+    var destinationExportEmbeddedAssetCount by mutableIntStateOf(0)
+    var destinationExportMissingAssetCount by mutableIntStateOf(0)
+    var destinationExportSucceeded by mutableStateOf(false)
+    var destinationExportFailed by mutableStateOf(false)
+    var imaCredentialsConfigured by mutableStateOf(false)
+
+    /** Fixed recovery copy for a malformed durable ima state file. */
+    val imaSyncStateWarning: String?
+        get() = if (imaSyncStateRepository.health() == KnowledgeSyncStoreHealth.CORRUPTED) {
+            "同步状态文件损坏，旧目标记录已忽略；请重新同步。"
+        } else null
     var thinkingEnabled by mutableStateOf(apiKeyStore.getThinkingEnabled())
         private set
 
@@ -367,6 +425,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         AppLogger.info(TAG, "视图模型已初始化")
         refreshStorageStats()
         refreshNoteDocuments()
+        refreshSecurityPresence()
     }
 
     fun refreshStorageStats() {
@@ -489,30 +548,51 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         AppLogger.info(TAG, "VAD 静音检测：${if (enabled) "开启" else "关闭"}")
     }
 
-    fun saveSiliconFlowKey() {
-        siliconFlowKeyStore.save(siliconFlowKeyInput)
-        status = "SiliconFlow Key 已保存。"
-        AppLogger.info(TAG, "SiliconFlow Key 已保存")
+    val securitySettingsState: SecuritySettingsState
+        get() = securitySettingsController.state.value
+
+    fun refreshSecurityPresence() {
+        viewModelScope.launch {
+            val refreshed = withContext(Dispatchers.IO) { securitySettingsController.reload() }
+            imaCredentialsConfigured = refreshed.isConfigured(SecurityProfile.IMA)
+            if (imaCredentialsConfigured) refreshImaTargets()
+        }
     }
 
-    fun clearSiliconFlowKey() {
-        siliconFlowKeyStore.clear()
-        siliconFlowKeyInput = ""
-        status = "SiliconFlow Key 已清除。"
-        AppLogger.info(TAG, "SiliconFlow Key 已清除")
+    fun saveSecureCredential(credential: SecureCredential, value: String): CredentialMutationResult {
+        val result = securitySettingsController.saveCredential(credential, value)
+        if (result is CredentialMutationResult.Saved && credential.profile == SecurityProfile.IMA) {
+            imaCredentialsConfigured = securitySettingsController.state.value.isConfigured(SecurityProfile.IMA)
+            if (imaCredentialsConfigured) refreshImaTargets()
+        }
+        return result
     }
 
-    fun saveApiKey() {
-        apiKeyStore.save(apiKeyInput)
-        status = "API Key 已保存。"
-        AppLogger.info(TAG, "DeepSeek Key 已保存")
+    fun requestClearSecureCredentials(profile: SecurityProfile) = securitySettingsController.requestClear(profile)
+
+    fun cancelClearSecureCredentials() = securitySettingsController.cancelClear()
+
+    fun confirmClearSecureCredentials(): com.unarchive.android.security.ClearResult {
+        val result = securitySettingsController.confirmClear()
+        if (!securitySettingsController.state.value.isConfigured(SecurityProfile.IMA)) {
+            imaCredentialsConfigured = false
+            imaKnowledgeBases = emptyList()
+            imaFolders = emptyList()
+        }
+        return result
     }
 
-    fun clearApiKey() {
-        apiKeyStore.clear()
-        apiKeyInput = ""
-        status = "API Key 已清除。"
-        AppLogger.info(TAG, "DeepSeek Key 已清除")
+    fun checkSecureConnection(profile: SecurityProfile) {
+        viewModelScope.launch {
+            val checked = withContext(Dispatchers.IO) {
+                securitySettingsController.checkConnection(profile)
+            }
+            if (profile == SecurityProfile.IMA &&
+                checked.connection[SecurityProfile.IMA] == com.unarchive.android.security.ConnectionStatus.CONNECTED
+            ) {
+                refreshImaTargets()
+            }
+        }
     }
 
     fun updateThinkingEnabled(enabled: Boolean) {
@@ -543,21 +623,17 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         AppLogger.info(TAG, "B站已退出登录")
     }
 
-    fun saveImaSettings() {
-        imaCredentialStore.saveClientId(imaClientIdInput)
-        imaCredentialStore.saveApiKey(imaApiKeyInput)
-        prefs.edit().putString("ima_kb_id", imaKnowledgeBaseId.trim()).putString("ima_folder_id", imaFolderId.trim()).apply()
-        status = "ima 设置已保存（凭据已加密）"
-    }
-
-    fun clearImaSettings() {
-        imaCredentialStore.clear(); imaClientIdInput = ""; imaApiKeyInput = ""; imaKnowledgeBaseId = ""; imaFolderId = ""
-        imaKnowledgeBases = emptyList(); imaFolders = emptyList(); status = "ima 凭据已清除"
-    }
-
-    fun checkImaConnection() {
-        val clientId = imaClientIdInput.trim(); val apiKey = imaApiKeyInput.trim()
-        if (clientId.isBlank() || apiKey.isBlank()) { imaDiscoveryStatus = "请先填写 ima 凭据"; return }
+    /** Refreshes ima destination names after credentials are saved or checked. */
+    fun refreshImaTargets() {
+        if (generateJob != null) return
+        val clientId = imaCredentialStore.clientId().orEmpty()
+        val apiKey = imaCredentialStore.apiKey().orEmpty()
+        imaCredentialsConfigured = clientId.isNotBlank() && apiKey.isNotBlank()
+        if (!imaCredentialsConfigured) {
+            imaKnowledgeBases = emptyList()
+            imaFolders = emptyList()
+            return
+        }
         generateJob = viewModelScope.launch {
             try {
                 val client = ImaClient(clientId, apiKey)
@@ -568,43 +644,77 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     imaKnowledgeBaseId = ""
                     imaFolderId = ""
                     imaFolders = emptyList()
+                } else if (imaKnowledgeBaseId.isNotBlank()) {
+                    val folders = client.listKnowledgeBaseFolders(imaKnowledgeBaseId)
+                    imaFolders = folders
+                    if (folders.none { it.id == imaFolderId }) imaFolderId = ""
                 }
-                imaDiscoveryStatus = if (bases.isEmpty()) "连接成功，但没有可写知识库" else "已加载 ${bases.size} 个可用知识库"
-            } catch (e: Exception) { imaDiscoveryStatus = "连接失败：${e.message ?: "未知错误"}" }
-            finally { generateJob = null }
-        }
-    }
-
-    fun discoverImaFolders() {
-        val clientId = imaClientIdInput.trim(); val apiKey = imaApiKeyInput.trim(); val kbId = imaKnowledgeBaseId.trim()
-        if (clientId.isBlank() || apiKey.isBlank() || kbId.isBlank()) { imaFolderDiscoveryStatus = "请先填写凭据和知识库 ID"; return }
-        generateJob = viewModelScope.launch {
-            try {
-                val folders = ImaClient(clientId, apiKey).listKnowledgeBaseFolders(kbId)
-                imaFolders = folders
-                if (folders.none { it.id == imaFolderId }) imaFolderId = ""
-                imaFolderDiscoveryStatus = if (folders.isEmpty()) "该知识库暂无文件夹，将使用根目录" else "已加载 ${folders.size} 个文件夹"
-            } catch (e: Exception) { imaFolderDiscoveryStatus = "文件夹读取失败：${e.message ?: "未知错误"}" }
-            finally { generateJob = null }
+            } catch (error: Exception) {
+                AppLogger.warn(TAG, "ima 目标读取失败：${CardProcessingLog.safeError(error)}")
+            } finally {
+                generateJob = null
+            }
         }
     }
 
     fun selectImaKnowledgeBase(id: String) {
+        if (imaKnowledgeBases.none { it.id == id }) return
         imaKnowledgeBaseId = id
         imaFolderId = ""
         imaFolders = emptyList()
-        imaFolderDiscoveryStatus = ""
     }
 
     fun selectImaFolder(id: String) {
-        imaFolderId = id
+        if (id.isBlank() || imaFolders.any { it.id == id }) imaFolderId = id
     }
 
     fun syncKnowledgeCard(card: KnowledgeCard) {
-        if (imaSyncing || generateJob != null || runningJob != null) return
+        syncKnowledgeCard(card, null)
+    }
+
+    /** Retries the exact persisted target selected by the destination surface. */
+    internal fun retryDestinationTarget(card: KnowledgeCard, ref: com.unarchive.android.ui.state.DestinationTargetRef) {
+        val record = knowledgeSyncRecords(card).firstOrNull { candidate ->
+            candidate.key.cardId == card.cardId &&
+                candidate.key.cardVersion == card.cardVersion &&
+                candidate.key.targetType == ref.targetType &&
+                candidate.key.targetId == ref.targetId &&
+                candidate.key.folderId == ref.folderId &&
+                candidate.key.contentRevision == ref.contentRevision
+        } ?: return
+        syncKnowledgeCard(
+            card,
+            KnowledgeSyncTarget(
+                type = record.key.targetType,
+                id = record.key.targetId,
+                name = record.targetName,
+                folderId = record.key.folderId,
+                folderName = record.folderName,
+            ),
+            contentRevision = record.key.contentRevision,
+        )
+    }
+
+    private fun syncKnowledgeCard(card: KnowledgeCard, requestedTarget: KnowledgeSyncTarget?) {
+        syncKnowledgeCard(card, requestedTarget, contentRevisionFor(card))
+    }
+
+    private fun syncKnowledgeCard(
+        card: KnowledgeCard,
+        requestedTarget: KnowledgeSyncTarget?,
+        contentRevision: Long,
+    ) {
+        if (imaSyncing || generateJob != null || runningJob != null || exportJob != null) return
         val clientId = imaCredentialStore.clientId().orEmpty()
         val apiKey = imaCredentialStore.apiKey().orEmpty()
-        if (clientId.isBlank() || apiKey.isBlank() || imaKnowledgeBaseId.isBlank()) { status = "请先配置 ima 凭据和知识库 ID"; return }
+        val target = requestedTarget ?: KnowledgeSyncTarget(
+            type = "ima",
+            id = imaKnowledgeBaseId,
+            name = currentImaTargetName(),
+            folderId = imaFolderId,
+            folderName = currentImaFolderName(),
+        )
+        if (clientId.isBlank() || apiKey.isBlank() || target.id.isBlank()) { status = "请先配置 ima 凭据和知识库"; return }
         imaSyncing = true
         viewModelScope.launch {
             try {
@@ -613,12 +723,15 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     imaSyncStateRepository,
                     readAsset = { asset -> knowledgeCardRepository.assetFile(card, asset)?.takeIf(File::isFile)?.readBytes() },
                 ).sync(
-                    card, imaKnowledgeBaseId.trim(), imaFolderId.trim(),
-                    targetName = currentImaTargetName(), folderName = currentImaFolderName(),
+                    card, target.id.trim(), target.folderId.trim(),
+                    targetName = target.name, folderName = target.folderName,
+                    contentRevision = contentRevision,
                 )
-                imaSyncStatus = imaSyncStatus + (card.cardId.value to "${result.state}: ${result.message}")
+                val safeMessage = com.unarchive.android.sync.destinationStatusText(result.state) +
+                    result.imageDelivery.userMessage?.let { "；$it" }.orEmpty()
+                imaSyncStatus = imaSyncStatus + (card.cardId.value to safeMessage)
                 knowledgeSyncRevision++
-                status = "ima：${result.message}"
+                status = "ima：$safeMessage"
             } finally {
                 imaSyncing = false
             }
@@ -927,8 +1040,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> {
         knowledgeSyncRevision
+        val contentRevision = contentRevisionFor(card)
         return imaSyncStateRepository.list()
             .filter { it.key.cardId == card.cardId && it.key.cardVersion == card.cardVersion }
+            .filter { it.key.contentRevision == contentRevision }
             .map { record ->
                 if (record.key.targetType == "ima" && record.targetName.isBlank() &&
                     record.key.targetId == imaKnowledgeBaseId) {
@@ -944,65 +1059,150 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             .sortedWith(compareBy<KnowledgeSyncRecord> { it.key.targetType }.thenBy { it.targetName }.thenBy { it.folderName })
     }
 
+    private fun contentRevisionFor(card: KnowledgeCard): Long = noteDocuments.firstOrNull {
+        it.cardId == card.cardId && it.generation.cardVersion == card.cardVersion
+    }?.editing?.contentRevision ?: 0L
+
+    fun destinationTargetStates(card: KnowledgeCard): List<DestinationTargetState> =
+        DestinationTargetStateMapper.forCard(
+            cardId = card.cardId,
+            cardVersion = card.cardVersion,
+            records = knowledgeSyncRecords(card),
+        )
+
     private fun currentImaTargetName(): String =
         imaKnowledgeBases.firstOrNull { it.id == imaKnowledgeBaseId }?.name ?: "知识库"
 
     private fun currentImaFolderName(): String =
         imaFolders.firstOrNull { it.id == imaFolderId }?.name ?: if (imaFolderId.isBlank()) "根目录" else "文件夹"
 
+    val currentImaTargetDisplayName: String
+        get() = buildString {
+            append(imaKnowledgeBases.firstOrNull { it.id == imaKnowledgeBaseId }?.name ?: "未选择目标")
+            if (imaKnowledgeBaseId.isNotBlank()) append(" / ").append(currentImaFolderName())
+        }
+
+    fun openDestination(card: KnowledgeCard) {
+        destinationCardId = card.cardId.value
+        destinationCardVersion = card.cardVersion
+        destinationExportMessage = ""
+        destinationExportEmbeddedAssetCount = 0
+        destinationExportMissingAssetCount = 0
+        destinationExportSucceeded = false
+        destinationExportFailed = false
+    }
+
+    /** Uses the structured v2 note as the export/sync source when available. */
+    fun destinationCardForUi(): KnowledgeCard? {
+        val card = destinationCardId?.let { id ->
+            knowledgeCards.firstOrNull { candidate ->
+                candidate.cardId.value == id &&
+                    (destinationCardVersion == null || candidate.cardVersion == destinationCardVersion)
+            }
+        } ?: return null
+        val document = noteDocuments.firstOrNull {
+            it.cardId == card.cardId && it.generation.cardVersion == card.cardVersion
+        } ?: return card
+        return card.copy(
+            title = document.title,
+            timingAccuracy = document.source.timingAccuracy,
+            transcript = document.sourceTranscript,
+            tags = document.tags,
+            relations = document.relations,
+            assets = document.assets,
+            updatedAtEpochMs = document.updatedAtEpochMs,
+            markdown = NoteMarkdownProjection.render(document),
+        )
+    }
+
+    fun selectImaTarget(knowledgeBaseId: String, folderId: String) {
+        if (knowledgeBaseId.isBlank()) return
+        imaKnowledgeBaseId = knowledgeBaseId
+        imaFolderId = folderId
+        prefs.edit()
+            .putString("ima_kb_id", knowledgeBaseId.trim())
+            .putString("ima_folder_id", folderId.trim())
+            .apply()
+        status = "已切换当前同步目标。"
+    }
+
+    fun exportDestinationCard() {
+        val card = destinationCardForUi()
+        if (card == null) {
+            destinationExportFailed = true
+            destinationExportMessage = "找不到本地知识笔记。"
+            return
+        }
+        exportKnowledgeCard(card)
+    }
+
     fun exportKnowledgeCard(card: KnowledgeCard) {
-        if (generateJob != null || runningJob != null || exportJob != null) return
+        if (generateJob != null || runningJob != null || exportJob != null || imaSyncing) return
+        if (destinationCardId == card.cardId.value) {
+            destinationExportMessage = ""
+            destinationExportSucceeded = false
+            destinationExportFailed = false
+        }
         val operationId = UUID.randomUUID().toString()
         val startedAt = SystemClock.elapsedRealtime()
         CardProcessingLog.event(
             operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.STARTED, card.cardId,
             metadata = mapOf(
-                "cardVersion" to card.cardVersion.take(12),
                 "assetCount" to card.assets.size,
                 "markdownBytes" to card.markdown.toByteArray(Charsets.UTF_8).size,
             ),
         )
         exportJob = viewModelScope.launch {
             try {
-                val embedded = withContext(Dispatchers.IO) {
-                    MarkdownCardRenderer.embedAssetsWithStats(
-                        markdown = card.markdown,
-                        assets = card.assets,
-                    ) { asset ->
+                val artifact = withContext(Dispatchers.IO) {
+                    KnowledgeCardExport.portable(card) { asset ->
                         knowledgeCardRepository.assetFile(card, asset)?.readBytes()
                     }
                 }
                 withContext(Dispatchers.IO) {
-                    storagePreflight.check("知识卡片导出", embedded.markdown.toByteArray(Charsets.UTF_8).size.toLong())
+                    storagePreflight.check("知识卡片导出", artifact.markdownBytes)
                 }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.EXPORT_ASSETS, CardProcessingLog.State.COMPLETED, card.cardId,
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,
                     metadata = mapOf(
-                        "requestedCount" to embedded.requestedCount,
-                        "embeddedCount" to embedded.embeddedCount,
-                        "missingCount" to embedded.missingCount,
-                        "assetBytes" to embedded.embeddedBytes,
-                        "exportMarkdownBytes" to embedded.markdown.toByteArray(Charsets.UTF_8).size,
+                        "requestedCount" to artifact.assets.requestedCount,
+                        "embeddedCount" to artifact.assets.embeddedCount,
+                        "missingCount" to artifact.assets.missingCount,
+                        "assetBytes" to artifact.assets.embeddedBytes,
+                        "exportMarkdownBytes" to artifact.markdownBytes,
                     ),
                 )
                 context.shareMarkdownFile(
-                    fileName = MarkdownCardRenderer.fileName(card.title),
-                    markdown = embedded.markdown,
+                    fileName = artifact.fileName,
+                    markdown = artifact.markdown,
                     title = card.title,
                 )
-                status = if (embedded.embeddedCount > 0) {
+                status = if (artifact.assets.missingCount > 0) {
+                    "知识卡片已导出；${artifact.assets.missingCount} 张截图未能内嵌。"
+                } else if (artifact.assets.embeddedCount > 0) {
                     "知识卡片已导出（已内嵌截图）。"
                 } else {
                     "知识卡片已导出。"
                 }
+                if (destinationCardId == card.cardId.value) {
+                    destinationExportMessage = status
+                    destinationExportEmbeddedAssetCount = artifact.assets.embeddedCount
+                    destinationExportMissingAssetCount = artifact.assets.missingCount
+                    destinationExportSucceeded = true
+                    destinationExportFailed = false
+                }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.EXPORT_SHARE, CardProcessingLog.State.LAUNCHED, card.cardId,
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,
-                    metadata = mapOf("embeddedCount" to embedded.embeddedCount),
+                    metadata = mapOf("embeddedCount" to artifact.assets.embeddedCount),
                 )
             } catch (_: CancellationException) {
                 status = "知识卡片导出已取消。"
+                if (destinationCardId == card.cardId.value) {
+                    destinationExportMessage = status
+                    destinationExportFailed = true
+                }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.CANCELLED, card.cardId,
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,
@@ -1012,6 +1212,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     "知识卡片导出失败：" + error.recoveryMessage()
                 } else {
                     "知识卡片导出失败：" + CardProcessingLog.safeError(error)
+                }
+                if (destinationCardId == card.cardId.value) {
+                    destinationExportMessage = status
+                    destinationExportFailed = true
+                    destinationExportSucceeded = false
                 }
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.EXPORT, CardProcessingLog.State.FAILED, card.cardId,
@@ -1426,6 +1631,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         readAsset = { asset -> knowledgeCardRepository.assetFile(card, asset)?.takeIf(File::isFile)?.readBytes() },
                     ).sync(
                         card, kbId, folderId, targetName = targetName, folderName = folderName,
+                        contentRevision = contentRevisionFor(card),
                         operationId = "batch-${manifest.batchId}-${index + 1}",
                     )
                     knowledgeSyncRevision++
@@ -1439,10 +1645,16 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                         else -> ImaBatchStageState.PERMANENT_FAILURE
                     }
-                    persistBatchImaState(item, state, result.noteId, result.message)
+                    val resultError = if (state == ImaBatchStageState.SYNCED || state == ImaBatchStageState.SKIPPED) {
+                        null
+                    } else {
+                        safeImaErrorMessage(result.message)
+                    }
+                    persistBatchImaState(item, state, result.noteId, resultError)
                     if (state == ImaBatchStageState.BLOCKED) {
+                        val safeError = safeImaErrorMessage(result.message)
                         eligible.drop(index + 1).forEach { remaining ->
-                            persistBatchImaState(remaining, ImaBatchStageState.BLOCKED, errorMessage = result.message)
+                            persistBatchImaState(remaining, ImaBatchStageState.BLOCKED, errorMessage = safeError)
                         }
                         break
                     }
@@ -1456,7 +1668,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 status = "ima 批量同步已取消，可恢复未完成项目。"
                 batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
             } catch (error: Exception) {
-                val message = error.message ?: "ima 批量同步失败"
+                val message = safeImaErrorMessage(error.message) ?: "同步请求失败"
                 val pendingIds = eligible.mapTo(HashSet()) { it.videoId }
                 activeBatchManifest?.items
                     ?.filter { it.videoId in pendingIds && it.imaState !in setOf(ImaBatchStageState.SYNCED, ImaBatchStageState.SKIPPED) }
@@ -1481,7 +1693,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val updated = current.withItem(item.copy(
             imaState = state,
             imaNoteId = noteId,
-            imaErrorMessage = errorMessage,
+            imaErrorMessage = safeImaErrorMessage(errorMessage),
             imaUpdatedAtEpochMs = System.currentTimeMillis(),
             updatedAtEpochMs = System.currentTimeMillis(),
         ))

@@ -80,6 +80,7 @@ object MarkdownCardRenderer {
         val embeddedCount: Int,
         val embeddedBytes: Long,
         val missingCount: Int,
+        val missingPaths: List<String> = emptyList(),
     )
 
     /** Converts local relative asset references into portable data URLs for one-file sharing. */
@@ -97,10 +98,12 @@ object MarkdownCardRenderer {
         var embeddedCount = 0
         var embeddedBytes = 0L
         var missingCount = 0
+        val missingPaths = mutableListOf<String>()
         val rendered = assets.fold(markdown) { current, asset ->
             val bytes = readAsset(asset)
             if (bytes == null) {
                 missingCount++
+                missingPaths += asset.relativePath
                 return@fold current
             }
             val marker = "![](${asset.relativePath})"
@@ -115,6 +118,7 @@ object MarkdownCardRenderer {
             embeddedCount = embeddedCount,
             embeddedBytes = embeddedBytes,
             missingCount = missingCount,
+            missingPaths = missingPaths,
         )
     }
 
