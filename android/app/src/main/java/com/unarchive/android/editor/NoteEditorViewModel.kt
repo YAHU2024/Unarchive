@@ -21,6 +21,7 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -94,19 +95,34 @@ class NoteEditorViewModel(
     private val repository: NoteDocumentRepository,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
+    private val proposalRepository: NoteDocumentProposalRepository? = null,
 ) : ViewModel() {
     private val initial = initialDocument
     private val _uiState = MutableStateFlow(NoteEditorUiState(initialDocument))
     val uiState: StateFlow<NoteEditorUiState> = _uiState.asStateFlow()
+    private var proposalPersistenceJob: Job? = null
 
     init {
         viewModelScope.launch {
-            val persisted = withContext(ioDispatcher) {
-                repository.find(initialDocument.cardId, initialDocument.generation.cardVersion)
-            } ?: return@launch
+            val restored = withContext(ioDispatcher) {
+                repository.find(initialDocument.cardId, initialDocument.generation.cardVersion) ?: initialDocument
+            }
+            val persistedProposal = withContext(ioDispatcher) {
+                proposalRepository?.find(restored.cardId.value, restored.generation.cardVersion)
+            }
+            val pendingProposal = persistedProposal?.takeIf { proposal ->
+                proposal.baseCardId == restored.cardId.value &&
+                    proposal.baseCardVersion == restored.generation.cardVersion &&
+                    NoteDocumentContentFingerprint.of(restored) == proposal.baseContentFingerprint
+            }
+            if (persistedProposal != null && pendingProposal == null) {
+                withContext(ioDispatcher) {
+                    proposalRepository?.delete(restored.cardId.value, restored.generation.cardVersion)
+                }
+            }
             val current = _uiState.value
             if (current.document == initial && current.saveState == NoteEditorSaveState.CLEAN) {
-                _uiState.value = NoteEditorUiState(persisted)
+                _uiState.value = NoteEditorUiState(restored, aiProposal = pendingProposal)
             }
         }
     }
@@ -144,6 +160,7 @@ class NoteEditorViewModel(
             aiProposalError = null,
             errorMessage = null,
         )
+        persistPendingProposal(proposal)
     }
 
     private fun requestAiProposal() {
@@ -190,7 +207,21 @@ class NoteEditorViewModel(
                     proposalId = UUID.randomUUID().toString(),
                     createdAtEpochMs = System.currentTimeMillis(),
                 )
-                _uiState.value = latest.copy(
+                withContext(ioDispatcher) {
+                    proposalRepository?.save(proposal)
+                }
+                val afterPersist = _uiState.value
+                if (NoteDocumentContentFingerprint.of(afterPersist.document) != baseFingerprint) {
+                    withContext(ioDispatcher) {
+                        proposalRepository?.delete(proposal.baseCardId, proposal.baseCardVersion)
+                    }
+                    _uiState.value = afterPersist.copy(
+                        aiProposalState = NoteAiProposalState.FAILED,
+                        aiProposalError = "笔记在生成期间发生了变化，请重新生成建议。",
+                    )
+                    return@launch
+                }
+                _uiState.value = afterPersist.copy(
                     aiProposal = proposal,
                     aiProposalState = NoteAiProposalState.IDLE,
                     aiProposalError = null,
@@ -245,6 +276,7 @@ class NoteEditorViewModel(
         val current = _uiState.value
         current.aiProposal?.let { proposal ->
             _uiState.value = current.copy(aiProposal = proposal.copy(status = NoteProposalStatus.REJECTED))
+            deletePersistedProposal(proposal)
         }
     }
 
@@ -393,6 +425,7 @@ class NoteEditorViewModel(
 
     private fun applySaveResult(savedDocument: NoteDocument, result: NoteDocumentSaveResult) {
         val current = _uiState.value
+        val appliedProposal = current.aiProposal?.takeIf { it.status == NoteProposalStatus.APPLIED }
         if (hasDraftChangedSince(current, savedDocument)) {
             _uiState.value = current.copy(
                 saveState = if (result.structuredPersisted) {
@@ -425,6 +458,9 @@ class NoteEditorViewModel(
             errorMessage = result.error,
             draftTitle = document.title,
         )
+        if (result.structuredPersisted && appliedProposal != null) {
+            deletePersistedProposal(appliedProposal)
+        }
     }
 
     private fun hasDraftChangedSince(current: NoteEditorUiState, savedDocument: NoteDocument): Boolean =
@@ -445,13 +481,37 @@ class NoteEditorViewModel(
         updatedAtEpochMs = 0L,
     ).toString()
 
+    private fun persistPendingProposal(proposal: NoteDocumentProposal) {
+        val store = proposalRepository ?: return
+        proposalPersistenceJob = viewModelScope.launch {
+            runCatching { withContext(ioDispatcher) { store.save(proposal) } }
+        }
+    }
+
+    private fun deletePersistedProposal(proposal: NoteDocumentProposal) {
+        val store = proposalRepository ?: return
+        viewModelScope.launch {
+            proposalPersistenceJob?.join()
+            runCatching {
+                withContext(ioDispatcher) { store.delete(proposal.baseCardId, proposal.baseCardVersion) }
+            }
+        }
+    }
+
     private fun restoreLastSaved() {
         val current = _uiState.value
         viewModelScope.launch {
             val saved = withContext(ioDispatcher) {
                 repository.find(current.document.cardId, current.document.generation.cardVersion)
             } ?: initial
-            _uiState.value = NoteEditorUiState(saved)
+            val pendingProposal = withContext(ioDispatcher) {
+                proposalRepository?.find(saved.cardId.value, saved.generation.cardVersion)
+            }?.takeIf { proposal ->
+                proposal.baseCardId == saved.cardId.value &&
+                    proposal.baseCardVersion == saved.generation.cardVersion &&
+                    NoteDocumentContentFingerprint.of(saved) == proposal.baseContentFingerprint
+            }
+            _uiState.value = NoteEditorUiState(saved, aiProposal = pendingProposal)
         }
     }
 
@@ -496,6 +556,7 @@ class NoteEditorViewModelFactory(
     private val initialDocument: NoteDocument,
     private val repository: NoteDocumentRepository,
     private val aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
+    private val proposalRepository: NoteDocumentProposalRepository? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -506,6 +567,7 @@ class NoteEditorViewModelFactory(
             initialDocument = initialDocument,
             repository = repository,
             aiProposalGenerator = aiProposalGenerator,
+            proposalRepository = proposalRepository,
         ) as T
     }
 }

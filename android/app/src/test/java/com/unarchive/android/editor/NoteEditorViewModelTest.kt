@@ -7,6 +7,7 @@ import com.unarchive.android.card.CardAnalysis
 import com.unarchive.android.card.CardChapter
 import com.unarchive.android.card.CardPoint
 import com.unarchive.android.card.FileNoteDocumentRepository
+import com.unarchive.android.card.NoteDocumentAtomicWriter
 import com.unarchive.android.card.NoteBlock
 import com.unarchive.android.card.NoteBlockOrigin
 import com.unarchive.android.card.NoteBlockType
@@ -295,6 +296,80 @@ class NoteEditorViewModelTest {
             assertEquals(NoteAiProposalState.FAILED, viewModel.uiState.value.aiProposalState)
             assertTrue(viewModel.uiState.value.aiProposalError?.contains("未配置") == true)
             assertEquals(original, viewModel.uiState.value.document)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun pendingAiProposalRestoresAfterViewModelRecreation() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val noteRepository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val proposalDirectory = temporaryFolder.newFolder("proposals")
+            val proposalRepository = FileNoteDocumentProposalRepository(proposalDirectory)
+            val first = NoteEditorViewModel(original, noteRepository, dispatcher, proposalRepository = proposalRepository)
+            advanceUntilIdle()
+
+            first.setAiProposal(
+                original.copy(
+                    blocks = original.blocks.map { block ->
+                        if (block.type == NoteBlockType.SUMMARY) block.copy(text = "恢复后的 AI 摘要") else block
+                    },
+                ),
+                proposalId = "proposal-restart",
+                createdAtEpochMs = 15L,
+            )
+            advanceUntilIdle()
+
+            val recreated = NoteEditorViewModel(
+                original,
+                noteRepository,
+                dispatcher,
+                proposalRepository = FileNoteDocumentProposalRepository(
+                    proposalDirectory,
+                ),
+            )
+            advanceUntilIdle()
+
+            assertEquals(NoteProposalStatus.PENDING, recreated.uiState.value.aiProposal?.status)
+            assertEquals("AI 摘要", recreated.uiState.value.document.blocks.first { it.type == NoteBlockType.SUMMARY }.text)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun failedSaveKeepsPendingProposalForRecovery() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val proposalRepository = FileNoteDocumentProposalRepository(temporaryFolder.newFolder("proposals"))
+            val noteRepository = FileNoteDocumentRepository(
+                directory = temporaryFolder.newFolder("notes"),
+                writer = NoteDocumentAtomicWriter { _, _ -> throw IOException("磁盘空间不足") },
+            )
+            val viewModel = NoteEditorViewModel(
+                original,
+                noteRepository,
+                dispatcher,
+                proposalRepository = proposalRepository,
+            )
+            advanceUntilIdle()
+            viewModel.setAiProposal(original.copy(title = "AI 标题"), "proposal-failure", 16L)
+            advanceUntilIdle()
+            viewModel.onEvent(NoteEditorEvent.ApplyAiProposal)
+            viewModel.onEvent(NoteEditorEvent.Save)
+            advanceUntilIdle()
+
+            assertEquals(NoteEditorSaveState.FAILED, viewModel.uiState.value.saveState)
+            assertEquals(
+                NoteProposalStatus.PENDING,
+                proposalRepository.find(original.cardId.value, original.generation.cardVersion)?.status,
+            )
         } finally {
             Dispatchers.resetMain()
         }

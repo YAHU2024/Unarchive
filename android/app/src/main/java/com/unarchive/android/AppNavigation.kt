@@ -55,6 +55,7 @@ import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
+import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
@@ -99,6 +100,7 @@ internal fun UnarchiveNavigationHost(
     onNotesEvent: (NotesEvent) -> Unit,
     onMeEvent: (MeEvent) -> Unit,
     aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
+    proposalRepository: NoteDocumentProposalRepository? = null,
     legacyTestContent: @Composable (onBack: () -> Unit, onOpenLogs: () -> Unit) -> Unit,
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit,
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
@@ -167,6 +169,7 @@ internal fun UnarchiveNavigationHost(
                         document = document,
                         repository = noteDocumentRepository,
                         aiProposalGenerator = aiProposalGenerator,
+                        proposalRepository = proposalRepository,
                         onBack = { navController.popBackStack() },
                     )
                 }

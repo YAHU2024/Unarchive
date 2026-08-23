@@ -94,6 +94,8 @@ import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.editor.NoteDocumentAiCandidateBuilder
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
+import com.unarchive.android.editor.FileNoteDocumentProposalRepository
+import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.video.VideoDownloader
 import com.unarchive.android.video.VideoFrameExtractor
 import java.io.File
@@ -153,6 +155,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
     val noteDocumentRepository: NoteDocumentRepository =
         FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
+    val noteDocumentProposalRepository: NoteDocumentProposalRepository =
+        FileNoteDocumentProposalRepository(File(context.filesDir, "knowledge-note-proposals"))
     private val noteDocumentSynchronizer = NoteDocumentSynchronizer(noteDocumentRepository)
     val modelRepository = ModelRepository(File(context.filesDir, "models"))
     private val apiKeyStore = ApiKeyStore(context)

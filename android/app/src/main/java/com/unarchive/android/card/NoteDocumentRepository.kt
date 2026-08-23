@@ -250,7 +250,7 @@ private object DefaultNoteDocumentAtomicWriter : NoteDocumentAtomicWriter {
     }
 }
 
-private fun NoteDocument.toJson(includeMutableState: Boolean = true): JSONObject = JSONObject()
+internal fun NoteDocument.toJson(includeMutableState: Boolean = true): JSONObject = JSONObject()
     .put("schema_version", NoteDocument.SCHEMA_VERSION)
     .put("platform", cardId.platform)
     .put("video_id", cardId.videoId)
@@ -273,7 +273,7 @@ private fun NoteDocument.toJson(includeMutableState: Boolean = true): JSONObject
         }
     }
 
-private fun JSONObject.toNoteDocument(): NoteDocument {
+internal fun JSONObject.toNoteDocument(): NoteDocument {
     require(getInt("schema_version") == NoteDocument.SCHEMA_VERSION) { "Unsupported note schema" }
     val sourceJson = getJSONObject("source")
     val blocksJson = getJSONArray("blocks")

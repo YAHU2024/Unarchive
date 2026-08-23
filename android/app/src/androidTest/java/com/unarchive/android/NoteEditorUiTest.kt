@@ -1,11 +1,15 @@
 package com.unarchive.android
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.KnowledgeCardId
@@ -44,10 +48,32 @@ class NoteEditorUiTest {
 
         composeRule.onNodeWithTag("note-editor-title").assertIsDisplayed()
         composeRule.onNodeWithTag("note-editor-ai-proposal").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("保存状态：尚未编辑").assertIsDisplayed()
         composeRule.onNodeWithTag("note-block-text-summary-1").assertIsDisplayed()
         assertEquals(2, composeRule.onAllNodesWithText("AI 草稿，可编辑").fetchSemanticsNodes().size)
         composeRule.onNodeWithTag("note-source-chapter-1").performScrollTo().assertExists()
         composeRule.onNodeWithTag("note-add-user_note").performScrollTo().assertExists()
+    }
+
+    @Test
+    fun longContentRemainsScrollableAndSemanticsSurviveLargeFontScale() {
+        composeRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                UnarchiveTheme {
+                    NoteEditorScreen(
+                        state = NoteEditorUiState(longDocument()),
+                        onEvent = {},
+                        onBack = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("note-editor-scroll").assertIsDisplayed()
+        composeRule.onNodeWithTag("note-block-text-summary-1").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("note-editor-ai-proposal").assertIsDisplayed()
+        composeRule.onNodeWithTag("note-editor-save").assertIsDisplayed()
+        composeRule.onNodeWithText("摘要").assertIsDisplayed()
     }
 
     private fun document() = NoteDocument(
@@ -87,5 +113,15 @@ class NoteEditorUiTest {
         publishing = NotePublishingState(),
         createdAtEpochMs = 1_000L,
         updatedAtEpochMs = 1_000L,
+    )
+
+    private fun longDocument(): NoteDocument = document().copy(
+        blocks = document().blocks.map { block ->
+            if (block.type == NoteBlockType.SUMMARY) {
+                block.copy(text = "长文本段落。".repeat(2_000))
+            } else {
+                block
+            }
+        },
     )
 }

@@ -10,10 +10,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -41,6 +44,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,11 +66,12 @@ internal fun NoteEditorRoute(
     repository: NoteDocumentRepository,
     onBack: () -> Unit,
     aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
+    proposalRepository: NoteDocumentProposalRepository? = null,
 ) {
     val context = LocalContext.current
     val editorViewModel: NoteEditorViewModel = viewModel(
         key = "note-editor-${document.cardId.value}-${document.generation.cardVersion}",
-        factory = NoteEditorViewModelFactory(document, repository, aiProposalGenerator),
+        factory = NoteEditorViewModelFactory(document, repository, aiProposalGenerator, proposalRepository),
     )
     val state by editorViewModel.uiState.collectAsStateWithLifecycle()
     NoteEditorScreen(
@@ -137,7 +144,9 @@ internal fun NoteEditorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp)
+                .testTag("note-editor-scroll")
+                .semantics { contentDescription = "笔记编辑内容，可上下滚动" },
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp),
         ) {
@@ -229,11 +238,17 @@ private fun AiProposalCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onEvent(NoteEditorEvent.ApplyAiProposal) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onEvent(NoteEditorEvent.ApplyAiProposal) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text("应用建议")
                     }
-                    OutlinedButton(onClick = { onEvent(NoteEditorEvent.RejectAiProposal) }) {
+                    OutlinedButton(
+                        onClick = { onEvent(NoteEditorEvent.RejectAiProposal) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text("保留当前笔记")
                     }
                 }
@@ -259,7 +274,14 @@ private fun EditorStatus(state: NoteEditorUiState) {
         NoteEditorSaveState.PROJECTION_PENDING -> "笔记已保存，Markdown 投影待修复"
         NoteEditorSaveState.FAILED -> "保存失败，可恢复上次版本"
     }
-    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = "保存状态：$text"
+            },
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(text, style = MaterialTheme.typography.labelLarge)
             state.errorMessage?.let { error ->
@@ -289,7 +311,11 @@ private fun NoteBlockEditorCard(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(blockLabel(block.type), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        blockLabel(block.type),
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     Text(
                         originLabel(block.origin),
                         style = MaterialTheme.typography.labelSmall,
@@ -324,9 +350,11 @@ private fun NoteBlockEditorCard(
                         onValueChange = { onEvent(NoteEditorEvent.BlockTextChanged(block.id, it)) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(max = 320.dp)
                             .testTag("note-block-text-${block.id}"),
                         label = { Text(blockFieldLabel(block.type)) },
                         minLines = if (block.type == NoteBlockType.SUMMARY) 4 else 2,
+                        maxLines = Int.MAX_VALUE,
                     )
                 }
                 NoteBlockType.CHAPTER -> {
@@ -335,17 +363,21 @@ private fun NoteBlockEditorCard(
                         onValueChange = { onEvent(NoteEditorEvent.ChapterTitleChanged(block.id, it)) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 56.dp, max = 160.dp)
                             .testTag("note-chapter-title-${block.id}"),
                         label = { Text("章节标题") },
+                        maxLines = 4,
                     )
                     OutlinedTextField(
                         value = block.text,
                         onValueChange = { onEvent(NoteEditorEvent.ChapterDescriptionChanged(block.id, it)) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(max = 320.dp)
                             .testTag("note-chapter-text-${block.id}"),
                         label = { Text("章节说明") },
                         minLines = 3,
+                        maxLines = Int.MAX_VALUE,
                     )
                     Text(
                         "${formatTimestamp(block.startMs ?: 0L)} - ${formatTimestamp(block.endMs ?: 0L)}",
@@ -360,11 +392,21 @@ private fun NoteBlockEditorCard(
                             leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
                         )
                     }
-                    block.points.forEach { point ->
-                        Text(
-                            "${formatTimestamp(point.timestampMs)}  ${point.text}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                    if (block.points.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            block.points.forEach { point ->
+                                Text(
+                                    "${formatTimestamp(point.timestampMs)}  ${point.text}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
                     }
                 }
                 NoteBlockType.TAG_LIST -> {
@@ -373,9 +415,11 @@ private fun NoteBlockEditorCard(
                         onValueChange = { onEvent(NoteEditorEvent.TagsChanged(it)) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(max = 160.dp)
                             .testTag("note-tags-input"),
                         label = { Text("标签，用逗号分隔") },
                         minLines = 1,
+                        maxLines = Int.MAX_VALUE,
                     )
                 }
             }
@@ -388,7 +432,7 @@ private fun AddBlockControls(onEvent: (NoteEditorEvent) -> Unit) {
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("添加内容块", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AddBlockButton("要点", NoteBlockType.KEY_POINT, onEvent)
                 AddBlockButton("想法", NoteBlockType.USER_NOTE, onEvent)
                 AddBlockButton("章节", NoteBlockType.CHAPTER, onEvent)
@@ -405,7 +449,9 @@ private fun AddBlockButton(
 ) {
     OutlinedButton(
         onClick = { onEvent(NoteEditorEvent.AddBlock(type)) },
-        modifier = Modifier.testTag("note-add-${type.name.lowercase()}"),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("note-add-${type.name.lowercase()}"),
     ) {
         Icon(Icons.Filled.Add, contentDescription = null)
         Spacer(Modifier.width(4.dp))
