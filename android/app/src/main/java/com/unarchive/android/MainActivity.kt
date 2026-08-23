@@ -50,6 +50,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
     val state = vm.toUnarchiveUiState()
     UnarchiveNavigationHost(
         state = state,
+        aiProposalGenerator = vm.noteDocumentAiProposalGenerator(),
         onCreateEvent = { event ->
             when (event) {
                 is CreateEvent.VideoReferenceChanged -> vm.videoReference = event.value

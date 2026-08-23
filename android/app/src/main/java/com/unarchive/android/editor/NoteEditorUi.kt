@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -58,17 +59,19 @@ internal fun NoteEditorRoute(
     document: NoteDocument,
     repository: NoteDocumentRepository,
     onBack: () -> Unit,
+    aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
 ) {
     val context = LocalContext.current
     val editorViewModel: NoteEditorViewModel = viewModel(
         key = "note-editor-${document.cardId.value}-${document.generation.cardVersion}",
-        factory = NoteEditorViewModelFactory(document, repository),
+        factory = NoteEditorViewModelFactory(document, repository, aiProposalGenerator),
     )
     val state by editorViewModel.uiState.collectAsStateWithLifecycle()
     NoteEditorScreen(
         state = state,
         onEvent = editorViewModel::onEvent,
         onBack = onBack,
+        onRequestAiProposal = { editorViewModel.onEvent(NoteEditorEvent.RequestAiProposal) },
         onOpenSource = { sourceRef ->
             val startSeconds = (sourceRef.startMs ?: 0L).coerceAtLeast(0L) / 1_000L
             val uri = Uri.parse(sourceRef.url).buildUpon()
@@ -86,6 +89,7 @@ internal fun NoteEditorScreen(
     onEvent: (NoteEditorEvent) -> Unit,
     onBack: () -> Unit,
     onOpenSource: (NoteSourceRef) -> Unit = {},
+    onRequestAiProposal: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -103,6 +107,16 @@ internal fun NoteEditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onRequestAiProposal,
+                        enabled = state.aiProposalState != NoteAiProposalState.RUNNING &&
+                            state.saveState != NoteEditorSaveState.SAVING,
+                        modifier = Modifier
+                            .testTag("note-editor-ai-proposal")
+                            .semantics { contentDescription = "重新生成 AI 整理建议" },
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null)
+                    }
                     IconButton(
                         onClick = { onEvent(NoteEditorEvent.Save) },
                         enabled = state.saveState != NoteEditorSaveState.SAVING,
@@ -130,7 +144,10 @@ internal fun NoteEditorScreen(
             item {
                 EditorStatus(state = state)
             }
-            if (state.aiProposal?.status == NoteProposalStatus.PENDING) {
+            if (state.aiProposal?.status == NoteProposalStatus.PENDING ||
+                state.aiProposalState == NoteAiProposalState.RUNNING ||
+                state.aiProposalError != null
+            ) {
                 item {
                     AiProposalCard(state = state, onEvent = onEvent)
                 }
@@ -190,16 +207,28 @@ private fun AiProposalCard(
     state: NoteEditorUiState,
     onEvent: (NoteEditorEvent) -> Unit,
 ) {
-    val proposal = state.aiProposal ?: return
     GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("有一份 AI 整理建议", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "${proposal.changes.size} 处内容变化。应用前会保留你的用户内容。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (proposal.status == NoteProposalStatus.PENDING) {
+            if (state.aiProposalState == NoteAiProposalState.RUNNING) {
+                Text("正在生成 AI 整理建议", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "当前笔记仍可阅读；生成完成后会先显示差异，不会直接覆盖内容。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (state.aiProposalError != null) {
+                Text("AI 整理未完成", style = MaterialTheme.typography.titleMedium)
+                Text(state.aiProposalError, color = MaterialTheme.colorScheme.error)
+                OutlinedButton(onClick = { onEvent(NoteEditorEvent.RequestAiProposal) }) {
+                    Text("重新生成建议")
+                }
+            } else if (state.aiProposal?.status == NoteProposalStatus.PENDING) {
+                val proposal = requireNotNull(state.aiProposal)
+                Text("有一份 AI 整理建议", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${proposal.changes.size} 处内容变化。应用前会保留你的用户内容。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { onEvent(NoteEditorEvent.ApplyAiProposal) }) {
                         Text("应用建议")
@@ -208,7 +237,8 @@ private fun AiProposalCard(
                         Text("保留当前笔记")
                     }
                 }
-            } else {
+            } else if (state.aiProposal != null) {
+                val proposal = state.aiProposal
                 Text(
                     if (proposal.status == NoteProposalStatus.APPLIED) "已应用建议，保存后写入笔记。"
                     else "已保留当前笔记。",

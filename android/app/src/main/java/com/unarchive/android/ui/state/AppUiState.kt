@@ -18,6 +18,7 @@ internal data class CreateUiState(
     val statusMessage: String,
     val hasRecovery: Boolean,
     val storedResultCount: Int,
+    val latestNoteDocument: NoteDocument? = null,
 )
 
 internal data class NotesUiState(
@@ -60,6 +61,9 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
             statusMessage = status,
             hasRecovery = batchRecoveryAvailable,
             storedResultCount = storedResults.size,
+            latestNoteDocument = noteDocuments.firstOrNull {
+                it.cardId == selectedKnowledgeCard?.cardId
+            } ?: noteDocuments.firstOrNull(),
         ),
         notes = NotesUiState(
             noteCount = maxOf(knowledgeCards.size, noteDocuments.size),

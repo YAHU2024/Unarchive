@@ -43,6 +43,7 @@ class NoteEditorUiTest {
         }
 
         composeRule.onNodeWithTag("note-editor-title").assertIsDisplayed()
+        composeRule.onNodeWithTag("note-editor-ai-proposal").assertIsDisplayed()
         composeRule.onNodeWithTag("note-block-text-summary-1").assertIsDisplayed()
         assertEquals(2, composeRule.onAllNodesWithText("AI 草稿，可编辑").fetchSemanticsNodes().size)
         composeRule.onNodeWithTag("note-source-chapter-1").performScrollTo().assertExists()

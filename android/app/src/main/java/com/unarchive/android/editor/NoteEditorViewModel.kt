@@ -18,6 +18,7 @@ import com.unarchive.android.card.NoteGeneration
 import com.unarchive.android.card.NoteEditingState
 import com.unarchive.android.card.NotePublishingState
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +36,8 @@ enum class NoteEditorSaveState {
     FAILED,
 }
 
+enum class NoteAiProposalState { IDLE, RUNNING, FAILED }
+
 data class NoteEditorUiState(
     val document: NoteDocument,
     val saveState: NoteEditorSaveState = initialSaveState(document),
@@ -44,6 +47,8 @@ data class NoteEditorUiState(
     val tagsInput: String = document.tags.joinToString(", "),
     val errorMessage: String? = document.editing.lastSaveError,
     val aiProposal: NoteDocumentProposal? = null,
+    val aiProposalState: NoteAiProposalState = NoteAiProposalState.IDLE,
+    val aiProposalError: String? = null,
 ) {
     val isDirty: Boolean get() = saveState == NoteEditorSaveState.DIRTY || document.editing.dirty
 
@@ -70,6 +75,7 @@ sealed interface NoteEditorEvent {
     data class AddBlock(val type: NoteBlockType) : NoteEditorEvent
     data class RemoveBlock(val blockId: String) : NoteEditorEvent
     data class MoveBlock(val blockId: String, val direction: Direction) : NoteEditorEvent
+    data object RequestAiProposal : NoteEditorEvent
     data class AiProposalReady(val proposal: NoteDocumentProposal) : NoteEditorEvent
     data object ApplyAiProposal : NoteEditorEvent
     data object RejectAiProposal : NoteEditorEvent
@@ -80,13 +86,14 @@ sealed interface NoteEditorEvent {
 }
 
 /**
- * Owns structured note editing. AI output is intentionally not an event here:
- * a future AI proposal must be compared or explicitly applied by the user.
+ * Owns structured note editing. AI output enters as a proposal and is never
+ * written to the current document until the user explicitly applies and saves.
  */
 class NoteEditorViewModel(
     initialDocument: NoteDocument,
     private val repository: NoteDocumentRepository,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
 ) : ViewModel() {
     private val initial = initialDocument
     private val _uiState = MutableStateFlow(NoteEditorUiState(initialDocument))
@@ -114,6 +121,7 @@ class NoteEditorViewModel(
             is NoteEditorEvent.AddBlock -> addBlock(event.type)
             is NoteEditorEvent.RemoveBlock -> removeBlock(event.blockId)
             is NoteEditorEvent.MoveBlock -> moveBlock(event.blockId, event.direction)
+            NoteEditorEvent.RequestAiProposal -> requestAiProposal()
             is NoteEditorEvent.AiProposalReady -> setAiProposal(event.proposal)
             NoteEditorEvent.ApplyAiProposal -> applyAiProposal()
             NoteEditorEvent.RejectAiProposal -> rejectAiProposal()
@@ -130,7 +138,74 @@ class NoteEditorViewModel(
 
     private fun setAiProposal(proposal: NoteDocumentProposal) {
         val current = _uiState.value
-        _uiState.value = current.copy(aiProposal = proposal, errorMessage = null)
+        _uiState.value = current.copy(
+            aiProposal = proposal,
+            aiProposalState = NoteAiProposalState.IDLE,
+            aiProposalError = null,
+            errorMessage = null,
+        )
+    }
+
+    private fun requestAiProposal() {
+        val generator = aiProposalGenerator
+        val current = _uiState.value
+        if (generator == null) {
+            _uiState.value = current.copy(
+                aiProposalState = NoteAiProposalState.FAILED,
+                aiProposalError = "当前未配置 AI 整理服务。",
+            )
+            return
+        }
+        if (current.aiProposalState == NoteAiProposalState.RUNNING ||
+            current.saveState == NoteEditorSaveState.SAVING
+        ) return
+        if (hasUnmaterializedDraft(current)) {
+            _uiState.value = current.copy(
+                aiProposalState = NoteAiProposalState.FAILED,
+                aiProposalError = "请先完成当前输入，再生成 AI 建议。",
+            )
+            return
+        }
+        val baseDocument = current.document
+        val baseFingerprint = NoteDocumentContentFingerprint.of(baseDocument)
+        _uiState.value = current.copy(
+            aiProposalState = NoteAiProposalState.RUNNING,
+            aiProposalError = null,
+            errorMessage = null,
+        )
+        viewModelScope.launch {
+            try {
+                val candidate = withContext(ioDispatcher) { generator.generate(baseDocument) }
+                val latest = _uiState.value
+                if (NoteDocumentContentFingerprint.of(latest.document) != baseFingerprint) {
+                    _uiState.value = latest.copy(
+                        aiProposalState = NoteAiProposalState.FAILED,
+                        aiProposalError = "笔记在生成期间发生了变化，请重新生成建议。",
+                    )
+                    return@launch
+                }
+                val proposal = NoteDocumentProposalBuilder.create(
+                    current = baseDocument,
+                    proposed = candidate,
+                    proposalId = UUID.randomUUID().toString(),
+                    createdAtEpochMs = System.currentTimeMillis(),
+                )
+                _uiState.value = latest.copy(
+                    aiProposal = proposal,
+                    aiProposalState = NoteAiProposalState.IDLE,
+                    aiProposalError = null,
+                    errorMessage = null,
+                )
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                val latest = _uiState.value
+                _uiState.value = latest.copy(
+                    aiProposalState = NoteAiProposalState.FAILED,
+                    aiProposalError = error.message ?: "AI 整理失败，请稍后重试。",
+                )
+            }
+        }
     }
 
     private fun applyAiProposal() {
@@ -159,6 +234,8 @@ class NoteEditorViewModel(
                 _uiState.value = current.copy(
                     saveState = NoteEditorSaveState.FAILED,
                     errorMessage = "AI 建议已过期，请重新生成：${error.message ?: "内容已变化"}",
+                    aiProposalState = NoteAiProposalState.FAILED,
+                    aiProposalError = "AI 建议已过期，请重新生成。",
                 )
             },
         )
@@ -418,12 +495,17 @@ private fun NoteDocument.replaceBlock(blockId: String, transform: (NoteBlock) ->
 class NoteEditorViewModelFactory(
     private val initialDocument: NoteDocument,
     private val repository: NoteDocumentRepository,
+    private val aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(NoteEditorViewModel::class.java)) {
             "Unsupported ViewModel: ${modelClass.name}"
         }
-        return NoteEditorViewModel(initialDocument, repository) as T
+        return NoteEditorViewModel(
+            initialDocument = initialDocument,
+            repository = repository,
+            aiProposalGenerator = aiProposalGenerator,
+        ) as T
     }
 }

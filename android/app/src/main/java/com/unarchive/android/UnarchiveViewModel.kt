@@ -92,6 +92,8 @@ import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.card.FileKnowledgeSyncRepository
 import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
+import com.unarchive.android.editor.NoteDocumentAiCandidateBuilder
+import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.video.VideoDownloader
 import com.unarchive.android.video.VideoFrameExtractor
 import java.io.File
@@ -770,6 +772,29 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
+
+    /**
+     * Supplies the editor with a production analyzer boundary. The analyzer
+     * returns a candidate document only; the editor owns diff review and apply.
+     */
+    fun noteDocumentAiProposalGenerator(): NoteDocumentAiProposalGenerator =
+        NoteDocumentAiProposalGenerator { document ->
+            val apiKey = apiKeyStore.get()?.takeIf { it.isNotBlank() }
+                ?: error("请先配置 DeepSeek API Key，再生成 AI 整理建议。")
+            val analysis = cardAnalyzer.analyze(
+                apiKey = apiKey,
+                segments = document.sourceTranscript,
+                audioDurationMs = document.source.durationMs,
+                thinkingEnabled = thinkingEnabled,
+            )
+            NoteDocumentAiCandidateBuilder.fromAnalysis(
+                current = document,
+                analysis = analysis,
+                model = "deepseek-v4-flash",
+                signature = "deepseek-thinking=$thinkingEnabled",
+                updatedAtEpochMs = System.currentTimeMillis(),
+            )
+        }
 
     fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> {
         knowledgeSyncRevision

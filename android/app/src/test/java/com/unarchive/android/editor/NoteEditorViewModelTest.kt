@@ -3,6 +3,9 @@ package com.unarchive.android.editor
 import com.unarchive.android.asr.TranscriptSegment
 import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardStageState
+import com.unarchive.android.card.CardAnalysis
+import com.unarchive.android.card.CardChapter
+import com.unarchive.android.card.CardPoint
 import com.unarchive.android.card.FileNoteDocumentRepository
 import com.unarchive.android.card.NoteBlock
 import com.unarchive.android.card.NoteBlockOrigin
@@ -18,6 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -206,6 +211,90 @@ class NoteEditorViewModelTest {
             assertEquals("编辑器测试", viewModel.uiState.value.document.title)
             assertEquals(NoteProposalStatus.REJECTED, viewModel.uiState.value.aiProposal?.status)
             assertEquals(NoteEditorSaveState.CLEAN, viewModel.uiState.value.saveState)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun requestAiProposalKeepsCurrentDocumentUntilUserAppliesIt() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val generator = NoteDocumentAiProposalGenerator { current ->
+                current.copy(
+                    blocks = current.blocks.map { block ->
+                        if (block.type == NoteBlockType.SUMMARY) block.copy(text = "AI 新摘要") else block
+                    },
+                )
+            }
+            val viewModel = NoteEditorViewModel(original, repository, dispatcher, generator)
+            advanceUntilIdle()
+
+            viewModel.onEvent(NoteEditorEvent.RequestAiProposal)
+            assertEquals(NoteAiProposalState.RUNNING, viewModel.uiState.value.aiProposalState)
+            advanceUntilIdle()
+
+            assertEquals(NoteAiProposalState.IDLE, viewModel.uiState.value.aiProposalState)
+            assertEquals(NoteProposalStatus.PENDING, viewModel.uiState.value.aiProposal?.status)
+            assertEquals(
+                "AI 摘要",
+                viewModel.uiState.value.document.blocks.first { it.type == NoteBlockType.SUMMARY }.text,
+            )
+            assertTrue(viewModel.uiState.value.aiProposal?.changes?.isNotEmpty() == true)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun requestAiProposalRejectsChangesMadeWhileAnalyzerRuns() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val gate = CompletableDeferred<Unit>()
+            val generator = NoteDocumentAiProposalGenerator { current ->
+                gate.await()
+                current.copy(title = "AI 标题")
+            }
+            val viewModel = NoteEditorViewModel(original, repository, dispatcher, generator)
+            advanceUntilIdle()
+
+            viewModel.onEvent(NoteEditorEvent.RequestAiProposal)
+            runCurrent()
+            assertEquals(NoteAiProposalState.RUNNING, viewModel.uiState.value.aiProposalState)
+            viewModel.onEvent(NoteEditorEvent.TitleChanged("用户标题"))
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(NoteAiProposalState.FAILED, viewModel.uiState.value.aiProposalState)
+            assertTrue(viewModel.uiState.value.aiProposalError?.contains("变化") == true)
+            assertEquals("用户标题", viewModel.uiState.value.document.title)
+            assertTrue(viewModel.uiState.value.aiProposal == null)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun requestAiProposalReportsMissingGeneratorWithoutChangingDocument() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val original = document()
+            val repository = FileNoteDocumentRepository(temporaryFolder.newFolder("notes"))
+            val viewModel = NoteEditorViewModel(original, repository, dispatcher)
+            advanceUntilIdle()
+
+            viewModel.onEvent(NoteEditorEvent.RequestAiProposal)
+
+            assertEquals(NoteAiProposalState.FAILED, viewModel.uiState.value.aiProposalState)
+            assertTrue(viewModel.uiState.value.aiProposalError?.contains("未配置") == true)
+            assertEquals(original, viewModel.uiState.value.document)
         } finally {
             Dispatchers.resetMain()
         }

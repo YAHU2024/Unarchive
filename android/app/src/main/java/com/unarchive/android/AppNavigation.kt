@@ -54,6 +54,7 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.editor.NoteEditorRoute
+import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
@@ -97,6 +98,7 @@ internal fun UnarchiveNavigationHost(
     onCreateEvent: (CreateEvent) -> Unit,
     onNotesEvent: (NotesEvent) -> Unit,
     onMeEvent: (MeEvent) -> Unit,
+    aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
     legacyTestContent: @Composable (onBack: () -> Unit, onOpenLogs: () -> Unit) -> Unit,
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit,
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
@@ -134,6 +136,7 @@ internal fun UnarchiveNavigationHost(
                     state = state.create,
                     onEvent = onCreateEvent,
                     onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
+                    onOpenLatestNote = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
                     onOpenDeveloperTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
                 )
             }
@@ -163,6 +166,7 @@ internal fun UnarchiveNavigationHost(
                     NoteEditorRoute(
                         document = document,
                         repository = noteDocumentRepository,
+                        aiProposalGenerator = aiProposalGenerator,
                         onBack = { navController.popBackStack() },
                     )
                 }
@@ -234,6 +238,7 @@ private fun CreateScreen(
     state: CreateUiState,
     onEvent: (CreateEvent) -> Unit,
     onOpenNotes: () -> Unit,
+    onOpenLatestNote: (NoteDocument) -> Unit,
     onOpenDeveloperTest: () -> Unit,
 ) {
     LazyColumn(
@@ -314,6 +319,26 @@ private fun CreateScreen(
                         )
                         Button(onClick = { onEvent(CreateEvent.ResumeBatch) }) {
                             Text("继续处理")
+                        }
+                    }
+                }
+            }
+        }
+        state.latestNoteDocument?.let { document ->
+            item {
+                GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("最近的知识笔记", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            document.title,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        OutlinedButton(
+                            onClick = { onOpenLatestNote(document) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("继续编辑笔记")
                         }
                     }
                 }
