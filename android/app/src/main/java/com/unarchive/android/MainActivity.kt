@@ -57,7 +57,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         onCreateEvent = { event ->
             when (event) {
                 is CreateEvent.VideoReferenceChanged -> vm.videoReference = event.value
-                CreateEvent.ProcessVideo -> vm.processVideo(state.create.videoReference)
+                CreateEvent.GenerateNoteDraft -> vm.createNoteFromVideo(state.create.videoReference)
                 CreateEvent.CancelProcessing -> vm.cancel()
                 CreateEvent.ResumeBatch -> vm.resumeBatch()
             }

@@ -286,6 +286,7 @@ private fun EditorStatus(state: NoteEditorUiState) {
     GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("note-editor-status")
             .semantics {
                 liveRegion = LiveRegionMode.Polite
                 contentDescription = "保存状态：$text"

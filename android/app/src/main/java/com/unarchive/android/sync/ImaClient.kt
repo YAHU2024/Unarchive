@@ -22,6 +22,7 @@ interface ImaGateway {
     suspend fun connect()
     suspend fun findNote(videoId: String): String?
     suspend fun importDocument(markdown: String, folderId: String = ""): String
+    suspend fun appendDocument(noteId: String, markdown: String)
     suspend fun addToKnowledgeBase(noteId: String, title: String, kbId: String, folderId: String = "")
 }
 
@@ -78,6 +79,16 @@ class ImaClient(
         if (folderId.isNotBlank()) body.put("folder_id", folderId)
         return call("openapi/note/v1/import_doc", body).optString("note_id").takeIf(String::isNotBlank)
             ?: throw IOException("ima 未返回 note_id")
+    }
+
+    override suspend fun appendDocument(noteId: String, markdown: String) {
+        call(
+            "openapi/note/v1/append_doc",
+            JSONObject()
+                .put("note_id", noteId)
+                .put("content_format", 1)
+                .put("content", markdown),
+        )
     }
 
     override suspend fun addToKnowledgeBase(noteId: String, title: String, kbId: String, folderId: String) {

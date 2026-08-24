@@ -6,12 +6,14 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
 import com.unarchive.android.ui.state.MeUiState
 import com.unarchive.android.ui.state.NotesUiState
 import com.unarchive.android.ui.state.UnarchiveUiState
 import com.unarchive.android.ui.theme.UnarchiveTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
@@ -61,6 +63,34 @@ class D1NavigationTest {
         composeRule.onNodeWithTag("bottom-nav-me").performClick()
         composeRule.onNodeWithText("开发者选项").assertIsDisplayed()
         composeRule.onNodeWithText("查看运行日志").assertIsDisplayed()
+    }
+
+    @Test
+    fun createPrimaryActionRequestsNoteDraftGeneration() {
+        val events = mutableListOf<CreateEvent>()
+        val state = sampleState().let { current ->
+            current.copy(create = current.create.copy(videoReference = "BV1PS42197aM"))
+        }
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = events::add,
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("开始生成笔记草稿").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(listOf(CreateEvent.GenerateNoteDraft), events)
+        }
     }
 
     private fun sampleState() = UnarchiveUiState(

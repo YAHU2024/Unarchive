@@ -342,6 +342,7 @@ private fun CreateScreen(
                         onValueChange = { onEvent(CreateEvent.VideoReferenceChanged(it)) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .testTag("create-video-reference")
                             .semantics { contentDescription = "B站视频链接或BV号" },
                         enabled = !state.isProcessing,
                         label = { Text("BV 号 / B站链接") },
@@ -349,9 +350,11 @@ private fun CreateScreen(
                         minLines = 2,
                     )
                     Button(
-                        onClick = { onEvent(CreateEvent.ProcessVideo) },
+                        onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
                         enabled = state.videoReference.isNotBlank() && !state.isProcessing,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("create-generate-note"),
                     ) {
                         Text(if (state.isProcessing) "处理中..." else "开始生成笔记草稿")
                     }
@@ -366,7 +369,11 @@ private fun CreateScreen(
                             if (state.isProcessing) "正在处理视频" else "最近状态",
                             style = MaterialTheme.typography.titleMedium,
                         )
-                        Text(state.statusMessage, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            state.statusMessage,
+                            modifier = Modifier.testTag("create-status"),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         if (state.isProcessing) {
                             OutlinedButton(onClick = { onEvent(CreateEvent.CancelProcessing) }) {
                                 Text("取消处理")
@@ -404,7 +411,10 @@ private fun CreateScreen(
                         )
                         OutlinedButton(
                             onClick = { onOpenLatestNote(document) },
-                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !state.isProcessing,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("create-latest-note"),
                         ) {
                             Text("继续编辑笔记")
                         }

@@ -375,6 +375,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var exportJob by mutableStateOf<Job?>(null)
         private set
     private var favoritesJob: Job? = null
+    private var imaTargetsJob: Job? = null
+    private var imaTargetRefreshGeneration = 0L
     private var activeBatchManifest: BatchManifest? = null
     private var batchGeneratingCard = false
     private var batchCardJob: Job? = null
@@ -575,6 +577,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     fun confirmClearSecureCredentials(): com.unarchive.android.security.ClearResult {
         val result = securitySettingsController.confirmClear()
         if (!securitySettingsController.state.value.isConfigured(SecurityProfile.IMA)) {
+            imaTargetRefreshGeneration++
+            imaTargetsJob?.cancel()
+            imaTargetsJob = null
             imaCredentialsConfigured = false
             imaKnowledgeBases = emptyList()
             imaFolders = emptyList()
@@ -625,20 +630,23 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** Refreshes ima destination names after credentials are saved or checked. */
     fun refreshImaTargets() {
-        if (generateJob != null) return
         val clientId = imaCredentialStore.clientId().orEmpty()
         val apiKey = imaCredentialStore.apiKey().orEmpty()
         imaCredentialsConfigured = clientId.isNotBlank() && apiKey.isNotBlank()
+        val generation = ++imaTargetRefreshGeneration
+        imaTargetsJob?.cancel()
+        imaTargetsJob = null
         if (!imaCredentialsConfigured) {
             imaKnowledgeBases = emptyList()
             imaFolders = emptyList()
             return
         }
-        generateJob = viewModelScope.launch {
+        imaTargetsJob = viewModelScope.launch {
             try {
                 val client = ImaClient(clientId, apiKey)
                 client.connect()
                 val bases = client.listKnowledgeBases()
+                if (generation != imaTargetRefreshGeneration) return@launch
                 imaKnowledgeBases = bases
                 if (bases.none { it.id == imaKnowledgeBaseId }) {
                     imaKnowledgeBaseId = ""
@@ -646,13 +654,16 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     imaFolders = emptyList()
                 } else if (imaKnowledgeBaseId.isNotBlank()) {
                     val folders = client.listKnowledgeBaseFolders(imaKnowledgeBaseId)
+                    if (generation != imaTargetRefreshGeneration) return@launch
                     imaFolders = folders
                     if (folders.none { it.id == imaFolderId }) imaFolderId = ""
                 }
             } catch (error: Exception) {
-                AppLogger.warn(TAG, "ima 目标读取失败：${CardProcessingLog.safeError(error)}")
+                if (error !is CancellationException && generation == imaTargetRefreshGeneration) {
+                    AppLogger.warn(TAG, "ima 目标读取失败：${CardProcessingLog.safeError(error)}")
+                }
             } finally {
-                generateJob = null
+                if (generation == imaTargetRefreshGeneration) imaTargetsJob = null
             }
         }
     }
@@ -874,12 +885,16 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun refreshKnowledgeCards() {
+        refreshKnowledgeCardSnapshot()
+        refreshNoteDocuments()
+    }
+
+    private fun refreshKnowledgeCardSnapshot() {
         knowledgeCards = knowledgeCardRepository.list()
         knowledgeSyncRevision++
         selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
             knowledgeCards.firstOrNull { it.cardId == current.cardId } ?: knowledgeCards.firstOrNull()
         } ?: knowledgeCards.firstOrNull()
-        refreshNoteDocuments()
     }
 
     /**
@@ -891,16 +906,27 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val cards = knowledgeCards
         val refreshGeneration = ++noteDocumentsRefreshGeneration
         viewModelScope.launch {
-            val documents = withContext(Dispatchers.IO) {
-                val migrated = noteDocumentSynchronizer.sync(cards)
-                noteRelationRepository.ensureSystemRelations(migrated)
-            }
-            if (refreshGeneration == noteDocumentsRefreshGeneration) {
-                noteDocuments = documents
-                if (graphSelectedCardId == null || documents.none { it.cardId.value == graphSelectedCardId }) {
-                    graphSelectedCardId = documents.firstOrNull()?.cardId?.value
-                }
-            }
+            publishNoteDocuments(refreshGeneration, loadNoteDocuments(cards))
+        }
+    }
+
+    private suspend fun refreshKnowledgeCardsAndWait() {
+        refreshKnowledgeCardSnapshot()
+        val refreshGeneration = ++noteDocumentsRefreshGeneration
+        publishNoteDocuments(refreshGeneration, loadNoteDocuments(knowledgeCards))
+    }
+
+    private suspend fun loadNoteDocuments(cards: List<KnowledgeCard>): List<NoteDocument> =
+        withContext(Dispatchers.IO) {
+            val migrated = noteDocumentSynchronizer.sync(cards)
+            noteRelationRepository.ensureSystemRelations(migrated)
+        }
+
+    private fun publishNoteDocuments(refreshGeneration: Long, documents: List<NoteDocument>) {
+        if (refreshGeneration != noteDocumentsRefreshGeneration) return
+        noteDocuments = documents
+        if (graphSelectedCardId == null || documents.none { it.cardId.value == graphSelectedCardId }) {
+            graphSelectedCardId = documents.firstOrNull()?.cardId?.value
         }
     }
 
@@ -1240,6 +1266,19 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun processVideo(reference: String, forceRefreshAudio: Boolean = false) {
+        startVideoProcessing(reference, forceRefreshAudio, generateNote = false)
+    }
+
+    fun createNoteFromVideo(reference: String) {
+        startVideoProcessing(reference, forceRefreshAudio = false, generateNote = true)
+    }
+
+    private fun startVideoProcessing(
+        reference: String,
+        forceRefreshAudio: Boolean,
+        generateNote: Boolean,
+    ) {
+        if (runningJob != null || generateJob != null || exportJob != null) return
         if (
             BuildConfig.SHERPA_ENABLED &&
             selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
@@ -1258,6 +1297,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         status = "正在解析 B站链接..."
         AppLogger.info(TAG, "开始处理视频：$reference（强制刷新=$forceRefreshAudio）")
         runningJob = viewModelScope.launch {
+            var noteSource: StoredVideoResult? = null
             try {
                 videoResult = executeVideo(reference, forceRefreshAudio)
                 result = videoResult?.benchmark
@@ -1285,6 +1325,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                         forceRefreshAudio = forceRefreshAudio,
                     )
                 }
+                if (generateNote) noteSource = videoResult?.storedResult
             } catch (_: CancellationException) {
                 selectedStoredResult = previousStoredResult
                 status = "视频处理已取消。"
@@ -1296,6 +1337,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             } finally {
                 runningJob = null
             }
+            noteSource?.let(::generateCard)
         }
     }
 
@@ -1846,7 +1888,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun cancel() {
-        val job = runningJob
+        val job = runningJob ?: generateJob
         if (job == null || !job.isActive) {
             runningJob = null
             if (status.startsWith("正在取消")) status = "批量处理已完成。"
@@ -1858,7 +1900,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         // Batch card generation is launched as a separate viewModel job so the
         // card UI can also start it directly. Cancel both sides explicitly;
         // cancelling only the batch coordinator leaves that sibling job alive.
-        if (batchGeneratingCard) {
+        if (batchGeneratingCard && generateJob !== job) {
             batchCardJob?.cancel()
             generateJob?.cancel()
         }
@@ -2071,7 +2113,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     markdown = finalMarkdown,
                 )
                 knowledgeCardRepository.save(card)
-                refreshKnowledgeCards()
+                refreshKnowledgeCardsAndWait()
                 selectedKnowledgeCard = card
                 status = when {
                     analysisState == CardStageState.FAILED -> "基础知识卡片已保存，AI 生成失败，可重试。"

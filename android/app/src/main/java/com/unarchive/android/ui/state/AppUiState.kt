@@ -101,7 +101,7 @@ internal data class MeUiState(
 
 internal sealed interface CreateEvent {
     data class VideoReferenceChanged(val value: String) : CreateEvent
-    data object ProcessVideo : CreateEvent
+    data object GenerateNoteDraft : CreateEvent
     data object CancelProcessing : CreateEvent
     data object ResumeBatch : CreateEvent
 }
@@ -139,12 +139,15 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
     UnarchiveUiState(
         create = CreateUiState(
             videoReference = videoReference,
-            isProcessing = runningJob?.isActive == true,
+            isProcessing = runningJob?.isActive == true || generateJob?.isActive == true,
             statusMessage = status,
             hasRecovery = batchRecoveryAvailable,
             storedResultCount = storedResults.size,
-            latestNoteDocument = noteDocuments.firstOrNull {
-                it.cardId == selectedKnowledgeCard?.cardId
+            latestNoteDocument = selectedKnowledgeCard?.let { selected ->
+                noteDocuments.firstOrNull {
+                    it.cardId == selected.cardId &&
+                        it.generation.cardVersion == selected.cardVersion
+                }
             } ?: noteDocuments.firstOrNull(),
         ),
         notes = NotesUiState(
