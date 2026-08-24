@@ -660,6 +660,7 @@ private fun NotesLibraryCard(
                     coverStatus,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("notes-cover-status-${item.stableKey}"),
                 )
             }
             if (document != null) {
@@ -675,6 +676,7 @@ private fun NotesLibraryCard(
                     TextButton(
                         enabled = !coverRetryInProgress,
                         onClick = { onRetryCover(document) },
+                        modifier = Modifier.testTag("notes-cover-retry-${item.stableKey}"),
                     ) {
                         Text("重试封面")
                     }
@@ -720,14 +722,16 @@ private fun NotesThumbnail(item: NotesLibraryItem) {
             },
             modifier = Modifier
                 .width(96.dp)
-                .height(76.dp),
+                .height(76.dp)
+                .testTag("notes-thumbnail-${kind.name.lowercase()}-${item.stableKey}"),
             contentScale = ContentScale.Crop,
         )
     } else {
         Surface(
             modifier = Modifier
                 .width(96.dp)
-                .height(76.dp),
+                .height(76.dp)
+                .testTag("notes-thumbnail-placeholder-${item.stableKey}"),
             shape = MaterialTheme.shapes.small,
             color = if (item.kind == NotesLibraryItemKind.SAVED_NOTE) {
                 MaterialTheme.colorScheme.primaryContainer

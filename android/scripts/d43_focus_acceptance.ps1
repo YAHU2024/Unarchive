@@ -107,8 +107,28 @@ $instrumentOutput = & $adb @instrumentArguments 2>&1
 $instrumentExitCode = $LASTEXITCODE
 $instrumentOutput | Tee-Object -FilePath $reportPath
 Write-Host "Focus report: $reportPath"
+$instrumentText = $instrumentOutput -join "`n"
+$failureReasons = @()
 if ($instrumentExitCode -ne 0) {
-    throw "Focused instrumentation failed with exit code $instrumentExitCode"
+    $failureReasons += "adb exited with code $instrumentExitCode"
+}
+if ($instrumentText -notmatch "(?m)^OK \(\d+ tests?\)\s*$") {
+    $failureReasons += "the AndroidJUnitRunner success summary is missing"
+}
+if ($instrumentText -match "(?m)^FAILURES!!!\s*$") {
+    $failureReasons += "AndroidJUnitRunner reported test failures"
+}
+if ($instrumentText -match "(?m)^INSTRUMENTATION_STATUS_CODE: -2\s*$") {
+    $failureReasons += "at least one instrumentation test failed"
+}
+if ($instrumentText -match "(?m)^(INSTRUMENTATION_FAILED:|INSTRUMENTATION_RESULT: shortMsg=)") {
+    $failureReasons += "instrumentation failed to run to completion"
+}
+if ($instrumentText -notmatch "(?m)^INSTRUMENTATION_CODE: -1\s*$") {
+    $failureReasons += "the instrumentation success result code is missing"
+}
+if ($failureReasons.Count -gt 0) {
+    throw "Focused instrumentation failed: $($failureReasons -join '; '). See $reportPath"
 }
 
 Write-Host $SuccessMessage

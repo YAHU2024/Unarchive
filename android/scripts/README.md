@@ -83,6 +83,23 @@ It never uninstalls the app or clears package data. This deterministic fixture
 does not replace checking real saved notes, screenshots, and destination state
 on the device.
 
+## Note cover focused gate
+
+To verify deterministic note-cover presentation and recovery semantics on one
+authorized device, run:
+
+```powershell
+.\android\scripts\note_cover_focus_acceptance.ps1
+```
+
+The runner executes the complete JVM suite, builds both Debug APKs, installs
+them with `adb install -r`, and runs only `NoteCoverUiTest`. Its four fixture
+cases cover cover-first rendering, chapter-screenshot and placeholder fallback,
+retry event dispatch, editor reachability, and 2x-font reachability. Reports are
+written under the ignored `android/build/reports/note-cover-focus/` directory.
+It never uninstalls the app or clears package data. This gate does not replace
+real Bilibili download, force-stop/reopen, offline, or manual appearance checks.
+
 ## D4.3 real creation gate
 
 After the deterministic gate passes and the PHQ110 has working Bilibili,
