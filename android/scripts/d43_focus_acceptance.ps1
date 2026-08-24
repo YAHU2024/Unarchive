@@ -18,6 +18,8 @@ package data, or claim real share-receiver/ima API acceptance.
 param(
     [string]$DeviceSerial = "",
     [switch]$SkipBuild,
+    [string]$ReportGroup = "d43-focus",
+    [string]$SuccessMessage = "D4.3 deterministic focus gate passed. WPS and real ima acceptance are recorded by their separate gates.",
     [string[]]$TestClass = @(
         "com.unarchive.android.D1NavigationTest",
         "com.unarchive.android.NoteEditorUiTest",
@@ -91,7 +93,7 @@ Invoke-Adb -Arguments @("-s", $DeviceSerial, "install", "-r", $testApk) | Write-
 Invoke-Adb -Arguments @("-s", $DeviceSerial, "shell", "am", "start", "-n", "$packageName/.MainActivity") | Write-Host
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$reportDirectory = Join-Path $androidRoot "build\reports\d43-focus"
+$reportDirectory = Join-Path $androidRoot "build\reports\$ReportGroup"
 New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
 $reportPath = Join-Path $reportDirectory "phq110-$stamp.txt"
 $classArgument = $TestClass -join ","
@@ -109,4 +111,4 @@ if ($instrumentExitCode -ne 0) {
     throw "Focused instrumentation failed with exit code $instrumentExitCode"
 }
 
-Write-Host "D4.3 deterministic focus gate passed. WPS and real ima acceptance are recorded by their separate gates."
+Write-Host $SuccessMessage

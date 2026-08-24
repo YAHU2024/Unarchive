@@ -67,6 +67,22 @@ The accessibility cases are repeatable structural proxies. They do not prove
 the words TalkBack actually speaks or the exact on-screen appearance of masked
 characters; those two checks remain manual.
 
+## Notes P1 focused gate
+
+To verify Notes library filtering, user-facing card metadata, and the
+pending-material draft action on one authorized device, run:
+
+```powershell
+.\android\scripts\notes_p1_focus_acceptance.ps1
+```
+
+The runner executes the complete JVM suite, builds both Debug APKs, installs
+them with `adb install -r`, and runs only `NotesLibraryUiTest`. Reports are
+written under the ignored `android/build/reports/notes-p1-focus/` directory.
+It never uninstalls the app or clears package data. This deterministic fixture
+does not replace checking real saved notes, screenshots, and destination state
+on the device.
+
 ## D4.3 real creation gate
 
 After the deterministic gate passes and the PHQ110 has working Bilibili,

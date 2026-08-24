@@ -77,6 +77,8 @@ internal data class NotesUiState(
     val noteTitles: List<String>,
     val noteCards: List<KnowledgeCard> = emptyList(),
     val noteDocuments: List<NoteDocument> = emptyList(),
+    val libraryItems: List<NotesLibraryItem> = emptyList(),
+    val canGenerateDraft: Boolean = true,
 )
 
 internal data class GraphUiState(
@@ -108,6 +110,7 @@ internal sealed interface CreateEvent {
 
 internal sealed interface NotesEvent {
     data object Refresh : NotesEvent
+    data class GenerateDraft(val platform: String, val videoId: String) : NotesEvent
 }
 
 internal sealed interface DestinationEvent {
@@ -135,8 +138,30 @@ internal sealed interface MeEvent {
     data object OpenDeveloperOptions : MeEvent
 }
 
-internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
-    UnarchiveUiState(
+internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
+    val documentedIds = noteDocuments.mapTo(mutableSetOf(), NoteDocument::cardId)
+    val effectiveDocuments = (
+        noteDocuments + knowledgeCards
+            .filterNot { it.cardId in documentedIds }
+            .map { it.toNoteDocument() }
+        ).sortedByDescending(NoteDocument::updatedAtEpochMs)
+    val syncRecords = knowledgeSyncRecordsForCards(knowledgeCards)
+    val thumbnailPaths = knowledgeCards.mapNotNull { card ->
+        val asset = card.assets.firstOrNull { it.mimeType.startsWith("image/") } ?: return@mapNotNull null
+        val path = knowledgeCardRepository.assetFile(card, asset)
+            ?.takeIf { it.isFile }
+            ?.absolutePath
+            ?: return@mapNotNull null
+        (card.cardId to card.cardVersion) to path
+    }.toMap()
+    val libraryItems = buildNotesLibraryItems(
+        noteDocuments = effectiveDocuments,
+        noteCards = knowledgeCards,
+        storedResults = storedResults,
+        syncRecords = syncRecords,
+        thumbnailPaths = thumbnailPaths,
+    )
+    return UnarchiveUiState(
         create = CreateUiState(
             videoReference = videoReference,
             isProcessing = runningJob?.isActive == true || generateJob?.isActive == true,
@@ -151,11 +176,13 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
             } ?: noteDocuments.firstOrNull(),
         ),
         notes = NotesUiState(
-            noteCount = maxOf(knowledgeCards.size, noteDocuments.size),
-            materialCount = storedResults.size,
-            noteTitles = noteDocuments.map { it.title }.ifEmpty { knowledgeCards.map { it.title } }.take(6),
+            noteCount = libraryItems.count { it.kind == NotesLibraryItemKind.SAVED_NOTE },
+            materialCount = libraryItems.count { it.kind == NotesLibraryItemKind.MATERIAL },
+            noteTitles = effectiveDocuments.map { it.title }.take(6),
             noteCards = knowledgeCards,
-            noteDocuments = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } },
+            noteDocuments = effectiveDocuments,
+            libraryItems = libraryItems,
+            canGenerateDraft = runningJob == null && generateJob == null && exportJob == null,
         ),
         graph = run {
             val documents = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } }
@@ -241,3 +268,4 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState =
             )
         },
     )
+}

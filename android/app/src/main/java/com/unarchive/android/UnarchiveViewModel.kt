@@ -1064,12 +1064,18 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-    fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> {
+    fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> =
+        knowledgeSyncRecordsForCards(listOf(card))
+
+    internal fun knowledgeSyncRecordsForCards(cards: Collection<KnowledgeCard>): List<KnowledgeSyncRecord> {
         knowledgeSyncRevision
-        val contentRevision = contentRevisionFor(card)
+        val revisions = cards.associate { card ->
+            (card.cardId to card.cardVersion) to contentRevisionFor(card)
+        }
         return imaSyncStateRepository.list()
-            .filter { it.key.cardId == card.cardId && it.key.cardVersion == card.cardVersion }
-            .filter { it.key.contentRevision == contentRevision }
+            .filter { record ->
+                revisions[record.key.cardId to record.key.cardVersion] == record.key.contentRevision
+            }
             .map { record ->
                 if (record.key.targetType == "ima" && record.targetName.isBlank() &&
                     record.key.targetId == imaKnowledgeBaseId) {
@@ -1262,6 +1268,16 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             AppLogger.warn(TAG, "知识卡片缺少转录结果：${card.cardId.value}")
             return
         }
+        generateCard(stored)
+    }
+
+    fun generateCardFromStoredResult(platform: String, videoId: String) {
+        val stored = resultRepository.find(VideoResultKey(platform, videoId))
+        if (stored == null) {
+            status = "找不到该素材对应的转录结果，请刷新笔记库后重试。"
+            return
+        }
+        selectedStoredResult = stored
         generateCard(stored)
     }
 

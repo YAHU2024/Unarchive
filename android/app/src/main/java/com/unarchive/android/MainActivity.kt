@@ -65,6 +65,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         onNotesEvent = { event ->
             when (event) {
                 NotesEvent.Refresh -> vm.refreshKnowledgeCards()
+                is NotesEvent.GenerateDraft -> vm.generateCardFromStoredResult(event.platform, event.videoId)
             }
         },
         onGraphEvent = { event ->

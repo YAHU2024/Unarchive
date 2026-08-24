@@ -1,6 +1,8 @@
 package com.unarchive.android
 
+import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.clickable
@@ -34,6 +36,7 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,8 +51,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -83,8 +91,14 @@ import com.unarchive.android.ui.state.GraphRelationOperationState
 import com.unarchive.android.ui.state.MeEvent
 import com.unarchive.android.ui.state.MeUiState
 import com.unarchive.android.ui.state.NotesEvent
+import com.unarchive.android.ui.state.NotesFilter
+import com.unarchive.android.ui.state.NotesLibraryItem
+import com.unarchive.android.ui.state.NotesLibraryItemKind
 import com.unarchive.android.ui.state.NotesUiState
 import com.unarchive.android.ui.state.UnarchiveUiState
+import com.unarchive.android.ui.state.buildNotesLibraryItems
+import com.unarchive.android.ui.state.forFilter
+import com.unarchive.android.ui.state.formatNotesUpdatedAt
 
 internal object AppRoutes {
     const val CREATE = "create"
@@ -447,6 +461,11 @@ private fun NotesScreen(
     onOpenEditor: (NoteDocument) -> Unit,
     onOpenDestinations: (NoteDocument) -> Unit,
 ) {
+    var selectedFilter by rememberSaveable { mutableStateOf(NotesFilter.RECENT) }
+    val libraryItems = state.libraryItems.ifEmpty {
+        buildNotesLibraryItems(state.noteDocuments, state.noteCards, emptyList())
+    }
+    val visibleItems = libraryItems.forFilter(selectedFilter)
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -463,50 +482,66 @@ private fun NotesScreen(
             )
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterPill(label = "最近", selected = true)
-                FilterPill(label = "待整理")
-                FilterPill(label = "已保存")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterPill(
+                    label = "最近",
+                    selected = selectedFilter == NotesFilter.RECENT,
+                    testTag = "notes-filter-recent",
+                    onClick = { selectedFilter = NotesFilter.RECENT },
+                )
+                FilterPill(
+                    label = "待整理",
+                    selected = selectedFilter == NotesFilter.NEEDS_ORGANIZING,
+                    testTag = "notes-filter-materials",
+                    onClick = { selectedFilter = NotesFilter.NEEDS_ORGANIZING },
+                )
+                FilterPill(
+                    label = "已保存",
+                    selected = selectedFilter == NotesFilter.SAVED,
+                    testTag = "notes-filter-saved",
+                    onClick = { selectedFilter = NotesFilter.SAVED },
+                )
             }
         }
-        if (state.noteTitles.isEmpty()) {
+        if (visibleItems.isEmpty()) {
             item {
                 GlassSurface(modifier = Modifier.fillMaxWidth()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("还没有知识笔记", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "从创作页添加一个 B 站视频，生成第一篇可编辑草稿。",
+                            when (selectedFilter) {
+                                NotesFilter.RECENT -> "还没有知识笔记"
+                                NotesFilter.NEEDS_ORGANIZING -> "没有待整理素材"
+                                NotesFilter.SAVED -> "还没有已保存笔记"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            when (selectedFilter) {
+                                NotesFilter.RECENT -> "从创作页添加一个 B 站视频，生成第一篇可编辑草稿。"
+                                NotesFilter.NEEDS_ORGANIZING -> "已有转写在生成笔记后会从这里移入已保存。"
+                                NotesFilter.SAVED -> "先从最近或待整理素材生成一篇笔记草稿。"
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
         } else {
-            val documents = state.noteDocuments.ifEmpty { state.noteCards.map { it.toNoteDocument() } }
-            items(documents, key = { "${it.cardId.value}:${it.generation.cardVersion}" }) { document ->
-                GlassSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenEditor(document) }
-                        .testTag("note-card-${document.cardId.value}"),
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(document.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "${document.source.ownerName} · 点击编辑结构化笔记",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { onOpenEditor(document) }) { Text("编辑") }
-                            TextButton(onClick = { onOpenDestinations(document) }) {
-                                Icon(Icons.Filled.Share, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("分享与去向")
-                            }
-                        }
-                    }
-                }
+            items(visibleItems, key = NotesLibraryItem::stableKey) { item ->
+                NotesLibraryCard(
+                    item = item,
+                    canGenerateDraft = state.canGenerateDraft,
+                    onOpenEditor = onOpenEditor,
+                    onOpenDestinations = onOpenDestinations,
+                    onGenerateDraft = { material ->
+                        onEvent(NotesEvent.GenerateDraft(material.key.platform, material.key.videoId))
+                    },
+                )
             }
         }
         item {
@@ -524,18 +559,158 @@ private fun NotesScreen(
 }
 
 @Composable
-private fun FilterPill(label: String, selected: Boolean = false) {
-    AssistChip(
-        onClick = {},
+private fun FilterPill(
+    label: String,
+    selected: Boolean,
+    testTag: String,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        modifier = Modifier.testTag(testTag),
+        onClick = onClick,
+        selected = selected,
         label = { Text(label) },
-        colors = AssistChipDefaults.assistChipColors(
-            containerColor = if (selected) {
+    )
+}
+
+@Composable
+private fun NotesLibraryCard(
+    item: NotesLibraryItem,
+    canGenerateDraft: Boolean,
+    onOpenEditor: (NoteDocument) -> Unit,
+    onOpenDestinations: (NoteDocument) -> Unit,
+    onGenerateDraft: (com.unarchive.android.result.StoredVideoResult) -> Unit,
+) {
+    val document = item.document
+    val cardModifier = Modifier
+        .fillMaxWidth()
+        .then(if (document != null) Modifier.clickable { onOpenEditor(document) } else Modifier)
+        .testTag("notes-item-${item.stableKey}")
+    GlassSurface(modifier = cardModifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                NotesThumbnail(item)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(
+                        item.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (item.summary.isNotBlank()) {
+                        Text(
+                            item.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    val sourceMetadata = listOfNotNull(
+                        item.ownerName.takeIf(String::isNotBlank),
+                        item.durationSeconds.takeIf { it > 0L }?.let(::formatNotesDuration),
+                        formatNotesUpdatedAt(item.updatedAtEpochMs),
+                    ).joinToString(" · ")
+                    Text(
+                        sourceMetadata,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (item.tags.isNotEmpty() || item.relationCount > 0) {
+                        val tagSummary = item.tags.take(3).joinToString(" ") { "#$it" }
+                        val relationSummary = item.relationCount.takeIf { it > 0 }?.let { "$it 个关联" }
+                        Text(
+                            listOfNotNull(tagSummary.takeIf(String::isNotBlank), relationSummary).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            Text(
+                listOfNotNull(item.localStatusLabel, item.destinationSummary).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (item.localStatusLabel.contains("失败")) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.testTag("notes-item-status-${item.stableKey}"),
+            )
+            if (document != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onOpenEditor(document) }) { Text("编辑") }
+                    TextButton(onClick = { onOpenDestinations(document) }) {
+                        Icon(Icons.Filled.Share, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("分享与去向")
+                    }
+                }
+            } else {
+                val material = item.material!!
+                Button(
+                    enabled = canGenerateDraft,
+                    onClick = { onGenerateDraft(material) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("notes-generate-${item.stableKey}"),
+                ) {
+                    Icon(Icons.Filled.Edit, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("生成笔记草稿")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotesThumbnail(item: NotesLibraryItem) {
+    val bitmap = remember(item.thumbnailPath) {
+        item.thumbnailPath?.let(BitmapFactory::decodeFile)
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "${item.title} 的章节截图",
+            modifier = Modifier
+                .width(96.dp)
+                .height(76.dp),
+            contentScale = ContentScale.Crop,
+        )
+    } else {
+        Surface(
+            modifier = Modifier
+                .width(96.dp)
+                .height(76.dp),
+            shape = MaterialTheme.shapes.small,
+            color = if (item.kind == NotesLibraryItemKind.SAVED_NOTE) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+                MaterialTheme.colorScheme.secondaryContainer
             },
-        ),
-    )
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    if (item.kind == NotesLibraryItemKind.SAVED_NOTE) "笔记" else "素材",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+    }
+}
+
+private fun formatNotesDuration(durationSeconds: Long): String {
+    val hours = durationSeconds / 3_600L
+    val minutes = (durationSeconds % 3_600L) / 60L
+    val seconds = durationSeconds % 60L
+    return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%02d:%02d".format(minutes, seconds)
 }
 
 @Composable
