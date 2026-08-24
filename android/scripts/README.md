@@ -51,8 +51,11 @@ For the repeatable portion of the Android redesign acceptance, run:
 
 The runner executes JVM tests, builds the Debug and instrumentation APKs,
 installs both with `adb install -r`, launches `MainActivity`, and runs the
-focused D1, editor, graph, and destination/security Compose tests. Reports are
-written under the ignored `android/build/reports/d43-focus/` directory.
+focused D1, editor, graph, destination, and security/accessibility Compose
+tests. The current PHQ110 gate contains 11 cases; four verify 2x-font scroll
+reachability, heading/presence/status/live-region/password semantics, default
+visual order, and clear-dialog cancellation. Reports are written under the
+ignored `android/build/reports/d43-focus/` directory.
 
 It never uninstalls the package or runs `pm clear`. Passing this gate does not
 prove that a real receiving application imports Markdown/images or that a
@@ -60,6 +63,9 @@ configured ima API succeeds and recovers. WPS opening the shared Markdown and
 rendering its embedded Base64 image passed separate manual PHQ110 acceptance
 on 2026-08-24. Configured ima success/revision/offline/process recovery also
 passes through the separate opt-in real ima gate below.
+The accessibility cases are repeatable structural proxies. They do not prove
+the words TalkBack actually speaks or the exact on-screen appearance of masked
+characters; those two checks remain manual.
 
 ## D4.3 real creation gate
 

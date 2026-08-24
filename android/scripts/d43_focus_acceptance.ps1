@@ -22,7 +22,8 @@ param(
         "com.unarchive.android.D1NavigationTest",
         "com.unarchive.android.NoteEditorUiTest",
         "com.unarchive.android.GraphRelationUiTest",
-        "com.unarchive.android.DestinationAndSecurityUiTest"
+        "com.unarchive.android.DestinationAndSecurityUiTest",
+        "com.unarchive.android.AccessibilityAndSecurityUiTest"
     )
 )
 
