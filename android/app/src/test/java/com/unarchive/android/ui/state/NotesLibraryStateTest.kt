@@ -72,6 +72,27 @@ class NotesLibraryStateTest {
     }
 
     @Test
+    fun doesNotBorrowCoverOrRetryStateFromAnotherCardVersion() {
+        val document = note("version-pair", 3L, "摘要")
+        val newerCard = card(document).copy(cardVersion = "newer-version")
+
+        val item = buildNotesLibraryItems(
+            noteDocuments = listOf(document),
+            noteCards = listOf(newerCard),
+            storedResults = emptyList(),
+            thumbnailCandidates = mapOf(
+                (newerCard.cardId to newerCard.cardVersion) to listOf(
+                    NotesThumbnailCandidate("new-cover.jpg", NotesThumbnailKind.COVER),
+                ),
+            ),
+        ).single()
+
+        assertNull(item.thumbnailPath)
+        assertNull(item.coverStatusLabel)
+        assertFalse(item.canRetryCover)
+    }
+
+    @Test
     fun buildsRecentlyUpdatedNotesAndOnlyUnconvertedMaterials() {
         val saved = note("saved", updatedAt = 2_000L, summary = "  精炼\n 摘要  ")
         val convertedResult = result("saved", updatedAt = 4_000L)

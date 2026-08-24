@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -96,6 +97,7 @@ import com.unarchive.android.ui.state.NotesLibraryItem
 import com.unarchive.android.ui.state.NotesLibraryItemKind
 import com.unarchive.android.ui.state.NotesThumbnailKind
 import com.unarchive.android.ui.state.NotesUiState
+import com.unarchive.android.ui.state.NoteVersionKey
 import com.unarchive.android.ui.state.UnarchiveUiState
 import com.unarchive.android.ui.state.buildNotesLibraryItems
 import com.unarchive.android.ui.state.forFilter
@@ -207,7 +209,9 @@ internal fun UnarchiveNavigationHost(
                 val platform = entry.arguments?.getString("platform")
                 val videoId = entry.arguments?.getString("videoId")
                 val cardVersion = entry.arguments?.getString("cardVersion")
-                val document = state.notes.noteDocuments.firstOrNull {
+                val document = state.notes.noteDocumentVersions
+                    .ifEmpty { state.notes.noteDocuments }
+                    .firstOrNull {
                     it.cardId.platform == platform &&
                         it.cardId.videoId == videoId &&
                         it.generation.cardVersion == cardVersion
@@ -324,6 +328,7 @@ private fun CreateScreen(
     onOpenLatestNote: (NoteDocument) -> Unit,
     onOpenDeveloperTest: () -> Unit,
 ) {
+    var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -414,6 +419,53 @@ private fun CreateScreen(
                 }
             }
         }
+        if (state.recoveries.isNotEmpty()) {
+            item {
+                GlassSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("create-single-card-recoveries"),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("未完成的笔记生成", style = MaterialTheme.typography.titleMedium)
+                        state.recoveries.forEach { recovery ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("create-recovery-${recovery.operationId}"),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(recovery.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    when {
+                                        recovery.state == com.unarchive.android.card.SingleCardRecoveryState.RECOVERING ->
+                                            "恢复中 · ${recovery.stageLabel}"
+                                        recovery.errorMessage != null ->
+                                            "上次失败 · ${recovery.stageLabel}"
+                                        else -> "已中断 · ${recovery.stageLabel}"
+                                    },
+                                    color = if (recovery.errorMessage != null) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                recovery.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                Button(
+                                    onClick = { recoveryToConfirm = recovery.operationId },
+                                    enabled = recovery.canResume && !state.isProcessing,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("create-recovery-resume-${recovery.operationId}"),
+                                ) {
+                                    Text(if (recovery.state == com.unarchive.android.card.SingleCardRecoveryState.RECOVERING) "恢复中..." else "继续生成")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         state.latestNoteDocument?.let { document ->
             item {
                 GlassSurface(modifier = Modifier.fillMaxWidth()) {
@@ -451,6 +503,27 @@ private fun CreateScreen(
                 }
             }
         }
+    }
+    val selectedRecovery = state.recoveries.firstOrNull { it.operationId == recoveryToConfirm }
+    if (selectedRecovery != null) {
+        AlertDialog(
+            onDismissRequest = { recoveryToConfirm = null },
+            title = { Text("继续生成这篇笔记？") },
+            text = {
+                Text("将复用已保存的本地转写，从“${selectedRecovery.stageLabel}”阶段重新执行。不会重新下载音频或转写。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onEvent(CreateEvent.ResumeSingleCard(selectedRecovery.operationId))
+                        recoveryToConfirm = null
+                    },
+                ) { Text("继续生成") }
+            },
+            dismissButton = {
+                TextButton(onClick = { recoveryToConfirm = null }) { Text("取消") }
+            },
+        )
     }
 }
 
@@ -551,7 +624,7 @@ private fun NotesScreen(
                             ),
                         )
                     },
-                    coverRetryInProgress = state.coverRetryInProgress,
+                    coverRetrying = item.document?.let(::documentKey)?.let { it in state.coverRetryKeys } == true,
                 )
             }
         }
@@ -592,7 +665,7 @@ private fun NotesLibraryCard(
     onOpenDestinations: (NoteDocument) -> Unit,
     onGenerateDraft: (com.unarchive.android.result.StoredVideoResult) -> Unit,
     onRetryCover: (NoteDocument) -> Unit,
-    coverRetryInProgress: Boolean,
+    coverRetrying: Boolean,
 ) {
     val document = item.document
     val cardModifier = Modifier
@@ -674,7 +747,7 @@ private fun NotesLibraryCard(
                 }
                 if (item.canRetryCover) {
                     TextButton(
-                        enabled = !coverRetryInProgress,
+                        enabled = !coverRetrying,
                         onClick = { onRetryCover(document) },
                         modifier = Modifier.testTag("notes-cover-retry-${item.stableKey}"),
                     ) {
@@ -698,6 +771,9 @@ private fun NotesLibraryCard(
         }
     }
 }
+
+private fun documentKey(document: NoteDocument): NoteVersionKey =
+    NoteVersionKey(document.cardId, document.generation.cardVersion)
 
 @Composable
 private fun NotesThumbnail(item: NotesLibraryItem) {
@@ -1089,8 +1165,8 @@ private fun DestinationScreen(
     if (card == null) {
         LegacyRouteFrame(title = "分享与去向", onBack = onBack) {
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("找不到这篇本地笔记", style = MaterialTheme.typography.titleLarge)
-                Text("本地笔记可能已被移动或尚未完成保存。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(state.cardError ?: "找不到这篇本地笔记", style = MaterialTheme.typography.titleLarge)
+                Text("请返回笔记页刷新；当前版本不会自动替换为同一视频的其他版本。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         return

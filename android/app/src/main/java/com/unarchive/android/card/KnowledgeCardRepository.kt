@@ -165,6 +165,8 @@ data class KnowledgeCard(
 
 interface KnowledgeCardRepository {
     fun list(): List<KnowledgeCard>
+    /** Returns every readable persisted card version without collapsing by card id. */
+    fun listAllVersions(): List<KnowledgeCard>
     fun listVersions(cardId: KnowledgeCardId): List<KnowledgeCard>
     fun find(cardId: KnowledgeCardId, cardVersion: String? = null): KnowledgeCard?
     fun save(card: KnowledgeCard): KnowledgeCard
@@ -193,6 +195,17 @@ class FileKnowledgeCardRepository(private val directory: File) : KnowledgeCardRe
                     .maxByOrNull { it.updatedAtEpochMs }
             }
             .sortedByDescending { it.updatedAtEpochMs }
+    }
+
+    override fun listAllVersions(): List<KnowledgeCard> = synchronized(this) {
+        directory.listFiles { file -> file.isDirectory }
+            .orEmpty()
+            .flatMap { cardDirectory ->
+                cardDirectory.listFiles { file -> file.isDirectory }
+                    .orEmpty()
+                    .mapNotNull { versionDirectory -> readCard(File(versionDirectory, CARD_FILE_NAME)) }
+            }
+            .sortedWith(compareByDescending<KnowledgeCard> { it.updatedAtEpochMs }.thenBy { it.cardId.value })
     }
 
     override fun listVersions(cardId: KnowledgeCardId): List<KnowledgeCard> = synchronized(this) {

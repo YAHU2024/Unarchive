@@ -4,6 +4,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.unarchive.android.ui.state.CreateEvent
@@ -11,7 +12,9 @@ import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
 import com.unarchive.android.ui.state.MeUiState
 import com.unarchive.android.ui.state.NotesUiState
+import com.unarchive.android.ui.state.RecoveryUiItem
 import com.unarchive.android.ui.state.UnarchiveUiState
+import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -90,6 +93,48 @@ class D1NavigationTest {
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.GenerateNoteDraft), events)
+        }
+    }
+
+    @Test
+    fun singleCardRecoveryRequiresConfirmation() {
+        val events = mutableListOf<CreateEvent>()
+        val state = sampleState().copy(
+            create = sampleState().create.copy(
+                recoveries = listOf(
+                    RecoveryUiItem(
+                        operationId = "recovery-1",
+                        cardId = "bilibili:BVrecovery",
+                        cardVersion = "base-version",
+                        title = "可恢复笔记",
+                        stageLabel = "AI 分析",
+                        state = SingleCardRecoveryState.RECOVERABLE,
+                        canResume = true,
+                    ),
+                ),
+            ),
+        )
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = events::add,
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("create-recovery-resume-recovery-1").performClick()
+        composeRule.onNodeWithText("继续生成这篇笔记？").assertIsDisplayed()
+        composeRule.onAllNodesWithText("继续生成").get(1).performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(listOf(CreateEvent.ResumeSingleCard("recovery-1")), events)
         }
     }
 

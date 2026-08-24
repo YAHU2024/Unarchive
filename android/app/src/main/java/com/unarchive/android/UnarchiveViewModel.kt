@@ -46,7 +46,12 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.NoteDocumentSynchronizer
 import com.unarchive.android.card.NoteRelationRepository
+import com.unarchive.android.card.FileSingleCardRecoveryRepository
+import com.unarchive.android.card.SingleCardRecoveryRecord
+import com.unarchive.android.card.SingleCardRecoveryStage
+import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.state.GraphRelationOperationState
+import com.unarchive.android.ui.state.NoteVersionKey
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
 import com.unarchive.android.cover.CoverAssetService
@@ -187,6 +192,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     val noteDocumentProposalRepository: NoteDocumentProposalRepository =
         FileNoteDocumentProposalRepository(File(context.filesDir, "knowledge-note-proposals"))
     private val noteDocumentSynchronizer = NoteDocumentSynchronizer(noteDocumentRepository)
+    private val singleCardRecoveryRepository =
+        FileSingleCardRecoveryRepository(File(context.filesDir, "single-card-recovery"))
     val modelRepository = ModelRepository(File(context.filesDir, "models"))
     private val apiKeyStore = ApiKeyStore(context)
     private val siliconFlowKeyStore = SiliconFlowKeyStore(context)
@@ -247,6 +254,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var imaFolders by mutableStateOf<List<ImaFolder>>(emptyList())
     var destinationCardId by mutableStateOf<String?>(null)
     var destinationCardVersion by mutableStateOf<String?>(null)
+    var destinationCardError by mutableStateOf<String?>(null)
     var destinationExportMessage by mutableStateOf("")
     var destinationExportEmbeddedAssetCount by mutableIntStateOf(0)
     var destinationExportMissingAssetCount by mutableIntStateOf(0)
@@ -315,7 +323,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var selectedStoredResult by mutableStateOf(storedResults.firstOrNull())
     var knowledgeCards by mutableStateOf(knowledgeCardRepository.list())
         private set
-    var noteDocuments by mutableStateOf<List<NoteDocument>>(noteDocumentRepository.list())
+    var knowledgeCardVersions by mutableStateOf(knowledgeCardRepository.listAllVersions())
+        private set
+    var noteDocuments by mutableStateOf<List<NoteDocument>>(noteDocumentRepository.listAllVersions())
+        private set
+    var singleCardRecoveries by mutableStateOf(loadRecoveryRecords())
         private set
     private var noteDocumentsRefreshGeneration = 0L
     var graphSelectedCardId by mutableStateOf<String?>(null)
@@ -329,6 +341,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
     var coverRetryInProgress by mutableStateOf(false)
+        private set
+    internal var coverRetryKeys by mutableStateOf<Set<NoteVersionKey>>(emptySet())
         private set
 
     var favoriteFolders by mutableStateOf<List<BilibiliFavoriteFolder>>(emptyList())
@@ -398,9 +412,44 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             storedResults.firstOrNull { it.key == current.key } ?: storedResults.firstOrNull()
         } ?: storedResults.firstOrNull()
         refreshKnowledgeCards()
+        singleCardRecoveries = loadRecoveryRecords()
         selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
             knowledgeCards.firstOrNull { it.cardId == current.cardId } ?: knowledgeCards.firstOrNull()
         } ?: knowledgeCards.firstOrNull()
+    }
+
+    private fun loadRecoveryRecords(): List<SingleCardRecoveryRecord> {
+        val now = System.currentTimeMillis()
+        return singleCardRecoveryRepository.list().map { record ->
+            if (record.state != SingleCardRecoveryState.RECOVERING) return@map record
+            record.copy(
+                state = SingleCardRecoveryState.RECOVERABLE,
+                updatedAtEpochMs = maxOf(now, record.createdAtEpochMs),
+            ).also(singleCardRecoveryRepository::save)
+        }
+    }
+
+    private fun persistSingleCardRecovery(record: SingleCardRecoveryRecord): SingleCardRecoveryRecord {
+        singleCardRecoveryRepository.save(record)
+        singleCardRecoveries = (singleCardRecoveries
+            .filterNot { it.operationId == record.operationId } + record)
+            .sortedByDescending(SingleCardRecoveryRecord::updatedAtEpochMs)
+        return record
+    }
+
+    private fun persistSingleCardRecoveryForOperation(
+        operationId: String,
+        state: SingleCardRecoveryState,
+        error: String?,
+    ) {
+        val current = singleCardRecoveries.firstOrNull { it.operationId == operationId } ?: return
+        persistSingleCardRecovery(
+            current.copy(
+                state = state,
+                lastError = error,
+                updatedAtEpochMs = maxOf(System.currentTimeMillis(), current.createdAtEpochMs),
+            ),
+        )
     }
 
     private fun clearRunningJobIfCurrent(job: Job?) {
@@ -900,17 +949,23 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun retryNoteCover(platform: String, videoId: String, cardVersion: String) {
-        if (coverRetryInProgress || platform != "bilibili") return
+        if (platform != "bilibili") return
         val cardId = KnowledgeCardId(platform, videoId)
+        val versionKey = NoteVersionKey(cardId, cardVersion)
+        if (versionKey in coverRetryKeys) return
         val card = knowledgeCardRepository.find(cardId, cardVersion) ?: return
+        coverRetryKeys = coverRetryKeys + versionKey
         coverRetryInProgress = true
         status = "正在重新获取封面..."
         viewModelScope.launch {
             try {
-                val metadata = platformAdapter.fetchMetadata(
-                    VideoReference.Canonical(PlatformVideoId(platform, videoId), card.canonicalUrl),
-                )
-                coverAssetService.capture(metadata)
+                val existing = withContext(Dispatchers.IO) { coverAssetService.current(cardId) }
+                if (existing?.ref?.state != com.unarchive.android.card.CoverState.AVAILABLE) {
+                    val metadata = platformAdapter.fetchMetadata(
+                        VideoReference.Canonical(PlatformVideoId(platform, videoId), card.canonicalUrl),
+                    )
+                    coverAssetService.capture(metadata)
+                }
                 val updated = withContext(Dispatchers.IO) {
                     coverAssetService.attachToCard(card, knowledgeCardRepository).also(knowledgeCardRepository::save)
                 }
@@ -925,13 +980,34 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 withContext(Dispatchers.IO) { knowledgeCardRepository.save(updated) }
                 refreshKnowledgeCardsAndWait()
                 status = "封面暂不可用，可稍后重试。"
-            } finally {
-                coverRetryInProgress = false
+        } finally {
+                coverRetryKeys = coverRetryKeys - versionKey
+                coverRetryInProgress = coverRetryKeys.isNotEmpty()
             }
         }
     }
 
     private fun refreshKnowledgeCardSnapshot() {
+        val allVersions = knowledgeCardRepository.listAllVersions().map { card ->
+            val coverRecord = coverAssetService.current(card.cardId)
+            val attachedCover = card.cover.assetId?.let { assetId ->
+                card.assets.firstOrNull {
+                    it.kind == CardAssetKind.COVER && it.assetId == assetId
+                }
+            }
+            val needsAttachment = coverRecord?.ref?.state == com.unarchive.android.card.CoverState.AVAILABLE &&
+                (card.cover.state != com.unarchive.android.card.CoverState.AVAILABLE ||
+                    attachedCover == null ||
+                    knowledgeCardRepository.assetFile(card, attachedCover)?.isFile != true)
+            if (!needsAttachment) {
+                card
+            } else {
+                coverAssetService.attachToCard(card, knowledgeCardRepository).also {
+                    if (it != card) knowledgeCardRepository.save(it)
+                }
+            }
+        }
+        knowledgeCardVersions = allVersions
         knowledgeCards = knowledgeCardRepository.list()
         knowledgeSyncRevision++
         selectedKnowledgeCard = selectedKnowledgeCard?.let { current ->
@@ -962,6 +1038,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         withContext(Dispatchers.IO) {
             val migrated = noteDocumentSynchronizer.sync(cards)
             noteRelationRepository.ensureSystemRelations(migrated)
+            noteDocumentRepository.listAllVersions()
         }
 
     private fun publishNoteDocuments(refreshGeneration: Long, documents: List<NoteDocument>) {
@@ -1159,6 +1236,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     fun openDestination(card: KnowledgeCard) {
         destinationCardId = card.cardId.value
         destinationCardVersion = card.cardVersion
+        destinationCardError = null
         destinationExportMessage = ""
         destinationExportEmbeddedAssetCount = 0
         destinationExportMissingAssetCount = 0
@@ -1166,10 +1244,20 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         destinationExportFailed = false
     }
 
+    fun reportDestinationCardMissing(cardId: String, cardVersion: String?) {
+        destinationCardId = cardId
+        destinationCardVersion = cardVersion
+        destinationCardError = if (cardVersion.isNullOrBlank()) {
+            "找不到这篇本地笔记的当前版本，请刷新后重试。"
+        } else {
+            "这篇本地笔记的指定版本暂不可用，请刷新后重试。"
+        }
+    }
+
     /** Uses the structured v2 note as the export/sync source when available. */
     fun destinationCardForUi(): KnowledgeCard? {
         val card = destinationCardId?.let { id ->
-            knowledgeCards.firstOrNull { candidate ->
+            knowledgeCardVersions.firstOrNull { candidate ->
                 candidate.cardId.value == id &&
                     (destinationCardVersion == null || candidate.cardVersion == destinationCardVersion)
             }
@@ -1311,6 +1399,59 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         generateCard(stored)
+    }
+
+    fun resumeSingleCard(operationId: String) {
+        if (generateJob != null || runningJob != null || exportJob != null) {
+            status = "当前已有任务运行中。"
+            return
+        }
+        val record = singleCardRecoveries.firstOrNull { it.operationId == operationId }
+        if (record == null || record.state !in setOf(
+                SingleCardRecoveryState.RECOVERABLE,
+                SingleCardRecoveryState.FAILED,
+            )) {
+            status = "这项恢复已完成或不可恢复，请刷新后重试。"
+            return
+        }
+        val stored = resultRepository.find(record.resultKey)
+        if (stored == null) {
+            singleCardRecoveries = singleCardRecoveries.map {
+                if (it.operationId == operationId) it.copy(
+                    state = SingleCardRecoveryState.FAILED,
+                    lastError = "本地转写结果不存在",
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                ).also(singleCardRecoveryRepository::save) else it
+            }
+            status = "找不到该任务对应的本地转写结果。"
+            return
+        }
+        record.finalCardVersion?.let { finalVersion ->
+            val published = knowledgeCardRepository.find(record.cardId, finalVersion)
+            if (published != null && published.analysisState != CardStageState.RUNNING &&
+                published.screenshotsState != CardStageState.RUNNING
+            ) {
+                val completed = record.copy(
+                    state = SingleCardRecoveryState.SUCCEEDED,
+                    updatedAtEpochMs = maxOf(System.currentTimeMillis(), record.createdAtEpochMs),
+                    lastError = null,
+                )
+                persistSingleCardRecovery(completed)
+                refreshPublishedState()
+                status = "这篇笔记已经生成完成。"
+                return
+            }
+        }
+        val now = System.currentTimeMillis()
+        val recovering = record.copy(
+            state = SingleCardRecoveryState.RECOVERING,
+            attemptCount = record.attemptCount + 1,
+            updatedAtEpochMs = maxOf(now, record.createdAtEpochMs),
+            lastError = null,
+        )
+        singleCardRecoveryRepository.save(recovering)
+        singleCardRecoveries = singleCardRecoveries.map { if (it.operationId == operationId) recovering else it }
+        generateCard(stored, recovering)
     }
 
     fun generateCardFromStoredResult(platform: String, videoId: String) {
@@ -1964,11 +2105,14 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun generateCard(stored: StoredVideoResult) {
+    fun generateCard(
+        stored: StoredVideoResult,
+        recoveryRecord: SingleCardRecoveryRecord? = null,
+    ) {
         if (generateJob != null || (runningJob != null && !batchGeneratingCard) || exportJob != null) return
         val apiKey = apiKeyStore.get()
         status = if (apiKey == null) "正在保存基础知识卡片..." else "正在保存基础知识卡片..."
-        val operationId = UUID.randomUUID().toString()
+        val operationId = recoveryRecord?.operationId ?: UUID.randomUUID().toString()
         val startedAt = SystemClock.elapsedRealtime()
         val cardId = KnowledgeCardId(stored.key.platform, stored.key.videoId)
         CardProcessingLog.event(
@@ -2004,7 +2148,30 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     updatedAtEpochMs = now,
                     markdown = MarkdownCardRenderer.render(stored),
                 )
+                var recovery = recoveryRecord ?: SingleCardRecoveryRecord(
+                    operationId = operationId,
+                    cardId = cardId,
+                    cardVersion = baseVersion,
+                    resultKey = stored.key,
+                    stage = SingleCardRecoveryStage.BASE,
+                    state = SingleCardRecoveryState.RECOVERING,
+                    configSignature = if (apiKey == null) "base-only" else "deepseek-thinking=$thinkingEnabled",
+                    attemptCount = 0,
+                    createdAtEpochMs = now,
+                    updatedAtEpochMs = now,
+                )
+                recovery = persistSingleCardRecovery(recovery)
                 val baseStartedAt = SystemClock.elapsedRealtime()
+                knowledgeCardRepository.save(card)
+                card = withContext(Dispatchers.IO) {
+                    coverAssetService.attachToCard(card, knowledgeCardRepository)
+                }
+                knowledgeCardRepository.save(card)
+                card = card.copy(
+                    analysis = analysis,
+                    analysisState = analysisState,
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                )
                 knowledgeCardRepository.save(card)
                 refreshKnowledgeCards()
                 CardProcessingLog.event(
@@ -2017,6 +2184,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 if (apiKey != null) {
+                    recovery = persistSingleCardRecovery(
+                        recovery.copy(stage = SingleCardRecoveryStage.ANALYSIS),
+                    )
                     val aiStartedAt = SystemClock.elapsedRealtime()
                     CardProcessingLog.event(operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.STARTED, cardId)
                     try {
@@ -2062,7 +2232,17 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     stored.key.platform != LOCAL_AUDIO_PLATFORM &&
                     stored.timingAccuracy != TranscriptTimingAccuracy.ESTIMATED
                 ) {
+                    recovery = persistSingleCardRecovery(
+                        recovery.copy(stage = SingleCardRecoveryStage.SCREENSHOTS),
+                    )
                     screenshotsState = CardStageState.RUNNING
+                    card = card.copy(
+                        analysis = analysis,
+                        analysisState = analysisState,
+                        screenshotsState = screenshotsState,
+                        updatedAtEpochMs = System.currentTimeMillis(),
+                    )
+                    knowledgeCardRepository.save(card)
                     status = "正在下载视频并截图..."
                     val screenshotStartedAt = SystemClock.elapsedRealtime()
                     CardProcessingLog.event(
@@ -2126,6 +2306,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     stored.canonicalUrl, stored.title, stored.ownerName, stored.segments,
                     analysis, emptyList(), "card-v1-thinking=$thinkingEnabled", assetHashes,
                 )
+                recovery = persistSingleCardRecovery(
+                    recovery.copy(stage = SingleCardRecoveryStage.PUBLISH, finalCardVersion = finalVersion),
+                )
                 if (finalVersion != card.cardVersion) {
                     card = card.copy(cardVersion = finalVersion)
                 }
@@ -2174,6 +2357,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     coverAssetService.attachToCard(card, knowledgeCardRepository)
                 }
                 knowledgeCardRepository.save(card)
+                persistSingleCardRecovery(
+                    recovery.copy(
+                        state = SingleCardRecoveryState.SUCCEEDED,
+                        stage = SingleCardRecoveryStage.PUBLISH,
+                        updatedAtEpochMs = maxOf(System.currentTimeMillis(), recovery.createdAtEpochMs),
+                    ),
+                )
                 refreshKnowledgeCardsAndWait()
                 selectedKnowledgeCard = card
                 status = when {
@@ -2195,13 +2385,23 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     ),
                 )
             } catch (cancellation: CancellationException) {
-                status = "AI 卡片生成已取消。"
+                persistSingleCardRecoveryForOperation(
+                    operationId,
+                    state = SingleCardRecoveryState.RECOVERABLE,
+                    error = "生成已暂停，可在创作页继续",
+                )
+                status = "AI 卡片生成已暂停，可在创作页继续。"
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.CANCELLED, cardId,
                     elapsedMs = SystemClock.elapsedRealtime() - startedAt,
                 )
                 throw cancellation
             } catch (error: Exception) {
+                persistSingleCardRecoveryForOperation(
+                    operationId,
+                    state = SingleCardRecoveryState.FAILED,
+                    error = CardProcessingLog.safeError(error),
+                )
                 status = if (error is InsufficientStorageException) {
                     "基础知识卡片已保存；" + error.recoveryMessage()
                 } else {

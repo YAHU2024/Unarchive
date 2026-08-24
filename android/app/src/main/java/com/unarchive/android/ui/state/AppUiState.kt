@@ -4,6 +4,7 @@ import com.unarchive.android.UnarchiveViewModel
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.GraphRelationItem
 import com.unarchive.android.card.NoteDocument
+import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.sync.DestinationAction
@@ -41,6 +42,7 @@ internal data class DestinationTargetUiState(
 
 internal data class DestinationUiState(
     val card: KnowledgeCard? = null,
+    val cardError: String? = null,
     val localSaved: Boolean = false,
     val exportState: DestinationOperationState = DestinationOperationState.IDLE,
     val exportMessage: String = "",
@@ -69,6 +71,18 @@ internal data class CreateUiState(
     val hasRecovery: Boolean,
     val storedResultCount: Int,
     val latestNoteDocument: NoteDocument? = null,
+    val recoveries: List<RecoveryUiItem> = emptyList(),
+)
+
+internal data class RecoveryUiItem(
+    val operationId: String,
+    val cardId: String,
+    val cardVersion: String,
+    val title: String,
+    val stageLabel: String,
+    val state: SingleCardRecoveryState,
+    val canResume: Boolean,
+    val errorMessage: String? = null,
 )
 
 internal data class NotesUiState(
@@ -77,9 +91,11 @@ internal data class NotesUiState(
     val noteTitles: List<String>,
     val noteCards: List<KnowledgeCard> = emptyList(),
     val noteDocuments: List<NoteDocument> = emptyList(),
+    val noteDocumentVersions: List<NoteDocument> = emptyList(),
     val libraryItems: List<NotesLibraryItem> = emptyList(),
     val canGenerateDraft: Boolean = true,
     val coverRetryInProgress: Boolean = false,
+    val coverRetryKeys: Set<NoteVersionKey> = emptySet(),
 )
 
 internal data class GraphUiState(
@@ -107,6 +123,7 @@ internal sealed interface CreateEvent {
     data object GenerateNoteDraft : CreateEvent
     data object CancelProcessing : CreateEvent
     data object ResumeBatch : CreateEvent
+    data class ResumeSingleCard(val operationId: String) : CreateEvent
 }
 
 internal sealed interface NotesEvent {
@@ -141,14 +158,18 @@ internal sealed interface MeEvent {
 }
 
 internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
-    val documentedIds = noteDocuments.mapTo(mutableSetOf(), NoteDocument::cardId)
+    val latestDocuments = noteDocuments
+        .groupBy(NoteDocument::cardId)
+        .values
+        .mapNotNull { versions -> versions.maxByOrNull(NoteDocument::updatedAtEpochMs) }
+    val documentedIds = latestDocuments.mapTo(mutableSetOf(), NoteDocument::cardId)
     val effectiveDocuments = (
-        noteDocuments + knowledgeCards
+        latestDocuments + knowledgeCards
             .filterNot { it.cardId in documentedIds }
             .map { it.toNoteDocument() }
         ).sortedByDescending(NoteDocument::updatedAtEpochMs)
-    val syncRecords = knowledgeSyncRecordsForCards(knowledgeCards)
-    val thumbnailCandidates = knowledgeCards.associate { card ->
+    val syncRecords = knowledgeSyncRecordsForCards(knowledgeCardVersions)
+    val thumbnailCandidates = knowledgeCardVersions.associate { card ->
         val coverAssetId = card.cover.assetId
         val orderedAssets = buildList {
             card.assets.firstOrNull {
@@ -176,7 +197,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
     }
     val libraryItems = buildNotesLibraryItems(
         noteDocuments = effectiveDocuments,
-        noteCards = knowledgeCards,
+        noteCards = knowledgeCardVersions,
         storedResults = storedResults,
         syncRecords = syncRecords,
         thumbnailCandidates = thumbnailCandidates,
@@ -194,19 +215,49 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
                         it.generation.cardVersion == selected.cardVersion
                 }
             } ?: noteDocuments.firstOrNull(),
+            recoveries = singleCardRecoveries.mapNotNull { record ->
+                if (record.state !in setOf(
+                        SingleCardRecoveryState.RECOVERABLE,
+                        SingleCardRecoveryState.RECOVERING,
+                        SingleCardRecoveryState.FAILED,
+                    )) return@mapNotNull null
+                val stored = storedResults.firstOrNull { it.key == record.resultKey }
+                val card = knowledgeCardVersions.firstOrNull {
+                    it.cardId == record.cardId && it.cardVersion == record.cardVersion
+                }
+                if (stored == null || card == null) return@mapNotNull null
+                RecoveryUiItem(
+                    operationId = record.operationId,
+                    cardId = record.cardId.value,
+                    cardVersion = record.cardVersion,
+                    title = card.title,
+                    stageLabel = when (record.stage) {
+                        com.unarchive.android.card.SingleCardRecoveryStage.BASE -> "基础卡片"
+                        com.unarchive.android.card.SingleCardRecoveryStage.ANALYSIS -> "AI 分析"
+                        com.unarchive.android.card.SingleCardRecoveryStage.SCREENSHOTS -> "章节截图"
+                        com.unarchive.android.card.SingleCardRecoveryStage.PUBLISH -> "发布笔记"
+                    },
+                    state = record.state,
+                    canResume = record.state == SingleCardRecoveryState.RECOVERABLE ||
+                        record.state == SingleCardRecoveryState.FAILED,
+                    errorMessage = record.lastError,
+                )
+            },
         ),
         notes = NotesUiState(
             noteCount = libraryItems.count { it.kind == NotesLibraryItemKind.SAVED_NOTE },
             materialCount = libraryItems.count { it.kind == NotesLibraryItemKind.MATERIAL },
             noteTitles = effectiveDocuments.map { it.title }.take(6),
-            noteCards = knowledgeCards,
+            noteCards = knowledgeCardVersions,
             noteDocuments = effectiveDocuments,
+            noteDocumentVersions = noteDocuments,
             libraryItems = libraryItems,
             canGenerateDraft = runningJob == null && generateJob == null && exportJob == null,
             coverRetryInProgress = coverRetryInProgress,
+            coverRetryKeys = coverRetryKeys,
         ),
         graph = run {
-            val documents = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } }
+            val documents = effectiveDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } }
             val selectedCardId = graphSelectedCardId
                 ?.takeIf { id -> documents.any { it.cardId.value == id } }
                 ?: documents.firstOrNull()?.cardId?.value
@@ -252,6 +303,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             }
             DestinationUiState(
                 card = card,
+                cardError = destinationCardError,
                 localSaved = card != null,
                 exportState = when {
                     exportJob?.isActive == true -> DestinationOperationState.RUNNING

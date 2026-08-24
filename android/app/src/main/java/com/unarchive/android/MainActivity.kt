@@ -60,6 +60,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 CreateEvent.GenerateNoteDraft -> vm.createNoteFromVideo(state.create.videoReference)
                 CreateEvent.CancelProcessing -> vm.cancel()
                 CreateEvent.ResumeBatch -> vm.resumeBatch()
+                is CreateEvent.ResumeSingleCard -> vm.resumeSingleCard(event.operationId)
             }
         },
         onNotesEvent = { event ->
@@ -84,10 +85,11 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         },
         onDestinationEvent = { event ->
             when (event) {
-                is DestinationEvent.OpenCard -> vm.knowledgeCards
+                is DestinationEvent.OpenCard -> vm.knowledgeCardVersions
                     .firstOrNull { it.cardId.value == event.cardId &&
                         (event.cardVersion == null || it.cardVersion == event.cardVersion) }
                     ?.let(vm::openDestination)
+                    ?: vm.reportDestinationCardMissing(event.cardId, event.cardVersion)
                 DestinationEvent.ExportMarkdown -> vm.exportDestinationCard()
                 DestinationEvent.SyncIma -> vm.destinationCardForUi()?.let(vm::syncKnowledgeCard)
                 is DestinationEvent.RetryIma -> vm.destinationCardForUi()?.let { vm.retryDestinationTarget(it, event.ref) }

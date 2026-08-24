@@ -38,6 +38,8 @@ fun interface NoteDocumentAtomicWriter {
 
 interface NoteDocumentRepository {
     fun list(): List<NoteDocument>
+    /** Returns every readable persisted document version without collapsing by card id. */
+    fun listAllVersions(): List<NoteDocument>
     fun listVersions(cardId: KnowledgeCardId): List<NoteDocument>
     fun find(cardId: KnowledgeCardId, cardVersion: String? = null): NoteDocument?
     fun save(document: NoteDocument): NoteDocumentSaveResult
@@ -49,6 +51,13 @@ class NoteDocumentSynchronizer(
 ) {
     fun sync(cards: List<KnowledgeCard>): List<NoteDocument> {
         cards.forEach { card ->
+            if (card.analysisState == CardStageState.RUNNING ||
+                card.screenshotsState == CardStageState.RUNNING
+            ) {
+                // An interrupted generation is not an editable note. Keep the
+                // card as a recovery candidate until its final version is published.
+                return@forEach
+            }
             if (repository.find(card.cardId, card.cardVersion) == null) {
                 runCatching { repository.save(card.toNoteDocument()) }
             }
@@ -77,6 +86,17 @@ class FileNoteDocumentRepository(
                     .maxByOrNull { it.updatedAtEpochMs }
             }
             .sortedByDescending { it.updatedAtEpochMs }
+    }
+
+    override fun listAllVersions(): List<NoteDocument> = synchronized(this) {
+        directory.listFiles { file -> file.isDirectory }
+            .orEmpty()
+            .flatMap { cardDirectory ->
+                cardDirectory.listFiles { file -> file.isDirectory }
+                    .orEmpty()
+                    .mapNotNull { versionDirectory -> readDocument(File(versionDirectory, JSON_FILE_NAME)) }
+            }
+            .sortedWith(compareByDescending<NoteDocument> { it.updatedAtEpochMs }.thenBy { it.cardId.value })
     }
 
     override fun listVersions(cardId: KnowledgeCardId): List<NoteDocument> = synchronized(this) {

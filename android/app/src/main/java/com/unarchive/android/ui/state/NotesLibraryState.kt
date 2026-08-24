@@ -19,6 +19,15 @@ internal enum class NotesLibraryItemKind { SAVED_NOTE, MATERIAL }
 
 internal enum class NotesThumbnailKind { COVER, CHAPTER_SCREENSHOT }
 
+internal data class NoteVersionKey(
+    val cardId: KnowledgeCardId,
+    val cardVersion: String,
+) {
+    init {
+        require(cardVersion.isNotBlank()) { "cardVersion cannot be blank" }
+    }
+}
+
 internal data class NotesThumbnailCandidate(
     val path: String,
     val kind: NotesThumbnailKind,
@@ -68,19 +77,15 @@ internal fun buildNotesLibraryItems(
     thumbnailPaths: Map<Pair<KnowledgeCardId, String>, String> = emptyMap(),
     thumbnailCandidates: Map<Pair<KnowledgeCardId, String>, List<NotesThumbnailCandidate>> = emptyMap(),
 ): List<NotesLibraryItem> {
-    val cardsById = noteCards.associateBy(KnowledgeCard::cardId)
     val cardsByVersion = noteCards.associateBy { it.cardId to it.cardVersion }
     val savedIds = noteDocuments.mapTo(mutableSetOf(), NoteDocument::cardId)
 
     val notes = noteDocuments.map { document ->
-        val exactCard = cardsByVersion[document.cardId to document.generation.cardVersion]
-        val card = exactCard ?: cardsById[document.cardId]
+        val card = cardsByVersion[document.cardId to document.generation.cardVersion]
         val key = document.cardId to document.generation.cardVersion
         val candidates = thumbnailCandidates[key]
             ?: card?.let { thumbnailCandidates[it.cardId to it.cardVersion] }
             ?: thumbnailPaths[key]?.let { listOf(NotesThumbnailCandidate(it, NotesThumbnailKind.CHAPTER_SCREENSHOT)) }
-            ?: card?.let { thumbnailPaths[it.cardId to it.cardVersion] }
-                ?.let { listOf(NotesThumbnailCandidate(it, NotesThumbnailKind.CHAPTER_SCREENSHOT)) }
             ?: emptyList()
         val coverCandidateAvailable = candidates.any { it.kind == NotesThumbnailKind.COVER }
         val currentRecords = syncRecords.filter { record ->
