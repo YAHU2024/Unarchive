@@ -14,7 +14,34 @@ import org.json.JSONObject
 /** Lifecycle of one locally persisted card stage. */
 enum class CardStageState { QUEUED, RUNNING, SUCCEEDED, FAILED, SKIPPED, PARTIAL }
 
-enum class CardAssetKind { CHAPTER_SCREENSHOT, OTHER }
+enum class CardAssetKind { COVER, CHAPTER_SCREENSHOT, OTHER }
+
+enum class CoverSource { BILIBILI, USER, NONE }
+
+enum class CoverState { NONE, AVAILABLE, NETWORK_FAILURE, INVALID, LOCAL_MISSING }
+
+data class CoverRef(
+    val source: CoverSource = CoverSource.NONE,
+    val state: CoverState = CoverState.NONE,
+    val assetId: String? = null,
+    val originalHost: String? = null,
+    val originalUrlSha256: String? = null,
+    val revision: Long = 0L,
+    val updatedAtEpochMs: Long = 0L,
+) {
+    init {
+        require(revision >= 0L) { "cover revision cannot be negative" }
+        require(updatedAtEpochMs >= 0L) { "cover updatedAtEpochMs cannot be negative" }
+    }
+
+    val userStatusLabel: String?
+        get() = when (state) {
+            CoverState.NONE, CoverState.AVAILABLE -> null
+            CoverState.NETWORK_FAILURE -> "封面暂不可用"
+            CoverState.INVALID -> "封面格式不支持"
+            CoverState.LOCAL_MISSING -> "封面文件缺失"
+        }
+}
 
 data class CardAsset(
     val assetId: String,
@@ -76,6 +103,7 @@ data class KnowledgeCard(
     val analysis: CardAnalysis? = null,
     val tags: List<String> = emptyList(),
     val assets: List<CardAsset> = emptyList(),
+    val cover: CoverRef = CoverRef(),
     val relations: List<CardRelation> = emptyList(),
     val baseState: CardStageState = CardStageState.SUCCEEDED,
     val analysisState: CardStageState = CardStageState.QUEUED,
@@ -209,12 +237,15 @@ class FileKnowledgeCardRepository(private val directory: File) : KnowledgeCardRe
     ): CardAsset = synchronized(this) {
         require(assetId.isNotBlank()) { "assetId cannot be blank" }
         require(bytes.isNotEmpty()) { "asset bytes cannot be empty" }
-        require(mimeType == "image/jpeg") { "Only JPEG card assets are supported in A0" }
+        require(mimeType == "image/jpeg" || mimeType == "image/png") {
+            "Only JPEG and PNG card assets are supported"
+        }
         val cardDirectory = versionDirectory(cardId, cardVersion)
         check(File(cardDirectory, CARD_FILE_NAME).isFile) { "Card version does not exist: $cardId@$cardVersion" }
         val assetsDirectory = File(cardDirectory, ASSETS_DIRECTORY)
         assetsDirectory.mkdirs()
-        val fileName = "${KnowledgeCard.sha256(assetId.toByteArray(Charsets.UTF_8))}.jpg"
+        val extension = if (mimeType == "image/png") "png" else "jpg"
+        val fileName = "${KnowledgeCard.sha256(assetId.toByteArray(Charsets.UTF_8))}.$extension"
         val target = File(assetsDirectory, fileName)
         atomicWriteBytes(target, bytes)
         CardAsset(
@@ -444,6 +475,7 @@ private fun KnowledgeCard.toJson() = JSONObject()
     .put("analysis", analysis?.toJson())
     .put("tags", JSONArray(tags))
     .put("assets", JSONArray().apply { assets.forEach { put(it.toJson()) } })
+    .put("cover", cover.toJson())
     .put("relations", JSONArray().apply { relations.forEach { put(it.toJson()) } })
     .put("base_state", baseState.name)
     .put("analysis_state", analysisState.name)
@@ -477,6 +509,7 @@ private fun JSONObject.toKnowledgeCard(markdown: String): KnowledgeCard {
         analysis = optJSONObject("analysis")?.toCardAnalysis(getLong("video_duration_seconds") * 1_000L),
         tags = jsonStringList(optJSONArray("tags")),
         assets = jsonAssetList(optJSONArray("assets")),
+        cover = optJSONObject("cover")?.toCoverRef() ?: CoverRef(),
         relations = jsonRelationList(optJSONArray("relations")),
         baseState = enumOrDefault("base_state", CardStageState.FAILED, CardStageState.entries.toTypedArray()),
         analysisState = enumOrDefault("analysis_state", CardStageState.QUEUED, CardStageState.entries.toTypedArray()),
@@ -494,6 +527,25 @@ private fun JSONObject.toTranscriptSegment() = TranscriptSegment(getLong("start_
 private fun CardAsset.toJson() = JSONObject()
     .put("asset_id", assetId).put("kind", kind.name).put("mime_type", mimeType).put("relative_path", relativePath)
     .put("byte_count", byteCount).put("sha256", sha256).put("chapter_index", chapterIndex).put("timestamp_ms", timestampMs)
+
+private fun CoverRef.toJson() = JSONObject()
+    .put("source", source.name)
+    .put("state", state.name)
+    .put("asset_id", assetId)
+    .put("original_host", originalHost)
+    .put("original_url_sha256", originalUrlSha256)
+    .put("revision", revision)
+    .put("updated_at_epoch_ms", updatedAtEpochMs)
+
+private fun JSONObject.toCoverRef() = CoverRef(
+    source = runCatching { CoverSource.valueOf(optString("source")) }.getOrDefault(CoverSource.NONE),
+    state = runCatching { CoverState.valueOf(optString("state")) }.getOrDefault(CoverState.NONE),
+    assetId = optString("asset_id").takeIf(String::isNotBlank),
+    originalHost = optString("original_host").takeIf(String::isNotBlank),
+    originalUrlSha256 = optString("original_url_sha256").takeIf(String::isNotBlank),
+    revision = optLong("revision", 0L).coerceAtLeast(0L),
+    updatedAtEpochMs = optLong("updated_at_epoch_ms", 0L).coerceAtLeast(0L),
+)
 
 private fun CardRelation.toJson() = JSONObject()
     .put("relation_id", relationId).put("type", type.name).put("target_id", targetId)

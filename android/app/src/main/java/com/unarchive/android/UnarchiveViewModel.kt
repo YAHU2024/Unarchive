@@ -49,6 +49,8 @@ import com.unarchive.android.card.NoteRelationRepository
 import com.unarchive.android.ui.state.GraphRelationOperationState
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
+import com.unarchive.android.cover.CoverAssetService
+import com.unarchive.android.cover.FileCoverAssetRepository
 import com.unarchive.android.log.AppLogger
 import com.unarchive.android.model.ModelRepository
 import com.unarchive.android.pipeline.SingleVideoPipeline
@@ -76,6 +78,7 @@ import com.unarchive.android.platform.bilibili.BilibiliPlatformAdapter
 import com.unarchive.android.platform.bilibili.HttpsTextTransport
 import com.unarchive.android.platform.bilibili.isTerminalUnavailable
 import com.unarchive.android.platform.PlatformVideoId
+import com.unarchive.android.platform.VideoReference
 import com.unarchive.android.result.FileVideoResultRepository
 import com.unarchive.android.result.LOCAL_AUDIO_PLATFORM
 import com.unarchive.android.result.StoredVideoResult
@@ -162,12 +165,17 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private val batchManifestRepository = BatchManifestRepository(File(context.filesDir, "batch"))
     private val audioCacheDirectory = File(context.cacheDir, "bilibili-audio")
     private val audioDownloader = BilibiliAudioDownloader(audioCacheDirectory, storagePreflight = { storagePreflight })
+    private val coverAssetService = CoverAssetService(
+        FileCoverAssetRepository(File(context.filesDir, "video-covers")),
+        persistentStoragePreflight = { bytes -> storagePreflight.checkPersistent("封面保存", bytes) },
+    )
     private val videoPipeline = SingleVideoPipeline(
         platformAdapter = platformAdapter,
         audioDownloader = audioDownloader,
         benchmarkRunner = runner,
         resultRepository = resultRepository,
         checkpointRepository = checkpointRepository,
+        coverCapture = coverAssetService,
     )
     private val videoDownloader = VideoDownloader(File(context.cacheDir, "video-cache"), storagePreflight = { storagePreflight })
     private val frameExtractor = VideoFrameExtractor()
@@ -320,6 +328,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var selectedKnowledgeCard by mutableStateOf(knowledgeCards.firstOrNull())
         private set
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
+    var coverRetryInProgress by mutableStateOf(false)
+        private set
 
     var favoriteFolders by mutableStateOf<List<BilibiliFavoriteFolder>>(emptyList())
         private set
@@ -887,6 +897,38 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     fun refreshKnowledgeCards() {
         refreshKnowledgeCardSnapshot()
         refreshNoteDocuments()
+    }
+
+    fun retryNoteCover(platform: String, videoId: String, cardVersion: String) {
+        if (coverRetryInProgress || platform != "bilibili") return
+        val cardId = KnowledgeCardId(platform, videoId)
+        val card = knowledgeCardRepository.find(cardId, cardVersion) ?: return
+        coverRetryInProgress = true
+        status = "正在重新获取封面..."
+        viewModelScope.launch {
+            try {
+                val metadata = platformAdapter.fetchMetadata(
+                    VideoReference.Canonical(PlatformVideoId(platform, videoId), card.canonicalUrl),
+                )
+                coverAssetService.capture(metadata)
+                val updated = withContext(Dispatchers.IO) {
+                    coverAssetService.attachToCard(card, knowledgeCardRepository).also(knowledgeCardRepository::save)
+                }
+                refreshKnowledgeCardsAndWait()
+                selectedKnowledgeCard = updated
+                status = updated.cover.userStatusLabel ?: "封面已更新。"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                val failed = coverAssetService.markNetworkFailure(cardId)
+                val updated = card.copy(cover = failed.ref)
+                withContext(Dispatchers.IO) { knowledgeCardRepository.save(updated) }
+                refreshKnowledgeCardsAndWait()
+                status = "封面暂不可用，可稍后重试。"
+            } finally {
+                coverRetryInProgress = false
+            }
+        }
     }
 
     private fun refreshKnowledgeCardSnapshot() {
@@ -2128,6 +2170,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     updatedAtEpochMs = System.currentTimeMillis(),
                     markdown = finalMarkdown,
                 )
+                card = withContext(Dispatchers.IO) {
+                    coverAssetService.attachToCard(card, knowledgeCardRepository)
+                }
                 knowledgeCardRepository.save(card)
                 refreshKnowledgeCardsAndWait()
                 selectedKnowledgeCard = card

@@ -9,6 +9,7 @@ data class VideoMetadata(
     val ownerName: String,
     val durationSeconds: Long,
     val cid: Long,
+    val coverUrl: String? = null,
 )
 
 data class AudioStream(

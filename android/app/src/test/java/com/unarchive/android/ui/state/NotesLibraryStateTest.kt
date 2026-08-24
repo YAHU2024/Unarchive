@@ -32,6 +32,46 @@ import org.junit.Test
 
 class NotesLibraryStateTest {
     @Test
+    fun coverCandidatePrecedesChapterScreenshotAndFailureRemainsRetryable() {
+        val document = note("cover", 3L, "摘要")
+        val card = card(document).copy(
+            cover = com.unarchive.android.card.CoverRef(
+                source = com.unarchive.android.card.CoverSource.BILIBILI,
+                state = com.unarchive.android.card.CoverState.AVAILABLE,
+                assetId = "cover",
+            ),
+        )
+        val key = document.cardId to document.generation.cardVersion
+        val item = buildNotesLibraryItems(
+            noteDocuments = listOf(document),
+            noteCards = listOf(card),
+            storedResults = emptyList(),
+            thumbnailCandidates = mapOf(
+                key to listOf(
+                    NotesThumbnailCandidate("cover.jpg", NotesThumbnailKind.COVER),
+                    NotesThumbnailCandidate("chapter.jpg", NotesThumbnailKind.CHAPTER_SCREENSHOT),
+                ),
+            ),
+        ).single()
+
+        assertEquals("cover.jpg", item.thumbnailPath)
+        assertEquals(NotesThumbnailKind.COVER, item.thumbnailCandidates.first().kind)
+        assertEquals(false, item.canRetryCover)
+
+        val missing = buildNotesLibraryItems(
+            noteDocuments = listOf(document),
+            noteCards = listOf(card),
+            storedResults = emptyList(),
+            thumbnailCandidates = mapOf(
+                key to listOf(NotesThumbnailCandidate("chapter.jpg", NotesThumbnailKind.CHAPTER_SCREENSHOT)),
+            ),
+        ).single()
+        assertEquals("chapter.jpg", missing.thumbnailPath)
+        assertEquals("封面文件缺失", missing.coverStatusLabel)
+        assertEquals(true, missing.canRetryCover)
+    }
+
+    @Test
     fun buildsRecentlyUpdatedNotesAndOnlyUnconvertedMaterials() {
         val saved = note("saved", updatedAt = 2_000L, summary = "  精炼\n 摘要  ")
         val convertedResult = result("saved", updatedAt = 4_000L)

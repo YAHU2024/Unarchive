@@ -79,6 +79,7 @@ internal data class NotesUiState(
     val noteDocuments: List<NoteDocument> = emptyList(),
     val libraryItems: List<NotesLibraryItem> = emptyList(),
     val canGenerateDraft: Boolean = true,
+    val coverRetryInProgress: Boolean = false,
 )
 
 internal data class GraphUiState(
@@ -111,6 +112,7 @@ internal sealed interface CreateEvent {
 internal sealed interface NotesEvent {
     data object Refresh : NotesEvent
     data class GenerateDraft(val platform: String, val videoId: String) : NotesEvent
+    data class RetryCover(val platform: String, val videoId: String, val cardVersion: String) : NotesEvent
 }
 
 internal sealed interface DestinationEvent {
@@ -146,20 +148,38 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             .map { it.toNoteDocument() }
         ).sortedByDescending(NoteDocument::updatedAtEpochMs)
     val syncRecords = knowledgeSyncRecordsForCards(knowledgeCards)
-    val thumbnailPaths = knowledgeCards.mapNotNull { card ->
-        val asset = card.assets.firstOrNull { it.mimeType.startsWith("image/") } ?: return@mapNotNull null
-        val path = knowledgeCardRepository.assetFile(card, asset)
-            ?.takeIf { it.isFile }
-            ?.absolutePath
-            ?: return@mapNotNull null
-        (card.cardId to card.cardVersion) to path
-    }.toMap()
+    val thumbnailCandidates = knowledgeCards.associate { card ->
+        val coverAssetId = card.cover.assetId
+        val orderedAssets = buildList {
+            card.assets.firstOrNull {
+                it.kind == com.unarchive.android.card.CardAssetKind.COVER && it.assetId == coverAssetId
+            }?.let(::add)
+            card.assets.firstOrNull {
+                it.kind == com.unarchive.android.card.CardAssetKind.CHAPTER_SCREENSHOT
+            }?.let(::add)
+        }
+        val candidates = orderedAssets.mapNotNull { asset ->
+            val path = knowledgeCardRepository.assetFile(card, asset)
+                ?.takeIf { it.isFile && it.length() == asset.byteCount }
+                ?.absolutePath
+                ?: return@mapNotNull null
+            NotesThumbnailCandidate(
+                path = path,
+                kind = if (asset.kind == com.unarchive.android.card.CardAssetKind.COVER) {
+                    NotesThumbnailKind.COVER
+                } else {
+                    NotesThumbnailKind.CHAPTER_SCREENSHOT
+                },
+            )
+        }
+        (card.cardId to card.cardVersion) to candidates
+    }
     val libraryItems = buildNotesLibraryItems(
         noteDocuments = effectiveDocuments,
         noteCards = knowledgeCards,
         storedResults = storedResults,
         syncRecords = syncRecords,
-        thumbnailPaths = thumbnailPaths,
+        thumbnailCandidates = thumbnailCandidates,
     )
     return UnarchiveUiState(
         create = CreateUiState(
@@ -183,6 +203,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             noteDocuments = effectiveDocuments,
             libraryItems = libraryItems,
             canGenerateDraft = runningJob == null && generateJob == null && exportJob == null,
+            coverRetryInProgress = coverRetryInProgress,
         ),
         graph = run {
             val documents = noteDocuments.ifEmpty { knowledgeCards.map { it.toNoteDocument() } }

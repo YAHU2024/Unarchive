@@ -95,18 +95,21 @@ object MarkdownCardRenderer {
         assets: List<CardAsset>,
         readAsset: (CardAsset) -> ByteArray?,
     ): EmbeddedAssetsResult {
+        var requestedCount = 0
         var embeddedCount = 0
         var embeddedBytes = 0L
         var missingCount = 0
         val missingPaths = mutableListOf<String>()
         val rendered = assets.fold(markdown) { current, asset ->
+            val marker = "![](${asset.relativePath})"
+            if (!current.contains(marker)) return@fold current
+            requestedCount++
             val bytes = readAsset(asset)
             if (bytes == null) {
                 missingCount++
                 missingPaths += asset.relativePath
                 return@fold current
             }
-            val marker = "![](${asset.relativePath})"
             val dataUrl = "![](data:${asset.mimeType};base64,${java.util.Base64.getEncoder().encodeToString(bytes)})"
             embeddedCount++
             embeddedBytes += bytes.size
@@ -114,7 +117,7 @@ object MarkdownCardRenderer {
         }
         return EmbeddedAssetsResult(
             markdown = rendered,
-            requestedCount = assets.size,
+            requestedCount = requestedCount,
             embeddedCount = embeddedCount,
             embeddedBytes = embeddedBytes,
             missingCount = missingCount,

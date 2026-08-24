@@ -1,6 +1,7 @@
 package com.unarchive.android.ui.state
 
 import com.unarchive.android.card.CardRelationType
+import com.unarchive.android.card.CoverState
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.KnowledgeSyncRecord
@@ -16,6 +17,13 @@ internal enum class NotesFilter { RECENT, NEEDS_ORGANIZING, SAVED }
 
 internal enum class NotesLibraryItemKind { SAVED_NOTE, MATERIAL }
 
+internal enum class NotesThumbnailKind { COVER, CHAPTER_SCREENSHOT }
+
+internal data class NotesThumbnailCandidate(
+    val path: String,
+    val kind: NotesThumbnailKind,
+)
+
 internal data class NotesLibraryItem(
     val kind: NotesLibraryItemKind,
     val title: String,
@@ -28,6 +36,9 @@ internal data class NotesLibraryItem(
     val localStatusLabel: String,
     val destinationSummary: String? = null,
     val thumbnailPath: String? = null,
+    val thumbnailCandidates: List<NotesThumbnailCandidate> = emptyList(),
+    val coverStatusLabel: String? = null,
+    val canRetryCover: Boolean = false,
     val document: NoteDocument? = null,
     val material: StoredVideoResult? = null,
 ) {
@@ -55,6 +66,7 @@ internal fun buildNotesLibraryItems(
     storedResults: List<StoredVideoResult>,
     syncRecords: List<KnowledgeSyncRecord> = emptyList(),
     thumbnailPaths: Map<Pair<KnowledgeCardId, String>, String> = emptyMap(),
+    thumbnailCandidates: Map<Pair<KnowledgeCardId, String>, List<NotesThumbnailCandidate>> = emptyMap(),
 ): List<NotesLibraryItem> {
     val cardsById = noteCards.associateBy(KnowledgeCard::cardId)
     val cardsByVersion = noteCards.associateBy { it.cardId to it.cardVersion }
@@ -63,6 +75,14 @@ internal fun buildNotesLibraryItems(
     val notes = noteDocuments.map { document ->
         val exactCard = cardsByVersion[document.cardId to document.generation.cardVersion]
         val card = exactCard ?: cardsById[document.cardId]
+        val key = document.cardId to document.generation.cardVersion
+        val candidates = thumbnailCandidates[key]
+            ?: card?.let { thumbnailCandidates[it.cardId to it.cardVersion] }
+            ?: thumbnailPaths[key]?.let { listOf(NotesThumbnailCandidate(it, NotesThumbnailKind.CHAPTER_SCREENSHOT)) }
+            ?: card?.let { thumbnailPaths[it.cardId to it.cardVersion] }
+                ?.let { listOf(NotesThumbnailCandidate(it, NotesThumbnailKind.CHAPTER_SCREENSHOT)) }
+            ?: emptyList()
+        val coverCandidateAvailable = candidates.any { it.kind == NotesThumbnailKind.COVER }
         val currentRecords = syncRecords.filter { record ->
             record.key.cardId == document.cardId &&
                 record.key.cardVersion == document.generation.cardVersion &&
@@ -83,8 +103,14 @@ internal fun buildNotesLibraryItems(
                 else -> "本地已保存"
             },
             destinationSummary = currentRecords.destinationSummary(),
-            thumbnailPath = thumbnailPaths[document.cardId to document.generation.cardVersion]
-                ?: card?.let { thumbnailPaths[it.cardId to it.cardVersion] },
+            thumbnailPath = candidates.firstOrNull()?.path,
+            thumbnailCandidates = candidates,
+            coverStatusLabel = when {
+                card?.cover?.state == CoverState.AVAILABLE && !coverCandidateAvailable -> "封面文件缺失"
+                else -> card?.cover?.userStatusLabel
+            },
+            canRetryCover = card?.cardId?.platform == "bilibili" &&
+                (card.cover.state != CoverState.AVAILABLE || !coverCandidateAvailable),
             document = document,
         )
     }

@@ -52,6 +52,16 @@ class BilibiliApi(
         require(cid > 0) { "Bilibili metadata returned an invalid cid" }
         val duration = data.requiredLong("duration", "Bilibili metadata has no duration")
         require(duration >= 0) { "Bilibili metadata returned an invalid duration" }
+        val coverUrl = (data.opt("pic") as? String)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let {
+                when {
+                    it.startsWith("//") -> "https:$it"
+                    it.startsWith("http://") -> "https://${it.removePrefix("http://")}"
+                    else -> it
+                }
+            }
 
         return VideoMetadata(
             id = PlatformVideoId(PLATFORM, bvid),
@@ -60,6 +70,7 @@ class BilibiliApi(
             ownerName = data.optJSONObject("owner")?.optString("name").orEmpty(),
             durationSeconds = duration,
             cid = cid,
+            coverUrl = coverUrl,
         )
     }
 

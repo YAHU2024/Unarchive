@@ -75,7 +75,7 @@ object NoteDocumentMigration {
                                 timingAccuracy = card.timingAccuracy,
                             ),
                             assetRefs = card.assets
-                                .filter { it.chapterIndex == index }
+                                .filter { it.kind == CardAssetKind.CHAPTER_SCREENSHOT && it.chapterIndex == index }
                                 .map { it.assetId },
                         ),
                     )
@@ -100,7 +100,8 @@ object NoteDocumentMigration {
             blocks = blocks,
             tags = tags,
             relations = card.relations,
-            assets = card.assets,
+            // Cover is presentation metadata and must not change note content revisions.
+            assets = card.assets.filterNot { it.kind == CardAssetKind.COVER },
             generation = NoteGeneration(
                 cardVersion = card.cardVersion,
                 state = generationState(card),

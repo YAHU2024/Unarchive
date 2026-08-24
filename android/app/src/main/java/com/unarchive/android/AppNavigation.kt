@@ -94,6 +94,7 @@ import com.unarchive.android.ui.state.NotesEvent
 import com.unarchive.android.ui.state.NotesFilter
 import com.unarchive.android.ui.state.NotesLibraryItem
 import com.unarchive.android.ui.state.NotesLibraryItemKind
+import com.unarchive.android.ui.state.NotesThumbnailKind
 import com.unarchive.android.ui.state.NotesUiState
 import com.unarchive.android.ui.state.UnarchiveUiState
 import com.unarchive.android.ui.state.buildNotesLibraryItems
@@ -541,6 +542,16 @@ private fun NotesScreen(
                     onGenerateDraft = { material ->
                         onEvent(NotesEvent.GenerateDraft(material.key.platform, material.key.videoId))
                     },
+                    onRetryCover = { document ->
+                        onEvent(
+                            NotesEvent.RetryCover(
+                                document.cardId.platform,
+                                document.cardId.videoId,
+                                document.generation.cardVersion,
+                            ),
+                        )
+                    },
+                    coverRetryInProgress = state.coverRetryInProgress,
                 )
             }
         }
@@ -580,6 +591,8 @@ private fun NotesLibraryCard(
     onOpenEditor: (NoteDocument) -> Unit,
     onOpenDestinations: (NoteDocument) -> Unit,
     onGenerateDraft: (com.unarchive.android.result.StoredVideoResult) -> Unit,
+    onRetryCover: (NoteDocument) -> Unit,
+    coverRetryInProgress: Boolean,
 ) {
     val document = item.document
     val cardModifier = Modifier
@@ -642,6 +655,13 @@ private fun NotesLibraryCard(
                 },
                 modifier = Modifier.testTag("notes-item-status-${item.stableKey}"),
             )
+            item.coverStatusLabel?.let { coverStatus ->
+                Text(
+                    coverStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             if (document != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onOpenEditor(document) }) { Text("编辑") }
@@ -649,6 +669,14 @@ private fun NotesLibraryCard(
                         Icon(Icons.Filled.Share, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("分享与去向")
+                    }
+                }
+                if (item.canRetryCover) {
+                    TextButton(
+                        enabled = !coverRetryInProgress,
+                        onClick = { onRetryCover(document) },
+                    ) {
+                        Text("重试封面")
                     }
                 }
             } else {
@@ -671,13 +699,25 @@ private fun NotesLibraryCard(
 
 @Composable
 private fun NotesThumbnail(item: NotesLibraryItem) {
-    val bitmap = remember(item.thumbnailPath) {
-        item.thumbnailPath?.let(BitmapFactory::decodeFile)
+    val resolved = remember(item.thumbnailCandidates, item.thumbnailPath) {
+        val candidates = item.thumbnailCandidates.ifEmpty {
+            item.thumbnailPath?.let {
+                listOf(com.unarchive.android.ui.state.NotesThumbnailCandidate(it, NotesThumbnailKind.CHAPTER_SCREENSHOT))
+            }.orEmpty()
+        }
+        candidates.firstNotNullOfOrNull { candidate ->
+            BitmapFactory.decodeFile(candidate.path)?.let { candidate.kind to it }
+        }
     }
-    if (bitmap != null) {
+    if (resolved != null) {
+        val (kind, bitmap) = resolved
         Image(
             bitmap = bitmap.asImageBitmap(),
-            contentDescription = "${item.title} 的章节截图",
+            contentDescription = if (kind == NotesThumbnailKind.COVER) {
+                "${item.title} 的视频封面"
+            } else {
+                "${item.title} 的章节截图"
+            },
             modifier = Modifier
                 .width(96.dp)
                 .height(76.dp),

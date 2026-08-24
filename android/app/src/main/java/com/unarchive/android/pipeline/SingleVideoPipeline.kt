@@ -17,6 +17,7 @@ import com.unarchive.android.checkpoint.TranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.TranscriptionConfigIdentity
 import com.unarchive.android.checkpoint.TranscriptionResumePlanner
 import com.unarchive.android.checkpoint.TranscriptionSourceIdentity
+import com.unarchive.android.cover.CoverCapture
 import com.unarchive.android.platform.AudioDownloader
 import com.unarchive.android.platform.DownloadProgressListener
 import com.unarchive.android.platform.VideoMetadata
@@ -66,6 +67,7 @@ class SingleVideoPipeline(
     private val benchmarkRunner: BenchmarkRunner,
     private val resultRepository: VideoResultRepository? = null,
     private val checkpointRepository: TranscriptionCheckpointRepository? = null,
+    private val coverCapture: CoverCapture? = null,
     private val wallClockEpochMs: () -> Long = System::currentTimeMillis,
     /** Monotonic-ish wall clock for stage timing diagnostics. */
     private val stageClockMs: () -> Long = System::currentTimeMillis,
@@ -87,6 +89,13 @@ class SingleVideoPipeline(
         progressListener.update(SingleVideoStage.FETCHING_METADATA, 0.08f)
         val metadata = platformAdapter.fetchMetadata(reference)
         val key = VideoResultKey(metadata.id.platform, metadata.id.value)
+        try {
+            coverCapture?.capture(metadata)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLogger.warn(TAG, "封面获取失败，不影响视频处理：${error::class.java.simpleName}")
+        }
 
         // Subtitle short-circuit: prefer the platform's official CC/AI
         // subtitles when present, skipping the audio download and local ASR.

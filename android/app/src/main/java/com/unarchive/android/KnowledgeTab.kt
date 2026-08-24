@@ -130,10 +130,33 @@ private fun KnowledgeCardDetail(vm: UnarchiveViewModel, card: KnowledgeCard) {
         HorizontalDivider()
         Text("笔记内容", style = MaterialTheme.typography.titleMedium)
         Text(card.markdown, style = MaterialTheme.typography.bodyMedium)
-        if (card.assets.isNotEmpty()) {
+        val chapterAssets = card.assets.filter { it.kind == com.unarchive.android.card.CardAssetKind.CHAPTER_SCREENSHOT }
+        val coverAsset = card.assets.firstOrNull {
+            it.kind == com.unarchive.android.card.CardAssetKind.COVER && it.assetId == card.cover.assetId
+        }
+        coverAsset?.let { asset ->
+            Spacer(Modifier.height(4.dp))
+            Text("视频封面", style = MaterialTheme.typography.titleMedium)
+            val file = vm.knowledgeCardRepository.assetFile(card, asset)
+            val bitmap = remember(file?.absolutePath) {
+                file?.takeIf { it.isFile }?.let { BitmapFactory.decodeFile(it.absolutePath) }
+            }
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "${card.title} 的视频封面",
+                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = ContentScale.FillWidth,
+                )
+            } else {
+                Text("封面文件缺失", color = MaterialTheme.colorScheme.error)
+            }
+        }
+        card.cover.userStatusLabel?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (chapterAssets.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
             Text("章节截图", style = MaterialTheme.typography.titleMedium)
-            card.assets.forEach { asset ->
+            chapterAssets.forEach { asset ->
                 val file = vm.knowledgeCardRepository.assetFile(card, asset)
                 val bitmap = remember(file?.absolutePath) {
                     file?.takeIf { it.isFile }?.let { BitmapFactory.decodeFile(it.absolutePath) }

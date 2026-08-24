@@ -83,7 +83,7 @@ class BilibiliApiTest {
         var requestedUrl = ""
         val api = BilibiliApi(TextTransport { url, _ ->
             requestedUrl = url
-            """{"code":0,"data":{"bvid":"BV1PS42197aM","cid":123,"title":"Test","duration":42,"owner":{"name":"UP"}}}"""
+            """{"code":0,"data":{"bvid":"BV1PS42197aM","cid":123,"title":"Test","duration":42,"pic":"http://i0.hdslb.com/bfs/archive/test.jpg","owner":{"name":"UP"}}}"""
         })
 
         val result = api.fetchMetadata(PlatformVideoId("bilibili", "av170001"))
@@ -94,6 +94,18 @@ class BilibiliApiTest {
         assertEquals("UP", result.ownerName)
         assertEquals(42, result.durationSeconds)
         assertEquals(123, result.cid)
+        assertEquals("https://i0.hdslb.com/bfs/archive/test.jpg", result.coverUrl)
+    }
+
+    @Test
+    fun treatsMissingEmptyAndNonStringCoverAsAbsent() = runTest {
+        listOf("", "\"pic\":\"\",", "\"pic\":{},").forEach { coverField ->
+            val api = BilibiliApi(TextTransport { _, _ ->
+                """{"code":0,"data":{$coverField"bvid":"BV1PS42197aM","cid":123,"title":"Test","duration":42}}"""
+            })
+
+            assertEquals(null, api.fetchMetadata(PlatformVideoId("bilibili", "BV1PS42197aM")).coverUrl)
+        }
     }
 
     @Test
