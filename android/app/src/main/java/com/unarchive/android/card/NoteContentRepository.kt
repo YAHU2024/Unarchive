@@ -107,6 +107,14 @@ class FileNoteContentRepository(
         return content.copy(draftState = draft)
     }
 
+    /** Removes only the uncommitted recovery draft for the supplied formal revision. */
+    fun discardDraft(content: NoteContent) = synchronized(this) {
+        File(
+            revisionDirectory(content.cardId, content.cardVersion, content.markdownRevision),
+            DRAFT_FILE_NAME,
+        ).delete()
+    }
+
     private fun readContent(revisionDirectory: File): NoteContent? = runCatching {
         val json = File(revisionDirectory, CONTENT_FILE_NAME)
         val markdown = File(revisionDirectory, MARKDOWN_FILE_NAME)
