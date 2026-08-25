@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalUriHandler
@@ -56,6 +57,44 @@ internal fun MarkdownProjectionRenderer(
             imageTransformer = imageTransformer,
         )
     }
+}
+
+/** Splits large documents before renderer parsing while preserving fenced blocks. */
+internal fun markdownPreviewChunks(
+    markdown: String,
+    maxChunkChars: Int = MARKDOWN_PREVIEW_CHUNK_CHARS,
+): List<String> {
+    require(maxChunkChars > 0) { "maxChunkChars must be positive" }
+    if (markdown.length <= maxChunkChars) return listOf(markdown)
+
+    val chunks = mutableListOf<String>()
+    val current = StringBuilder()
+    var inFence = false
+    fun flush() {
+        if (current.isNotEmpty()) {
+            chunks += current.toString()
+            current.setLength(0)
+        }
+    }
+    val lines = markdown.split("\n", limit = Int.MAX_VALUE)
+    lines.forEachIndexed { index, line ->
+        val lineWithBreak = if (index == lines.lastIndex) line else "$line\n"
+        val fence = line.trimStart().startsWith("```") || line.trimStart().startsWith("~~~")
+        val blank = line.isBlank()
+        if (!inFence && current.length >= maxChunkChars && blank) {
+            flush()
+        }
+        if (current.length > 0 && current.length + lineWithBreak.length > maxChunkChars && !inFence && blank) {
+            flush()
+        }
+        current.append(lineWithBreak)
+        if (fence) inFence = !inFence
+        if (!inFence && current.length >= maxChunkChars && blank) {
+            flush()
+        }
+    }
+    flush()
+    return chunks.ifEmpty { listOf(markdown) }
 }
 
 /**
@@ -342,6 +381,7 @@ private class ResolverImageTransformer(
 }
 
 private const val MAX_MARKDOWN_IMAGE_BYTES = 16L * 1024L * 1024L
+private const val MARKDOWN_PREVIEW_CHUNK_CHARS = 500
 private const val MAX_MARKDOWN_IMAGE_PIXELS = 24_000_000L
 private const val MAX_MARKDOWN_DECODE_PIXELS = 4_000_000L
 private val MARKDOWN_IMAGE_MIME_TYPES = setOf("image/jpeg", "image/png")

@@ -2,13 +2,23 @@ package com.unarchive.android.editor
 
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardAsset
 import com.unarchive.android.card.CardAssetKind
@@ -180,6 +190,67 @@ class MarkdownEditorSpikeTest {
         }
     }
 
+    @Test
+    fun longPreviewScrollsAndReturnsToSourceAtTwoXFontScale() {
+        val markdown = longMarkdown()
+        check(markdown.toByteArray(Charsets.UTF_8).size >= 100_000)
+
+        composeRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                UnarchiveTheme {
+                    MarkdownEditorSpike(
+                        markdown = markdown,
+                        onMarkdownChange = {},
+                        assetResolver = NoOpMarkdownAssetResolver,
+                        initialMode = MarkdownEditorSpikeMode.PREVIEW,
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
+        composeRule.onNodeWithText("长文标题").assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-editor-preview").performTouchInput { swipeUp() }
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
+        composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()
+    }
+
+    @Test
+    fun previewUpdatesAfterSourceStopsChangingWithinFiveHundredMilliseconds() {
+        var source by mutableStateOf("# 旧标题")
+        composeRule.setContent {
+            UnarchiveTheme {
+                MarkdownEditorSpike(
+                    markdown = source,
+                    onMarkdownChange = { source = it },
+                    assetResolver = NoOpMarkdownAssetResolver,
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("markdown-editor-source").performTextReplacement("# 新标题")
+        composeRule.onNodeWithTag("markdown-editor-preview-tab").performClick()
+        composeRule.waitUntil(timeoutMillis = 500) {
+            composeRule.onAllNodesWithText("新标题").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun editModeExposesPreviewHintForAssistiveTechnology() {
+        composeRule.setContent {
+            UnarchiveTheme {
+                MarkdownEditorSpike(
+                    markdown = "# 标题",
+                    onMarkdownChange = {},
+                    assetResolver = NoOpMarkdownAssetResolver,
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("实时预览提示").assertIsDisplayed()
+        composeRule.onNodeWithText("Markdown").assertIsDisplayed()
+    }
+
     private fun bitmapBytes(bitmap: Bitmap, format: Bitmap.CompressFormat): ByteArray =
         ByteArrayOutputStream().use { output ->
             check(bitmap.compress(format, 90, output))
@@ -202,4 +273,11 @@ class MarkdownEditorSpikeTest {
         updatedAtEpochMs = 1_000L,
         markdown = "# Markdown Spike",
     )
+
+    private fun longMarkdown(): String = buildString {
+        append("# 长文标题\n\n")
+        repeat(25_000) {
+            append("这是用于预览阶段验收的脱敏长文段落，内容只用于验证滚动和返回流程。\n\n")
+        }
+    }
 }

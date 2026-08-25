@@ -105,4 +105,35 @@ class MarkdownProjectionPolicyTest {
         assertFalse(resolver.isAvailable(asset.relativePath))
         assertFalse(resolver.resolve(asset.relativePath) != null)
     }
+
+    @Test
+    fun longMarkdownIsSplitAtBlankLinesWithoutSplittingFencedCode() {
+        val markdown = buildString {
+            append("# 标题\n\n")
+            append("段落。".repeat(30))
+            append("\n\n```kotlin\n")
+            append("val value = 1\n")
+            append("```\n\n")
+            append("结尾。".repeat(30))
+        }
+
+        val chunks = markdownPreviewChunks(markdown, maxChunkChars = 80)
+
+        assertTrue(chunks.size > 1)
+        assertEquals(markdown, chunks.joinToString(""))
+        assertTrue(chunks.none { it.count { character -> character == '`' } % 2 == 1 })
+    }
+
+    @Test
+    fun defaultChunkingSplitsHundredThousandCharacters() {
+        val markdown = buildString {
+            repeat(5_000) { append("段落内容。\n\n") }
+        }
+
+        val chunks = markdownPreviewChunks(markdown)
+
+        assertTrue(chunks.size > 1)
+        assertEquals(markdown, chunks.joinToString(""))
+        assertTrue(chunks.all { it.length <= 550 })
+    }
 }

@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +35,7 @@ import com.unarchive.android.card.CardAssetKind
 import com.unarchive.android.ui.markdown.MarkdownAssetResolver
 import com.unarchive.android.ui.markdown.MarkdownImageAsset
 import com.unarchive.android.ui.markdown.MarkdownProjectionRenderer
+import com.unarchive.android.ui.markdown.markdownPreviewChunks
 import com.unarchive.android.ui.markdown.markdownImageReferences
 import kotlinx.coroutines.delay
 
@@ -123,7 +124,6 @@ internal fun MarkdownEditorSpike(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
                         .testTag("markdown-editor-source"),
                     label = { Text("Markdown") },
                     supportingText = {
@@ -156,29 +156,37 @@ internal fun MarkdownEditorSpike(
                     }
                 }
             }
-            MarkdownEditorSpikeMode.PREVIEW -> Column(
+            MarkdownEditorSpikeMode.PREVIEW -> LazyColumn(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 4.dp)
                     .testTag("markdown-editor-preview"),
             ) {
-                Text(
-                    "Markdown 预览",
-                    modifier = Modifier.semantics { heading() },
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                MarkdownProjectionRenderer(
-                    markdown = previewMarkdown,
-                    modifier = Modifier.fillMaxWidth(),
-                    assetResolver = assetResolver,
-                )
-                PreviewImageActions(
-                    markdown = previewMarkdown,
-                    assetResolver = assetResolver,
-                    onOpenImage = { selectedImage = it },
-                )
+                item(key = "markdown-preview-heading") {
+                    Text(
+                        "Markdown 预览",
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                itemsIndexed(
+                    items = markdownPreviewChunks(previewMarkdown),
+                    key = { index, _ -> "markdown-preview-chunk-$index" },
+                ) { _, chunk ->
+                    MarkdownProjectionRenderer(
+                        markdown = chunk,
+                        modifier = Modifier.fillMaxWidth(),
+                        assetResolver = assetResolver,
+                    )
+                }
+                item(key = "markdown-preview-image-actions") {
+                    PreviewImageActions(
+                        markdown = previewMarkdown,
+                        assetResolver = assetResolver,
+                        onOpenImage = { selectedImage = it },
+                    )
+                }
             }
         }
     }
