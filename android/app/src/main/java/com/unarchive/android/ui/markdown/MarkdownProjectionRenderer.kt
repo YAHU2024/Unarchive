@@ -14,6 +14,10 @@ import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.utils.getUnescapedTextInNode
+import com.unarchive.android.card.CardAsset
+import com.unarchive.android.card.CardAssetKind
+import com.unarchive.android.card.KnowledgeCard
+import com.unarchive.android.card.KnowledgeCardRepository
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
@@ -169,6 +173,57 @@ internal object NoOpMarkdownAssetResolver : MarkdownAssetResolver {
     override fun resolve(link: String): MarkdownImageAsset? = null
 }
 
+/** Resolves only assets explicitly owned by the current card version. */
+internal class CardAssetMarkdownResolver(
+    assets: List<CardAsset>,
+    private val fileForAsset: (CardAsset) -> File?,
+) : MarkdownAssetResolver {
+    private val assetsByPath = assets
+        .asSequence()
+        .filter { it.kind != CardAssetKind.COVER }
+        .associateBy(CardAsset::relativePath)
+
+    override fun isAvailable(link: String): Boolean {
+        val resolved = resolveFile(link) ?: return false
+        return safeImageBounds(resolved.asset, resolved.file) != null
+    }
+
+    override fun resolve(link: String): MarkdownImageAsset? {
+        val resolved = resolveFile(link) ?: return null
+        val bounds = safeImageBounds(resolved.asset, resolved.file) ?: return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.width, bounds.height)
+        }
+        val bitmap = BitmapFactory.decodeFile(resolved.file.path, options) ?: return null
+        return MarkdownImageAsset(
+            ImageData(
+                painter = BitmapPainter(bitmap.asImageBitmap()),
+                contentDescription = resolved.asset.assetId,
+            ),
+        )
+    }
+
+    private fun resolveFile(link: String): ResolvedCardAsset? {
+        val asset = assetsByPath[link] ?: return null
+        val file = fileForAsset(asset)?.takeIf(File::isFile) ?: return null
+        return ResolvedCardAsset(asset, file)
+    }
+
+    private data class ResolvedCardAsset(val asset: CardAsset, val file: File)
+}
+
+/**
+ * Creates the preview resolver for one persisted card version. Keeping the
+ * repository lookup here makes it harder for callers to accidentally resolve
+ * an asset from another card or from an untrusted filesystem path.
+ */
+internal fun cardAssetMarkdownResolver(
+    card: KnowledgeCard,
+    repository: KnowledgeCardRepository,
+): CardAssetMarkdownResolver = CardAssetMarkdownResolver(card.assets) { asset ->
+    repository.assetFile(card, asset)
+}
+
 /**
  * Resolves only relative assets below the supplied card-assets directory.
  * It never fetches network images and rejects path traversal.
@@ -180,15 +235,16 @@ internal class LocalFileMarkdownAssetResolver(
 
     override fun isAvailable(link: String): Boolean {
         val file = resolveFile(link) ?: return false
-        if (!file.isFile) return false
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.path, options)
-        return options.outWidth > 0 && options.outHeight > 0
+        return safeImageBounds(null, file) != null
     }
 
     override fun resolve(link: String): MarkdownImageAsset? {
         val file = resolveFile(link) ?: return null
-        val bitmap = BitmapFactory.decodeFile(file.path) ?: return null
+        val bounds = safeImageBounds(null, file) ?: return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.width, bounds.height)
+        }
+        val bitmap = BitmapFactory.decodeFile(file.path, options) ?: return null
         return MarkdownImageAsset(
             ImageData(
                 painter = BitmapPainter(bitmap.asImageBitmap()),
@@ -213,6 +269,44 @@ internal class LocalFileMarkdownAssetResolver(
         }
         return canonical
     }
+}
+
+private data class SafeImageBounds(val width: Int, val height: Int)
+
+private fun safeImageBounds(asset: CardAsset?, file: File): SafeImageBounds? {
+    if (!file.isFile || file.length() <= 0L || file.length() > MAX_MARKDOWN_IMAGE_BYTES) {
+        return null
+    }
+    if (asset != null && asset.mimeType !in MARKDOWN_IMAGE_MIME_TYPES) {
+        return null
+    }
+    if (asset != null &&
+        (asset.byteCount <= 0L ||
+            asset.byteCount > MAX_MARKDOWN_IMAGE_BYTES ||
+            file.length() > asset.byteCount)
+    ) {
+        return null
+    }
+    if (asset == null && file.extension.lowercase() !in MARKDOWN_IMAGE_EXTENSIONS) {
+        return null
+    }
+    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.path, options)
+    if (options.outWidth <= 0 || options.outHeight <= 0) return null
+    val pixels = options.outWidth.toLong() * options.outHeight.toLong()
+    return if (pixels <= MAX_MARKDOWN_IMAGE_PIXELS) {
+        SafeImageBounds(options.outWidth, options.outHeight)
+    } else {
+        null
+    }
+}
+
+private fun sampleSizeFor(width: Int, height: Int): Int {
+    var sample = 1
+    while ((width.toLong() / sample) * (height.toLong() / sample) > MAX_MARKDOWN_DECODE_PIXELS) {
+        sample *= 2
+    }
+    return sample
 }
 
 internal fun isAllowedMarkdownUri(value: String): Boolean {
@@ -246,6 +340,12 @@ private class ResolverImageTransformer(
         painter: androidx.compose.ui.graphics.painter.Painter,
     ): androidx.compose.ui.geometry.Size = painter.intrinsicSize
 }
+
+private const val MAX_MARKDOWN_IMAGE_BYTES = 16L * 1024L * 1024L
+private const val MAX_MARKDOWN_IMAGE_PIXELS = 24_000_000L
+private const val MAX_MARKDOWN_DECODE_PIXELS = 4_000_000L
+private val MARKDOWN_IMAGE_MIME_TYPES = setOf("image/jpeg", "image/png")
+private val MARKDOWN_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png")
 
 private fun ASTNode.findDescendant(
     type: org.intellij.markdown.IElementType,

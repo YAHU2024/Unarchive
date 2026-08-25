@@ -1,5 +1,7 @@
 package com.unarchive.android.ui.markdown
 
+import com.unarchive.android.card.CardAsset
+import com.unarchive.android.card.CardAssetKind
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -66,5 +68,41 @@ class MarkdownProjectionPolicyTest {
             listOf(MarkdownImageReference("assets/chapter-000.jpg", "章节截图")),
             references,
         )
+    }
+
+    @Test
+    fun cardAssetResolverOnlyAcceptsOwnedRelativePaths() {
+        val asset = CardAsset(
+            assetId = "chapter-000",
+            kind = CardAssetKind.CHAPTER_SCREENSHOT,
+            mimeType = "image/jpeg",
+            relativePath = "assets/chapter-000.jpg",
+            byteCount = 1,
+            sha256 = "hash",
+        )
+        val resolver = CardAssetMarkdownResolver(listOf(asset)) { null }
+
+        assertFalse(resolver.isAvailable("assets/other.jpg"))
+        assertFalse(resolver.isAvailable("../assets/chapter-000.jpg"))
+        assertFalse(resolver.isAvailable("https://www.bilibili.com/image.jpg"))
+    }
+
+    @Test
+    fun cardAssetResolverRejectsUnsupportedMimeBeforeReadingTheFile() {
+        val file = temporaryFolder.newFile("chapter.gif").apply {
+            writeBytes(byteArrayOf(1, 2, 3))
+        }
+        val asset = CardAsset(
+            assetId = "chapter-gif",
+            kind = CardAssetKind.CHAPTER_SCREENSHOT,
+            mimeType = "image/gif",
+            relativePath = "assets/chapter.gif",
+            byteCount = file.length(),
+            sha256 = "hash",
+        )
+        val resolver = CardAssetMarkdownResolver(listOf(asset)) { file }
+
+        assertFalse(resolver.isAvailable(asset.relativePath))
+        assertFalse(resolver.resolve(asset.relativePath) != null)
     }
 }

@@ -30,6 +30,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.unarchive.android.card.CardAsset
+import com.unarchive.android.card.CardAssetKind
 import com.unarchive.android.ui.markdown.MarkdownAssetResolver
 import com.unarchive.android.ui.markdown.MarkdownImageAsset
 import com.unarchive.android.ui.markdown.MarkdownProjectionRenderer
@@ -43,6 +45,14 @@ internal data class MarkdownEditorImageOption(
     val link: String,
     val alt: String,
 )
+
+internal fun markdownImageOptions(assets: List<CardAsset>): List<MarkdownEditorImageOption> = assets
+    .asSequence()
+    .filter { it.kind != CardAssetKind.COVER }
+    .distinctBy(CardAsset::relativePath)
+    .sortedWith(compareBy<CardAsset> { it.chapterIndex ?: Int.MAX_VALUE }.thenBy { it.relativePath })
+    .map { asset -> MarkdownEditorImageOption(asset.relativePath, asset.assetId) }
+    .toList()
 
 /**
  * Isolated Markdown source editor and live preview. It does not persist content
