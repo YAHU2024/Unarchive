@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
@@ -34,7 +35,7 @@ class MarkdownEditorUiTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun rendersSingleColumnEditorPreviewAndProjectionStatus() {
+    fun rendersLivePreviewAndEditsHeadingInPlace() {
         var state by mutableStateOf(MarkdownEditorUiState(content()))
         composeRule.setContent {
             UnarchiveTheme {
@@ -51,11 +52,16 @@ class MarkdownEditorUiTest {
             }
         }
 
-        composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
+        composeRule.onNodeWithText("Markdown UI").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("保存状态：尚未编辑；投影状态：结构化投影已同步").assertIsDisplayed()
-        composeRule.onNodeWithTag("markdown-editor-source").performTextReplacement("# 新标题")
+        val headingId = MarkdownLiveBlockParser.parse(state.content.markdown)
+            .first { it.type == MarkdownLiveBlockType.HEADING }
+            .id
+        composeRule.onNodeWithTag("markdown-live-block-$headingId").performClick()
+        composeRule.onNodeWithTag("markdown-live-edit-$headingId").performTextReplacement("# 新标题")
         composeRule.onNodeWithContentDescription("保存状态：有未保存修改，正在保护草稿；投影状态：Markdown 已变更，结构化投影待更新").assertIsDisplayed()
-        composeRule.onNodeWithTag("markdown-editor-preview-tab").performClick()
+        composeRule.onNodeWithTag("markdown-live-edit-done-$headingId").performClick()
         composeRule.waitUntil(timeoutMillis = 1500L) {
             composeRule.onAllNodesWithText("新标题").fetchSemanticsNodes().isNotEmpty()
         }
@@ -116,9 +122,9 @@ class MarkdownEditorUiTest {
             }
 
             composeRule.waitUntil(timeoutMillis = 2_500L) {
-                composeRule.onAllNodesWithTag("markdown-editor-source").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithTag("markdown-editor-preview").fetchSemanticsNodes().isNotEmpty()
             }
-            composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()
+            composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
             check(v3Repository.find(document.cardId, document.generation.cardVersion) != null)
             check(v3Repository.migrationBackup(document.cardId, document.generation.cardVersion) != null)
         } finally {
@@ -157,7 +163,7 @@ class MarkdownEditorUiTest {
             }
             composeRule.onNodeWithTag("markdown-editor-keep-legacy").performClick()
             composeRule.waitUntil(timeoutMillis = 2_500L) {
-                composeRule.onAllNodesWithTag("markdown-editor-source").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithTag("markdown-editor-preview").fetchSemanticsNodes().isNotEmpty()
             }
             check(v3Repository.find(document.cardId, document.generation.cardVersion)?.markdown == "# 用户保留正文")
         } finally {

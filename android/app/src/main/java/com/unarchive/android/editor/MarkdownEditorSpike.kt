@@ -8,8 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,9 +36,7 @@ import com.unarchive.android.card.CardAssetKind
 import com.unarchive.android.ui.markdown.MarkdownAssetResolver
 import com.unarchive.android.ui.markdown.MarkdownImageAsset
 import com.unarchive.android.ui.markdown.MarkdownProjectionRenderer
-import com.unarchive.android.ui.markdown.markdownPreviewChunks
 import com.unarchive.android.ui.markdown.markdownImageReferences
-import kotlinx.coroutines.delay
 
 /** Modes intentionally remain local to the editor Spike until the content schema is frozen. */
 internal enum class MarkdownEditorSpikeMode { EDIT, PREVIEW }
@@ -66,15 +65,20 @@ internal fun MarkdownEditorSpike(
     modifier: Modifier = Modifier,
     assetResolver: MarkdownAssetResolver,
     imageOptions: List<MarkdownEditorImageOption> = emptyList(),
-    initialMode: MarkdownEditorSpikeMode = MarkdownEditorSpikeMode.EDIT,
+    initialMode: MarkdownEditorSpikeMode = MarkdownEditorSpikeMode.PREVIEW,
 ) {
     var mode by remember { mutableStateOf(initialMode) }
-    var previewMarkdown by remember { mutableStateOf(markdown) }
+    var editingBlock by remember { mutableStateOf<MarkdownLiveBlock?>(null) }
+    var editingMarkdown by remember { mutableStateOf("") }
+    var editingDocument by remember { mutableStateOf("") }
+    var renderedMarkdown by remember { mutableStateOf(markdown) }
     var selectedImage by remember { mutableStateOf<MarkdownImageAsset?>(null) }
+    val blocks = remember(renderedMarkdown) { MarkdownLiveBlockParser.parse(renderedMarkdown) }
 
-    LaunchedEffect(markdown) {
-        delay(PREVIEW_DEBOUNCE_MS)
-        previewMarkdown = markdown
+    // Reparse only stable content. While a block is focused, each IME update
+    // changes that block's draft source without reprocessing a long document.
+    LaunchedEffect(markdown, editingBlock) {
+        if (editingBlock == null) renderedMarkdown = markdown
     }
 
     Column(
@@ -91,23 +95,23 @@ internal fun MarkdownEditorSpike(
                 Button(
                     onClick = { mode = MarkdownEditorSpikeMode.EDIT },
                     modifier = Modifier.testTag("markdown-editor-edit-tab"),
-                ) { Text("编辑") }
+                ) { Text("源码") }
             } else {
                 TextButton(
                     onClick = { mode = MarkdownEditorSpikeMode.EDIT },
                     modifier = Modifier.testTag("markdown-editor-edit-tab"),
-                ) { Text("编辑") }
+                ) { Text("源码") }
             }
             if (mode == MarkdownEditorSpikeMode.PREVIEW) {
                 Button(
                     onClick = { mode = MarkdownEditorSpikeMode.PREVIEW },
                     modifier = Modifier.testTag("markdown-editor-preview-tab"),
-                ) { Text("预览") }
+                ) { Text("实时预览") }
             } else {
                 TextButton(
                     onClick = { mode = MarkdownEditorSpikeMode.PREVIEW },
                     modifier = Modifier.testTag("markdown-editor-preview-tab"),
-                ) { Text("预览") }
+                ) { Text("实时预览") }
             }
         }
 
@@ -125,7 +129,7 @@ internal fun MarkdownEditorSpike(
                         .weight(1f)
                         .fillMaxWidth()
                         .testTag("markdown-editor-source"),
-                    label = { Text("Markdown") },
+                    label = { Text("Markdown 源码") },
                     supportingText = {
                         Text(
                             "输入停止后实时更新预览",
@@ -165,24 +169,69 @@ internal fun MarkdownEditorSpike(
             ) {
                 item(key = "markdown-preview-heading") {
                     Text(
-                        "Markdown 预览",
+                        "实时预览",
                         modifier = Modifier.semantics { heading() },
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
-                itemsIndexed(
-                    items = markdownPreviewChunks(previewMarkdown),
-                    key = { index, _ -> "markdown-preview-chunk-$index" },
-                ) { _, chunk ->
-                    MarkdownProjectionRenderer(
-                        markdown = chunk,
-                        modifier = Modifier.fillMaxWidth(),
-                        assetResolver = assetResolver,
-                    )
+                items(
+                    items = blocks,
+                    key = MarkdownLiveBlock::id,
+                ) { block ->
+                    if (editingBlock?.id == block.id && block.editable) {
+                        OutlinedTextField(
+                            value = editingMarkdown,
+                            onValueChange = { replacement ->
+                                val current = requireNotNull(editingBlock)
+                                val updated = MarkdownLiveBlockParser.replace(editingDocument, current, replacement)
+                                editingDocument = updated
+                                editingMarkdown = replacement
+                                editingBlock = current.copy(
+                                    endOffset = current.startOffset + replacement.length,
+                                    markdown = replacement,
+                                )
+                                onMarkdownChange(updated)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("markdown-live-edit-${block.id}"),
+                            label = { Text("编辑此块") },
+                        )
+                        TextButton(
+                            onClick = {
+                                editingBlock = null
+                                renderedMarkdown = markdown
+                            },
+                            modifier = Modifier.testTag("markdown-live-edit-done-${block.id}"),
+                        ) { Text("完成") }
+                    } else {
+                        if (block.type == MarkdownLiveBlockType.FRONT_MATTER) {
+                            Text(
+                                block.markdown,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("markdown-live-block-${block.id}"),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else {
+                            MarkdownProjectionRenderer(
+                                markdown = block.markdown,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = block.editable) {
+                                        editingDocument = markdown
+                                        editingMarkdown = block.markdown
+                                        editingBlock = block
+                                    }
+                                    .testTag("markdown-live-block-${block.id}"),
+                                assetResolver = assetResolver,
+                            )
+                        }
+                    }
                 }
                 item(key = "markdown-preview-image-actions") {
                     PreviewImageActions(
-                        markdown = previewMarkdown,
+                        markdown = markdown,
                         assetResolver = assetResolver,
                         onOpenImage = { selectedImage = it },
                     )
@@ -251,5 +300,3 @@ private fun PreviewImageActions(
         }
     }
 }
-
-private const val PREVIEW_DEBOUNCE_MS = 250L

@@ -129,7 +129,9 @@ class MarkdownEditorViewModel(
                 }
                 if (generation == editGeneration && _uiState.value.draftMarkdown == draft.markdown) {
                     _uiState.update {
-                        it.copy(content = persisted, recoveryDraft = persisted.draftState,
+                        // A draft created in this active session is recovery data
+                        // for a future editor instance, not a new recovery prompt.
+                        it.copy(content = persisted,
                             saveState = MarkdownEditorSaveState.DIRTY, errorMessage = null)
                     }
                 }

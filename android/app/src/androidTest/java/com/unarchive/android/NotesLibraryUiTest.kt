@@ -149,10 +149,10 @@ class NotesLibraryUiTest {
             composeRule.onNodeWithTag("notes-filter-saved").performClick()
             composeRule.onNodeWithText("编辑").performClick()
             composeRule.waitUntil(timeoutMillis = 2_500L) {
-                composeRule.onAllNodesWithTag("markdown-editor-source").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithTag("markdown-editor-preview").fetchSemanticsNodes().isNotEmpty()
             }
 
-            composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()
+            composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
             check(v3Repository.find(document.cardId, document.generation.cardVersion) != null)
             check(v3Repository.migrationBackup(document.cardId, document.generation.cardVersion) != null)
         } finally {

@@ -1,6 +1,7 @@
 package com.unarchive.android.ui.markdown
 
 import android.graphics.BitmapFactory
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -11,7 +12,9 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.utils.getUnescapedTextInNode
@@ -40,6 +43,20 @@ internal fun MarkdownProjectionRenderer(
     onAllowedLink: (String) -> Unit = {},
     onBlockedLink: (String) -> Unit = {},
 ) {
+    val typography = MaterialTheme.typography
+    val markdownTypography = markdownTypography(
+        h1 = typography.headlineSmall.copy(fontSize = 22.sp, lineHeight = 29.sp, letterSpacing = 0.sp),
+        h2 = typography.titleLarge.copy(fontSize = 19.sp, lineHeight = 26.sp, letterSpacing = 0.sp),
+        h3 = typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+        h4 = typography.titleSmall.copy(fontSize = 16.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
+        h5 = typography.titleSmall.copy(fontSize = 15.sp, lineHeight = 21.sp, letterSpacing = 0.sp),
+        h6 = typography.titleSmall.copy(fontSize = 15.sp, lineHeight = 21.sp, letterSpacing = 0.sp),
+        text = typography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+        paragraph = typography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+        ordered = typography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+        bullet = typography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+        list = typography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+    )
     val imageTransformer = remember(assetResolver) {
         ResolverImageTransformer(assetResolver)
     }
@@ -53,6 +70,7 @@ internal fun MarkdownProjectionRenderer(
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
         Markdown(
             content = projectedMarkdown,
+            typography = markdownTypography,
             modifier = modifier.testTag("markdown-projection"),
             imageTransformer = imageTransformer,
         )

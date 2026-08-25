@@ -105,6 +105,45 @@ class MarkdownEditorViewModelTest {
     }
 
     @Test
+    fun activeSessionAutosavesDoNotCreateRecoveryPrompts() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val directory = temporaryFolder.newFolder("active-session-draft")
+            val repository = FileNoteContentRepository(directory)
+            val saved = repository.save(content()).content
+            val viewModel = MarkdownEditorViewModel(
+                saved.cardId,
+                saved.cardVersion,
+                repository,
+                dispatcher,
+                draftDebounceMs = 100L,
+            )
+
+            viewModel.onEvent(MarkdownEditorEvent.MarkdownChanged("# 第一次输入"))
+            advanceTimeBy(101L)
+            advanceUntilIdle()
+            assertNull(viewModel.uiState.value.recoveryDraft)
+
+            viewModel.onEvent(MarkdownEditorEvent.MarkdownChanged("# 第二次输入"))
+            advanceTimeBy(101L)
+            advanceUntilIdle()
+            assertNull(viewModel.uiState.value.recoveryDraft)
+            assertEquals("# 第二次输入", repository.find(saved.cardId, saved.cardVersion)?.draftState?.markdown)
+
+            val recreated = MarkdownEditorViewModel(
+                saved.cardId,
+                saved.cardVersion,
+                FileNoteContentRepository(directory),
+                dispatcher,
+            )
+            assertEquals("# 第二次输入", recreated.uiState.value.recoveryDraft?.markdown)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
     fun formalSaveIncrementsRevisionAndMarksProjectionPartial() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)

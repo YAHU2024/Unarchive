@@ -41,7 +41,7 @@ class MarkdownEditorSpikeTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun switchesBetweenSourceAndPreviewAndKeepsImageReferenceVisible() {
+    fun defaultsToLivePreviewAndKeepsImageReferenceVisible() {
         composeRule.setContent {
             UnarchiveTheme {
                 MarkdownEditorSpike(
@@ -52,8 +52,6 @@ class MarkdownEditorSpikeTest {
             }
         }
 
-        composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()
-        composeRule.onNodeWithTag("markdown-editor-preview-tab").performClick()
         composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
         composeRule.onNodeWithText("截图笔记").assertIsDisplayed()
         composeRule.onNodeWithText("图片不可用：图片").assertIsDisplayed()
@@ -72,6 +70,7 @@ class MarkdownEditorSpikeTest {
             }
         }
 
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
         composeRule.onNodeWithTag("markdown-editor-source").performTextReplacement("# 新标题")
         assert(source == "# 新标题")
     }
@@ -92,6 +91,7 @@ class MarkdownEditorSpikeTest {
             }
         }
 
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
         composeRule.onNodeWithTag("markdown-editor-image-actions").assertIsDisplayed()
         composeRule.onNodeWithText("章节截图").performClick()
         assert(source.contains("![章节截图](assets/chapter-000.jpg)"))
@@ -228,6 +228,7 @@ class MarkdownEditorSpikeTest {
             }
         }
 
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
         composeRule.onNodeWithTag("markdown-editor-source").performTextReplacement("# 新标题")
         composeRule.onNodeWithTag("markdown-editor-preview-tab").performClick()
         composeRule.waitUntil(timeoutMillis = 500) {
@@ -247,8 +248,9 @@ class MarkdownEditorSpikeTest {
             }
         }
 
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
         composeRule.onNodeWithContentDescription("实时预览提示").assertIsDisplayed()
-        composeRule.onNodeWithText("Markdown").assertIsDisplayed()
+        composeRule.onNodeWithText("Markdown 源码").assertIsDisplayed()
     }
 
     private fun bitmapBytes(bitmap: Bitmap, format: Bitmap.CompressFormat): ByteArray =
