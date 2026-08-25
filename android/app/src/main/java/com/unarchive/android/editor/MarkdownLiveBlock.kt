@@ -28,6 +28,40 @@ internal data class MarkdownLiveBlock(
 }
 
 /**
+ * Immutable source range for one Live Preview edit session.
+ *
+ * Input methods may dispatch several changes before Compose has redrawn the
+ * parent document. Every candidate therefore derives from the original source
+ * and range instead of from a range mutated by the previous input callback.
+ */
+internal data class MarkdownLiveEditSession(
+    val originalDocument: String,
+    val block: MarkdownLiveBlock,
+    val replacement: String,
+) {
+    val candidateDocument: String
+        get() = originalDocument.replaceRange(block.startOffset, block.endOffset, replacement)
+
+    fun withReplacement(value: String): MarkdownLiveEditSession = copy(replacement = value)
+
+    fun acceptsParentDocument(value: String): Boolean {
+        val prefix = originalDocument.substring(0, block.startOffset)
+        val suffix = originalDocument.substring(block.endOffset)
+        return value.startsWith(prefix) && value.endsWith(suffix) && value.length >= prefix.length + suffix.length
+    }
+
+    companion object {
+        fun start(document: String, block: MarkdownLiveBlock): MarkdownLiveEditSession? {
+            if (block.startOffset < 0 || block.endOffset > document.length || block.endOffset < block.startOffset) {
+                return null
+            }
+            if (document.substring(block.startOffset, block.endOffset) != block.markdown) return null
+            return MarkdownLiveEditSession(document, block, block.markdown)
+        }
+    }
+}
+
+/**
  * Lossless top-level splitter for Live Preview. It does not parse Markdown
  * semantics or serialize nodes; exact source ranges remain the edit contract.
  */

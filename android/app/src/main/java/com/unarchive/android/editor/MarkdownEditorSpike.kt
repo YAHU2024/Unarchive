@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -37,6 +38,7 @@ import com.unarchive.android.ui.markdown.MarkdownAssetResolver
 import com.unarchive.android.ui.markdown.MarkdownImageAsset
 import com.unarchive.android.ui.markdown.MarkdownProjectionRenderer
 import com.unarchive.android.ui.markdown.markdownImageReferences
+import com.unarchive.android.ui.markdown.markdownPreviewChunks
 
 /** Modes intentionally remain local to the editor Spike until the content schema is frozen. */
 internal enum class MarkdownEditorSpikeMode { EDIT, PREVIEW }
@@ -54,6 +56,9 @@ internal fun markdownImageOptions(assets: List<CardAsset>): List<MarkdownEditorI
     .map { asset -> MarkdownEditorImageOption(asset.relativePath, asset.assetId) }
     .toList()
 
+internal fun markdownLivePreviewUsesChunks(markdown: String, blocks: List<MarkdownLiveBlock>): Boolean =
+    markdown.length > MAX_LIVE_PREVIEW_CHARACTERS || blocks.size > MAX_LIVE_PREVIEW_BLOCKS
+
 /**
  * Isolated Markdown source editor and live preview. It does not persist content
  * or replace NoteEditorScreen; callers own the source string and asset scope.
@@ -68,17 +73,24 @@ internal fun MarkdownEditorSpike(
     initialMode: MarkdownEditorSpikeMode = MarkdownEditorSpikeMode.PREVIEW,
 ) {
     var mode by remember { mutableStateOf(initialMode) }
-    var editingBlock by remember { mutableStateOf<MarkdownLiveBlock?>(null) }
-    var editingMarkdown by remember { mutableStateOf("") }
-    var editingDocument by remember { mutableStateOf("") }
+    var activeEditSession by remember { mutableStateOf<MarkdownLiveEditSession?>(null) }
+    var editConflictMessage by remember { mutableStateOf<String?>(null) }
     var renderedMarkdown by remember { mutableStateOf(markdown) }
     var selectedImage by remember { mutableStateOf<MarkdownImageAsset?>(null) }
     val blocks = remember(renderedMarkdown) { MarkdownLiveBlockParser.parse(renderedMarkdown) }
+    val useChunkedPreview = markdownLivePreviewUsesChunks(renderedMarkdown, blocks)
 
-    // Reparse only stable content. While a block is focused, each IME update
-    // changes that block's draft source without reprocessing a long document.
-    LaunchedEffect(markdown, editingBlock) {
-        if (editingBlock == null) renderedMarkdown = markdown
+    LaunchedEffect(markdown, activeEditSession) {
+        val session = activeEditSession
+        when {
+            session == null -> renderedMarkdown = markdown
+            session.acceptsParentDocument(markdown) -> Unit
+            else -> {
+                activeEditSession = null
+                renderedMarkdown = markdown
+                editConflictMessage = "正文已变化，请重新打开此块"
+            }
+        }
     }
 
     Column(
@@ -174,38 +186,52 @@ internal fun MarkdownEditorSpike(
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
-                items(
-                    items = blocks,
-                    key = MarkdownLiveBlock::id,
-                ) { block ->
-                    if (editingBlock?.id == block.id && block.editable) {
-                        OutlinedTextField(
-                            value = editingMarkdown,
-                            onValueChange = { replacement ->
-                                val current = requireNotNull(editingBlock)
-                                val updated = MarkdownLiveBlockParser.replace(editingDocument, current, replacement)
-                                editingDocument = updated
-                                editingMarkdown = replacement
-                                editingBlock = current.copy(
-                                    endOffset = current.startOffset + replacement.length,
-                                    markdown = replacement,
-                                )
-                                onMarkdownChange(updated)
-                            },
+                if (useChunkedPreview) {
+                    item(key = "markdown-live-preview-optimized") {
+                        Text(
+                            "正文较长，已启用流畅预览；可在源码模式编辑全文。",
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("markdown-live-edit-${block.id}"),
-                            label = { Text("编辑此块") },
+                                .testTag("markdown-live-preview-optimized"),
+                            style = MaterialTheme.typography.bodySmall,
                         )
-                        TextButton(
-                            onClick = {
-                                editingBlock = null
-                                renderedMarkdown = markdown
-                            },
-                            modifier = Modifier.testTag("markdown-live-edit-done-${block.id}"),
-                        ) { Text("完成") }
-                    } else {
-                        if (block.type == MarkdownLiveBlockType.FRONT_MATTER) {
+                    }
+                    itemsIndexed(markdownPreviewChunks(renderedMarkdown)) { index, chunk ->
+                        MarkdownProjectionRenderer(
+                            markdown = chunk,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("markdown-live-preview-chunk-$index"),
+                            assetResolver = assetResolver,
+                        )
+                    }
+                } else {
+                    items(
+                        items = blocks,
+                        key = MarkdownLiveBlock::id,
+                    ) { block ->
+                        val session = activeEditSession
+                        if (session?.block?.id == block.id && block.editable) {
+                            OutlinedTextField(
+                                value = session.replacement,
+                                onValueChange = { replacement ->
+                                    val updatedSession = session.withReplacement(replacement)
+                                    activeEditSession = updatedSession
+                                    onMarkdownChange(updatedSession.candidateDocument)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("markdown-live-edit-${block.id}"),
+                                label = { Text("编辑此块") },
+                            )
+                            TextButton(
+                                onClick = {
+                                    renderedMarkdown = session.candidateDocument
+                                    activeEditSession = null
+                                },
+                                modifier = Modifier.testTag("markdown-live-edit-done-${block.id}"),
+                            ) { Text("完成") }
+                        } else if (block.type == MarkdownLiveBlockType.FRONT_MATTER) {
                             Text(
                                 block.markdown,
                                 modifier = Modifier
@@ -219,14 +245,26 @@ internal fun MarkdownEditorSpike(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable(enabled = block.editable) {
-                                        editingDocument = markdown
-                                        editingMarkdown = block.markdown
-                                        editingBlock = block
+                                        MarkdownLiveEditSession.start(renderedMarkdown, block)?.let { session ->
+                                            activeEditSession = session
+                                            editConflictMessage = null
+                                        }
                                     }
                                     .testTag("markdown-live-block-${block.id}"),
                                 assetResolver = assetResolver,
                             )
                         }
+                    }
+                }
+                editConflictMessage?.let { message ->
+                    item(key = "markdown-live-edit-conflict") {
+                        Text(
+                            message,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("markdown-live-edit-conflict"),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
                 item(key = "markdown-preview-image-actions") {
@@ -269,6 +307,9 @@ internal fun MarkdownEditorSpike(
         }
     }
 }
+
+private const val MAX_LIVE_PREVIEW_BLOCKS = 200
+private const val MAX_LIVE_PREVIEW_CHARACTERS = 30_000
 
 @Composable
 private fun PreviewImageActions(

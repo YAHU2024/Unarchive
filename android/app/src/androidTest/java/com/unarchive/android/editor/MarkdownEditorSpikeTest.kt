@@ -210,6 +210,7 @@ class MarkdownEditorSpikeTest {
 
         composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
         composeRule.onNodeWithText("长文标题").assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-live-preview-optimized").assertIsDisplayed()
         composeRule.onNodeWithTag("markdown-editor-preview").performTouchInput { swipeUp() }
         composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
         composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()

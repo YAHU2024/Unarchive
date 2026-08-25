@@ -1,5 +1,6 @@
 package com.unarchive.android.editor
 
+import com.unarchive.android.ui.markdown.markdownPreviewChunks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -55,6 +56,32 @@ println("保留")
     }
 
     @Test
+    fun liveEditSessionDerivesRapidChangesFromTheOriginalRange() {
+        val markdown = "# 原标题\n\n正文保持不变"
+        val heading = MarkdownLiveBlockParser.parse(markdown)
+            .single { it.type == MarkdownLiveBlockType.HEADING }
+        var session = requireNotNull(MarkdownLiveEditSession.start(markdown, heading))
+
+        listOf("# 新", "# 新标", "# 新标题").forEach { replacement ->
+            session = session.withReplacement(replacement)
+        }
+
+        assertEquals("# 新标题\n\n正文保持不变", session.candidateDocument)
+        assertTrue(session.acceptsParentDocument(markdown))
+        assertTrue(session.acceptsParentDocument(session.candidateDocument))
+        assertTrue(session.acceptsParentDocument("# 新\n\n正文保持不变"))
+        assertFalse(session.acceptsParentDocument("# 外部变化"))
+    }
+
+    @Test
+    fun liveEditSessionRejectsAStaleRangeWithoutThrowing() {
+        val markdown = "# 标题\n\n正文"
+        val heading = MarkdownLiveBlockParser.parse(markdown).first()
+
+        assertEquals(null, MarkdownLiveEditSession.start("# 已变化\n\n正文", heading))
+    }
+
+    @Test
     fun unclosedFenceRemainsOneEditableSourceBlock() {
         val markdown = "# 标题\n\n```kotlin\nval value = 1\n未闭合"
         val blocks = MarkdownLiveBlockParser.parse(markdown)
@@ -75,5 +102,17 @@ println("保留")
 
         assertEquals(4_001, blocks.size)
         blocks.forEach { assertEquals(it.markdown, markdown.substring(it.startOffset, it.endOffset)) }
+    }
+
+    @Test
+    fun longDocumentUsesBoundedChunkPreviewInsteadOfOneRendererPerParagraph() {
+        val markdown = buildString {
+            append("# 长文\n\n")
+            repeat(4_000) { append("第 $it 段中文内容。\n\n") }
+        }
+        val blocks = MarkdownLiveBlockParser.parse(markdown)
+
+        assertTrue(markdownLivePreviewUsesChunks(markdown, blocks))
+        assertTrue(markdownPreviewChunks(markdown).size < blocks.size)
     }
 }
