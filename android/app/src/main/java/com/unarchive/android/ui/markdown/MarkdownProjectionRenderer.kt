@@ -104,6 +104,32 @@ internal fun projectUnavailableImages(
     return projected
 }
 
+/** Returns image nodes from Markdown without matching image-like text in code. */
+internal data class MarkdownImageReference(
+    val link: String,
+    val alt: String,
+)
+
+internal fun markdownImageReferences(markdown: String): List<MarkdownImageReference> {
+    val root = runCatching {
+        MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(markdown)
+    }.getOrNull() ?: return emptyList()
+
+    return root.collectDescendants(MarkdownElementTypes.IMAGE).mapNotNull { image ->
+        val link = image.findDescendant(MarkdownElementTypes.LINK_DESTINATION)
+            ?.getUnescapedTextInNode(markdown)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: return@mapNotNull null
+        val alt = image.findDescendant(MarkdownElementTypes.LINK_TEXT)
+            ?.getUnescapedTextInNode(markdown)
+            ?.trim()
+            ?.removeSurrounding("[", "]")
+            .orEmpty()
+        MarkdownImageReference(link, alt)
+    }.toList()
+}
+
 private data class ImageReplacement(
     val start: Int,
     val end: Int,

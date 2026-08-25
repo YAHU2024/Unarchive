@@ -50,4 +50,25 @@ class MarkdownEditorSpikeTest {
         composeRule.onNodeWithTag("markdown-editor-source").performTextReplacement("# 新标题")
         assert(source == "# 新标题")
     }
+
+    @Test
+    fun exposesControlledLocalScreenshotInsertion() {
+        var source = "# 笔记"
+        composeRule.setContent {
+            UnarchiveTheme {
+                MarkdownEditorSpike(
+                    markdown = source,
+                    onMarkdownChange = { source = it },
+                    assetResolver = NoOpMarkdownAssetResolver,
+                    imageOptions = listOf(
+                        MarkdownEditorImageOption("assets/chapter-000.jpg", "章节截图"),
+                    ),
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("markdown-editor-image-actions").assertIsDisplayed()
+        composeRule.onNodeWithText("章节截图").performClick()
+        assert(source.contains("![章节截图](assets/chapter-000.jpg)"))
+    }
 }

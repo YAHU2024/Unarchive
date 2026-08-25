@@ -1,6 +1,7 @@
 package com.unarchive.android.ui.markdown
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -51,5 +52,19 @@ class MarkdownProjectionPolicyTest {
         assertFalse(projected.contains("![本地截图](missing-local.png)"))
         assertTrue(projected.contains("![代码中的图片](kept-as-code.png)"))
         assertTrue(projected.contains("[来源](https://www.bilibili.com/video/BV1xx)"))
+    }
+
+    @Test
+    fun imageReferencesOnlyIncludeMarkdownImageNodes() {
+        val references = markdownImageReferences(
+            "![章节截图](assets/chapter-000.jpg)\n\n" +
+                "```markdown\n![代码中的图片](ignored.jpg)\n```",
+        )
+
+        assertEquals(
+            "refs=$references",
+            listOf(MarkdownImageReference("assets/chapter-000.jpg", "章节截图")),
+            references,
+        )
     }
 }
