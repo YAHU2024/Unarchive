@@ -124,6 +124,8 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
             }
         },
         noteDocumentRepository = vm.noteDocumentRepository,
+        noteContentRepository = vm.noteContentRepository,
+        knowledgeCardRepository = vm.knowledgeCardRepository,
     )
 }
 

@@ -43,7 +43,27 @@ interface NoteDocumentRepository {
     fun listVersions(cardId: KnowledgeCardId): List<NoteDocument>
     fun find(cardId: KnowledgeCardId, cardVersion: String? = null): NoteDocument?
     fun save(document: NoteDocument): NoteDocumentSaveResult
+
+    /**
+     * Provides the legacy bytes used by the v3 migration. File-backed stores
+     * override this to retain the original JSON and Markdown rather than a
+     * regenerated projection.
+     */
+    fun migrationSnapshot(cardId: KnowledgeCardId, cardVersion: String): NoteDocumentMigrationSnapshot? {
+        val document = find(cardId, cardVersion) ?: return null
+        return NoteDocumentMigrationSnapshot(
+            document = document,
+            markdown = NoteMarkdownProjection.render(document),
+            structuredJson = document.toJson().toString(),
+        )
+    }
 }
+
+data class NoteDocumentMigrationSnapshot(
+    val document: NoteDocument,
+    val markdown: String,
+    val structuredJson: String,
+)
 
 /** Imports legacy cards into the v2 note source without allowing one failure to stop the rest. */
 class NoteDocumentSynchronizer(
@@ -172,6 +192,23 @@ class FileNoteDocumentRepository(
             )
         }
         NoteDocumentSaveResult(published, NoteDocumentSavePhase.COMPLETE, markdown)
+    }
+
+    override fun migrationSnapshot(
+        cardId: KnowledgeCardId,
+        cardVersion: String,
+    ): NoteDocumentMigrationSnapshot? = synchronized(this) {
+        val directory = versionDirectory(cardId, cardVersion)
+        val json = File(directory, JSON_FILE_NAME)
+        val document = readDocument(json) ?: return@synchronized null
+        NoteDocumentMigrationSnapshot(
+            document = document,
+            markdown = File(directory, MARKDOWN_FILE_NAME)
+                .takeIf(File::isFile)
+                ?.readText(Charsets.UTF_8)
+                ?: NoteMarkdownProjection.render(document),
+            structuredJson = json.readText(Charsets.UTF_8),
+        )
     }
 
     private fun projectionFailure(

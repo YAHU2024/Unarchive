@@ -36,6 +36,7 @@ import com.unarchive.android.card.CardAssetKind
 import com.unarchive.android.card.CardProcessingLog
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.FileKnowledgeCardRepository
+import com.unarchive.android.card.FileNoteContentRepository
 import com.unarchive.android.card.FileNoteDocumentRepository
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardExport
@@ -188,6 +189,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         FileKnowledgeCardRepository(File(context.filesDir, "knowledge-cards"))
     val noteDocumentRepository: NoteDocumentRepository =
         FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
+    /** Separate schema-v3 Markdown source store; legacy v2 notes remain intact. */
+    val noteContentRepository = FileNoteContentRepository(File(context.filesDir, "knowledge-markdown-content"))
     val noteRelationRepository = NoteRelationRepository(noteDocumentRepository)
     val noteDocumentProposalRepository: NoteDocumentProposalRepository =
         FileNoteDocumentProposalRepository(File(context.filesDir, "knowledge-note-proposals"))

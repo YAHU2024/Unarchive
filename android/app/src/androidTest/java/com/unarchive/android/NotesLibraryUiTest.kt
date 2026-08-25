@@ -1,14 +1,17 @@
 package com.unarchive.android
 
+import android.content.Context
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.unit.Density
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.TranscriptSegment
@@ -16,6 +19,8 @@ import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardRelation
 import com.unarchive.android.card.CardRelationType
 import com.unarchive.android.card.CardStageState
+import com.unarchive.android.card.FileNoteContentRepository
+import com.unarchive.android.card.FileNoteDocumentRepository
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.NoteBlock
 import com.unarchive.android.card.NoteBlockOrigin
@@ -40,6 +45,7 @@ import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import java.io.File
 
 class NotesLibraryUiTest {
     @get:Rule
@@ -111,6 +117,47 @@ class NotesLibraryUiTest {
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
         composeRule.onNodeWithTag("notes-filter-materials").performClick()
         composeRule.onNodeWithText("生成笔记草稿").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun openingSavedNoteFromLibraryUsesMarkdownMigrationRoute() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val directory = File(context.cacheDir, "notes-markdown-route-${System.nanoTime()}")
+        val document = document()
+        val v2Repository = FileNoteDocumentRepository(File(directory, "v2"))
+        val v3Repository = FileNoteContentRepository(File(directory, "v3"))
+        try {
+            check(v2Repository.save(document).isComplete)
+            composeRule.setContent {
+                UnarchiveTheme {
+                    UnarchiveNavigationHost(
+                        state = state(document, material()),
+                        onCreateEvent = {},
+                        onNotesEvent = {},
+                        onMeEvent = {},
+                        noteDocumentRepository = v2Repository,
+                        noteContentRepository = v3Repository,
+                        legacyTestContent = { _, _ -> Text("legacy test") },
+                        legacyResultsContent = { _ -> Text("legacy results") },
+                        legacyLogContent = { _ -> Text("legacy log") },
+                        legacySettingsContent = { _ -> Text("legacy settings") },
+                    )
+                }
+            }
+
+            composeRule.onNodeWithTag("bottom-nav-notes").performClick()
+            composeRule.onNodeWithTag("notes-filter-saved").performClick()
+            composeRule.onNodeWithText("编辑").performClick()
+            composeRule.waitUntil(timeoutMillis = 2_500L) {
+                composeRule.onAllNodesWithTag("markdown-editor-source").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            composeRule.onNodeWithTag("markdown-editor-source").assertIsDisplayed()
+            check(v3Repository.find(document.cardId, document.generation.cardVersion) != null)
+            check(v3Repository.migrationBackup(document.cardId, document.generation.cardVersion) != null)
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     private fun state(document: NoteDocument, material: StoredVideoResult): UnarchiveUiState {

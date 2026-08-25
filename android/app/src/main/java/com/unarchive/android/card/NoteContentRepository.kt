@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import org.json.JSONObject
 
-enum class NoteContentSavePhase { CONTENT, MARKDOWN, COMMIT, COMPLETE }
+enum class NoteContentSavePhase { BACKUP, CONTENT, MARKDOWN, COMMIT, COMPLETE }
 
 data class NoteContentSaveResult(
     val content: NoteContent,
@@ -98,6 +98,34 @@ class FileNoteContentRepository(
         NoteContentSaveResult(prepared, NoteContentSavePhase.COMPLETE)
     }
 
+    /**
+     * Writes an immutable copy of the v2 inputs before publishing the first v3
+     * revision. A failed backup never creates a readable v3 note.
+     */
+    fun saveMigrated(content: NoteContent, backup: LegacyNoteBackup): NoteContentSaveResult = synchronized(this) {
+        val existing = find(content.cardId, content.cardVersion)
+        if (existing != null) return@synchronized NoteContentSaveResult(existing, NoteContentSavePhase.COMPLETE)
+        val target = revisionDirectory(content.cardId, content.cardVersion, content.markdownRevision)
+        try {
+            writer.write(
+                File(target, LEGACY_BACKUP_FILE_NAME),
+                backup.toJsonForRepository().toString().toByteArray(Charsets.UTF_8),
+            )
+        } catch (error: Throwable) {
+            return@synchronized NoteContentSaveResult(content, NoteContentSavePhase.BACKUP, message(error))
+        }
+        save(content)
+    }
+
+    fun migrationBackup(cardId: KnowledgeCardId, cardVersion: String): LegacyNoteBackup? = synchronized(this) {
+        val firstRevision = revisionDirectory(cardId, cardVersion, 0L)
+        val file = File(firstRevision, LEGACY_BACKUP_FILE_NAME)
+        runCatching {
+            if (!file.isFile) return@synchronized null
+            JSONObject(file.readText(Charsets.UTF_8)).toLegacyNoteBackupForRepository()
+        }.getOrNull()
+    }
+
     fun saveDraft(content: NoteContent, draft: NoteDraftState): NoteContent {
         require(draft.baseMarkdownRevision == content.markdownRevision) {
             "draft base revision must match formal content"
@@ -150,8 +178,18 @@ class FileNoteContentRepository(
         const val MARKDOWN_FILE_NAME = "note.md"
         const val COMMIT_FILE_NAME = "commit.json"
         const val DRAFT_FILE_NAME = "draft.json"
+        const val LEGACY_BACKUP_FILE_NAME = "legacy-backup.json"
     }
 }
+
+private fun LegacyNoteBackup.toJsonForRepository() = JSONObject()
+    .put("structured_json", structuredJson)
+    .put("markdown", markdown)
+
+private fun JSONObject.toLegacyNoteBackupForRepository() = LegacyNoteBackup(
+    structuredJson = if (isNull("structured_json")) null else getString("structured_json"),
+    markdown = getString("markdown"),
+)
 
 private fun NoteDraftState.toJsonForRepository() = JSONObject()
     .put("markdown", markdown)

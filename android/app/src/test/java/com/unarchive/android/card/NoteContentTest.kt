@@ -107,6 +107,75 @@ class NoteContentTest {
         assertTrue(repository.list().isEmpty())
     }
 
+    @Test
+    fun synchronizerPersistsRawLegacyBackupBeforePublishingV3Content() {
+        val contentRepository = FileNoteContentRepository(temporaryFolder.newFolder("content"))
+        val legacy = content().structuredMetadata
+        val legacyMarkdown = NoteMarkdownProjection.render(legacy)
+        val snapshotRepository = snapshotRepository(legacy, legacyMarkdown, "{\"legacy\":true}")
+
+        val outcome = NoteContentSynchronizer(contentRepository, snapshotRepository)
+            .prepare(legacy.cardId, legacy.generation.cardVersion)
+
+        assertTrue(outcome is NoteContentMigrationOutcome.Ready)
+        assertEquals(legacyMarkdown, (outcome as NoteContentMigrationOutcome.Ready).content.markdown)
+        assertEquals(
+            LegacyNoteBackup("{\"legacy\":true}", legacyMarkdown),
+            contentRepository.migrationBackup(legacy.cardId, legacy.generation.cardVersion),
+        )
+    }
+
+    @Test
+    fun synchronizerRequiresChoiceForConflictAndKeepsSelectedMarkdown() {
+        val contentRepository = FileNoteContentRepository(temporaryFolder.newFolder("content"))
+        val legacy = content().structuredMetadata
+        val snapshotRepository = snapshotRepository(legacy, "# 用户旧正文", "{\"legacy\":true}")
+        val synchronizer = NoteContentSynchronizer(contentRepository, snapshotRepository)
+
+        val conflict = synchronizer.prepare(legacy.cardId, legacy.generation.cardVersion)
+        assertTrue(conflict is NoteContentMigrationOutcome.Conflict)
+        assertNull(contentRepository.find(legacy.cardId, legacy.generation.cardVersion))
+
+        val resolved = synchronizer.resolve(
+            (conflict as NoteContentMigrationOutcome.Conflict).decision,
+            NoteContentMigrationChoice.KEEP_LEGACY_MARKDOWN,
+        )
+
+        assertEquals("# 用户旧正文", (resolved as NoteContentMigrationOutcome.Ready).content.markdown)
+        assertEquals(NoteProjectionStatus.PARTIAL, resolved.content.projectionStatus)
+        assertEquals("# 用户旧正文", contentRepository.migrationBackup(legacy.cardId, legacy.generation.cardVersion)?.markdown)
+    }
+
+    @Test
+    fun backupWriteFailureDoesNotPublishMigratedContent() {
+        val legacy = content().structuredMetadata
+        val repository = FileNoteContentRepository(
+            temporaryFolder.newFolder("content"),
+            writer = NoteContentAtomicWriter { _, _ -> throw IOException("backup disk full") },
+        )
+        val result = repository.saveMigrated(
+            content(),
+            LegacyNoteBackup("{\"legacy\":true}", content().markdown),
+        )
+
+        assertEquals(NoteContentSavePhase.BACKUP, result.phase)
+        assertNull(repository.find(legacy.cardId, legacy.generation.cardVersion))
+    }
+
+    private fun snapshotRepository(
+        document: NoteDocument,
+        markdown: String,
+        structuredJson: String,
+    ): NoteDocumentRepository = object : NoteDocumentRepository {
+        override fun list(): List<NoteDocument> = listOf(document)
+        override fun listAllVersions(): List<NoteDocument> = listOf(document)
+        override fun listVersions(cardId: KnowledgeCardId): List<NoteDocument> = listOf(document)
+        override fun find(cardId: KnowledgeCardId, cardVersion: String?): NoteDocument? = document
+        override fun save(document: NoteDocument): NoteDocumentSaveResult = error("not used")
+        override fun migrationSnapshot(cardId: KnowledgeCardId, cardVersion: String) =
+            NoteDocumentMigrationSnapshot(document, markdown, structuredJson)
+    }
+
     private fun content(): NoteContent {
         val card = KnowledgeCard(
             cardId = KnowledgeCardId("bilibili", "BV_v3"),

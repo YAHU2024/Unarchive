@@ -72,12 +72,17 @@ import androidx.navigation.compose.rememberNavController
 import com.unarchive.android.ui.components.GlassSurface
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
+import com.unarchive.android.card.FileNoteContentRepository
+import com.unarchive.android.card.KnowledgeCardRepository
 import com.unarchive.android.card.CardRelationType
 import com.unarchive.android.card.GraphRelationItem
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.editor.NoteEditorRoute
+import com.unarchive.android.editor.MarkdownEditorMigrationRoute
+import com.unarchive.android.editor.markdownImageOptions
+import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
@@ -157,6 +162,8 @@ internal fun UnarchiveNavigationHost(
         }
     },
     noteDocumentRepository: NoteDocumentRepository? = null,
+    noteContentRepository: FileNoteContentRepository? = null,
+    knowledgeCardRepository: KnowledgeCardRepository? = null,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -221,6 +228,23 @@ internal fun UnarchiveNavigationHost(
                         Text("找不到这篇笔记")
                         TextButton(onClick = { navController.popBackStack() }) { Text("返回") }
                     }
+                } else if (noteContentRepository != null) {
+                    val card = state.notes.noteCards.firstOrNull { candidate ->
+                        candidate.cardId == document.cardId &&
+                            candidate.cardVersion == document.generation.cardVersion
+                    }
+                    MarkdownEditorMigrationRoute(
+                        document = document,
+                        contentRepository = noteContentRepository,
+                        documentRepository = noteDocumentRepository,
+                        onBack = { navController.popBackStack() },
+                        assetResolver = if (card != null && knowledgeCardRepository != null) {
+                            cardAssetMarkdownResolver(card, knowledgeCardRepository)
+                        } else {
+                            com.unarchive.android.ui.markdown.NoOpMarkdownAssetResolver
+                        },
+                        imageOptions = card?.assets?.let(::markdownImageOptions).orEmpty(),
+                    )
                 } else {
                     NoteEditorRoute(
                         document = document,
