@@ -10,7 +10,23 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class ImaKnowledgeBase(val id: String, val name: String, val description: String = "")
-data class ImaFolder(val id: String, val name: String, val depth: Int = 0)
+data class ImaFolder(
+    val id: String,
+    val name: String,
+    val depth: Int = 0,
+    val displayPath: String = name,
+)
+
+internal class ImaFolderTraversalBudget(
+    private val maximumDepth: Int = 12,
+    private val maximumItems: Int = 500,
+) {
+    private val visitedIds = mutableSetOf<String>()
+
+    fun canDescend(depth: Int): Boolean = depth in 0 until maximumDepth && visitedIds.size < maximumItems
+
+    fun claim(id: String): Boolean = id.isNotBlank() && visitedIds.size < maximumItems && visitedIds.add(id)
+}
 
 class ImaQuotaExceededException(message: String) : IOException(message)
 class ImaRateLimitException(message: String) : IOException(message)
@@ -44,22 +60,47 @@ class ImaClient(
 
     suspend fun listKnowledgeBaseFolders(kbId: String): List<ImaFolder> = listFolders(kbId)
 
-    suspend fun listFolders(kbId: String): List<ImaFolder> = listFolders(kbId, "", 0)
+    suspend fun listFolders(kbId: String): List<ImaFolder> = buildList {
+        collectFolders(
+            kbId = kbId,
+            parentId = "",
+            parentPath = "",
+            depth = 0,
+            budget = ImaFolderTraversalBudget(),
+            output = this,
+        )
+    }
 
-    private suspend fun listFolders(kbId: String, parent: String, depth: Int): List<ImaFolder> {
+    private suspend fun collectFolders(
+        kbId: String,
+        parentId: String,
+        parentPath: String,
+        depth: Int,
+        budget: ImaFolderTraversalBudget,
+        output: MutableList<ImaFolder>,
+    ) {
+        if (!budget.canDescend(depth)) return
         val body = JSONObject().put("knowledge_base_id", kbId).put("cursor", "").put("limit", 50)
-        if (parent.isNotBlank()) body.put("folder_id", parent)
+        if (parentId.isNotBlank()) body.put("folder_id", parentId)
         val data = call("openapi/wiki/v1/get_knowledge_list", body)
         val values = data.optJSONArray("knowledge_list") ?: JSONArray()
-        return buildList {
-            repeat(values.length()) {
-                val item = values.optJSONObject(it) ?: return@repeat
-                val id = item.optString("media_id")
-                if (id.startsWith("folder_") || item.optInt("media_type") == 99) {
-                    add(ImaFolder(id, item.optString("title"), depth))
-                    addAll(listFolders(kbId, id, depth + 1))
-                }
-            }
+        for (index in 0 until values.length()) {
+            if (!budget.canDescend(depth)) break
+            val item = values.optJSONObject(index) ?: continue
+            val id = item.optString("media_id")
+            if (!id.startsWith("folder_") && item.optInt("media_type") != 99) continue
+            if (!budget.claim(id)) continue
+            val name = item.optString("title").ifBlank { "未命名文件夹" }
+            val displayPath = listOf(parentPath, name).filter(String::isNotBlank).joinToString(" / ")
+            output += ImaFolder(id = id, name = name, depth = depth, displayPath = displayPath)
+            collectFolders(
+                kbId = kbId,
+                parentId = id,
+                parentPath = displayPath,
+                depth = depth + 1,
+                budget = budget,
+                output = output,
+            )
         }
     }
 

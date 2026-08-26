@@ -9,16 +9,25 @@ import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.toNoteDocument
 import com.unarchive.android.sync.DestinationAction
 import com.unarchive.android.sync.DestinationTargetStateMapper
+import com.unarchive.android.sync.ImaFolder
+import com.unarchive.android.sync.ImaKnowledgeBase
 
 enum class GraphRelationOperationState { IDLE, SAVING, SAVED, FAILED }
 
 enum class DestinationOperationState { IDLE, RUNNING, SUCCEEDED, FAILED }
 
-internal data class DestinationTargetOption(
-    val knowledgeBaseId: String,
-    val knowledgeBaseName: String,
-    val folderId: String = "",
-    val folderName: String = "根目录",
+internal enum class DestinationTargetLoadState { IDLE, LOADING, LOADED, EMPTY, FAILED }
+
+internal data class DestinationKnowledgeBaseOption(
+    val id: String,
+    val name: String,
+)
+
+internal data class DestinationFolderOption(
+    val id: String,
+    val name: String,
+    val displayPath: String,
+    val depth: Int,
 )
 
 /** Stable internal retry handle; values are never rendered or announced. */
@@ -51,9 +60,16 @@ internal data class DestinationUiState(
     val imaConfigured: Boolean = false,
     val imaTargetSelected: Boolean = false,
     val imaSyncing: Boolean = false,
+    val imaSyncEnabled: Boolean = false,
+    val targetRefreshEnabled: Boolean = false,
     val currentTargetLabel: String = "",
     val imaStateWarning: String? = null,
-    val targetOptions: List<DestinationTargetOption> = emptyList(),
+    val knowledgeBaseLoadState: DestinationTargetLoadState = DestinationTargetLoadState.IDLE,
+    val folderLoadState: DestinationTargetLoadState = DestinationTargetLoadState.IDLE,
+    val knowledgeBaseOptions: List<DestinationKnowledgeBaseOption> = emptyList(),
+    val folderOptions: List<DestinationFolderOption> = emptyList(),
+    val selectedKnowledgeBaseName: String = "",
+    val selectedFolderPath: String = "",
     val targetRecords: List<DestinationTargetUiState> = emptyList(),
 )
 
@@ -138,7 +154,9 @@ internal sealed interface DestinationEvent {
     data object ExportMarkdown : DestinationEvent
     data object SyncIma : DestinationEvent
     data class RetryIma(val ref: DestinationTargetRef) : DestinationEvent
-    data class SelectTarget(val knowledgeBaseId: String, val folderId: String) : DestinationEvent
+    data object RefreshTargets : DestinationEvent
+    data class SelectKnowledgeBase(val knowledgeBaseId: String) : DestinationEvent
+    data class SelectFolder(val folderId: String) : DestinationEvent
     data object OpenSecuritySettings : DestinationEvent
 }
 
@@ -292,15 +310,20 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             val card = destinationCardForUi()
             val targetRecords = card?.let(::knowledgeSyncRecords).orEmpty()
             val targetStates = targetRecords.map(DestinationTargetStateMapper::fromRecord)
-            // Only the selected KB's folders are known. Do not attach one
-            // KB's folder IDs to every other target.
-            val options = imaKnowledgeBases.flatMap { base ->
-                val baseName = base.name.ifBlank { "ima 知识库" }
-                val root = listOf(DestinationTargetOption(base.id, baseName))
-                if (base.id != imaKnowledgeBaseId) root
-                else root + imaFolders.filter { it.id.isNotBlank() }.map { folder ->
-                    DestinationTargetOption(base.id, baseName, folder.id, folder.name.ifBlank { "文件夹" })
-                }
+            val knowledgeBaseOptions = destinationKnowledgeBaseOptions(imaKnowledgeBases)
+            val folderOptions = if (imaFolderKnowledgeBaseId == imaKnowledgeBaseId) {
+                destinationFolderOptions(imaFolders)
+            } else {
+                emptyList()
+            }
+            val selectedKnowledgeBaseName = knowledgeBaseOptions
+                .firstOrNull { it.id == imaKnowledgeBaseId }
+                ?.name
+                .orEmpty()
+            val selectedFolderPath = if (imaFolderId.isBlank()) {
+                "根目录"
+            } else {
+                folderOptions.firstOrNull { it.id == imaFolderId }?.displayPath.orEmpty()
             }
             DestinationUiState(
                 card = card,
@@ -318,9 +341,19 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
                 imaConfigured = imaCredentialsConfigured,
                 imaTargetSelected = imaKnowledgeBaseId.isNotBlank(),
                 imaSyncing = imaSyncing,
+                imaSyncEnabled = imaCredentialsConfigured && imaKnowledgeBaseId.isNotBlank() &&
+                    imaKnowledgeBaseLoadState != DestinationTargetLoadState.LOADING &&
+                    imaFolderLoadState != DestinationTargetLoadState.LOADING &&
+                    !imaSyncing && generateJob == null && runningJob == null && exportJob == null,
+                targetRefreshEnabled = imaCredentialsConfigured && !imaTargetsLoading && !imaSyncing,
                 currentTargetLabel = currentImaTargetDisplayName,
                 imaStateWarning = imaSyncStateWarning,
-                targetOptions = options,
+                knowledgeBaseLoadState = imaKnowledgeBaseLoadState,
+                folderLoadState = imaFolderLoadState,
+                knowledgeBaseOptions = knowledgeBaseOptions,
+                folderOptions = folderOptions,
+                selectedKnowledgeBaseName = selectedKnowledgeBaseName,
+                selectedFolderPath = selectedFolderPath,
                 targetRecords = targetStates.mapIndexed { index, target ->
                     val record = targetRecords[index]
                     DestinationTargetUiState(
@@ -344,3 +377,29 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
         },
     )
 }
+
+internal fun destinationKnowledgeBaseOptions(
+    bases: List<ImaKnowledgeBase>,
+): List<DestinationKnowledgeBaseOption> = bases
+    .filter { it.id.isNotBlank() }
+    .distinctBy(ImaKnowledgeBase::id)
+    .map { base ->
+        DestinationKnowledgeBaseOption(
+            id = base.id,
+            name = base.name.ifBlank { "未命名知识库" },
+        )
+    }
+
+internal fun destinationFolderOptions(
+    folders: List<ImaFolder>,
+): List<DestinationFolderOption> = folders
+    .filter { it.id.isNotBlank() }
+    .distinctBy(ImaFolder::id)
+    .map { folder ->
+        DestinationFolderOption(
+            id = folder.id,
+            name = folder.name.ifBlank { "未命名文件夹" },
+            displayPath = folder.displayPath.ifBlank { folder.name.ifBlank { "未命名文件夹" } },
+            depth = folder.depth.coerceAtLeast(0),
+        )
+    }

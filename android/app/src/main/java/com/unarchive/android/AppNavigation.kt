@@ -29,18 +29,22 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
@@ -61,6 +65,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -88,7 +94,7 @@ import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.DestinationEvent
-import com.unarchive.android.ui.state.DestinationTargetOption
+import com.unarchive.android.ui.state.DestinationTargetLoadState
 import com.unarchive.android.ui.state.DestinationUiState
 import com.unarchive.android.ui.state.DestinationOperationState
 import com.unarchive.android.ui.state.GraphUiState
@@ -1265,7 +1271,22 @@ private fun DestinationScreen(
         item {
             GlassSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("ima", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("ima", style = MaterialTheme.typography.titleMedium)
+                        if (state.imaConfigured) {
+                            IconButton(
+                                onClick = { onEvent(DestinationEvent.RefreshTargets) },
+                                enabled = state.targetRefreshEnabled,
+                                modifier = Modifier.testTag("destination-refresh-targets"),
+                            ) {
+                                Icon(Icons.Filled.Refresh, contentDescription = "刷新 ima 目标")
+                            }
+                        }
+                    }
                     if (!state.imaConfigured) {
                         Text("尚未配置 ima 凭据。本地笔记不受影响。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
@@ -1290,15 +1311,16 @@ private fun DestinationScreen(
                                 modifier = Modifier.testTag("destination-state-warning"),
                             )
                         }
-                        DestinationTargetChooser(state.targetOptions, onEvent)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = { onEvent(DestinationEvent.SyncIma) },
-                                enabled = state.imaTargetSelected && !state.imaSyncing,
-                                modifier = Modifier.testTag("destination-sync-ima"),
-                            ) { Text(if (state.imaSyncing) "同步中..." else "立即同步") }
-                            OutlinedButton(onClick = onOpenSecuritySettings) { Text("管理凭据") }
-                        }
+                        DestinationTargetSelectors(state, onEvent)
+                        Button(
+                            onClick = { onEvent(DestinationEvent.SyncIma) },
+                            enabled = state.imaSyncEnabled,
+                            modifier = Modifier.fillMaxWidth().testTag("destination-sync-ima"),
+                        ) { Text(if (state.imaSyncing) "同步中..." else "立即同步") }
+                        OutlinedButton(
+                            onClick = onOpenSecuritySettings,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("管理凭据") }
                     }
                     if (state.targetRecords.isEmpty()) {
                         Text("尚未同步到任何目标。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1314,33 +1336,125 @@ private fun DestinationScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DestinationTargetChooser(
-    options: List<DestinationTargetOption>,
+private fun DestinationTargetSelectors(
+    state: DestinationUiState,
     onEvent: (DestinationEvent) -> Unit,
 ) {
-    if (options.isEmpty()) {
-        Text("连接 ima 后可选择知识库和文件夹。", style = MaterialTheme.typography.bodySmall)
-        return
-    }
-    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("更换目标", modifier = Modifier.weight(1f))
-            Text("选择")
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text("${option.knowledgeBaseName} / ${option.folderName}") },
-                    onClick = {
-                        onEvent(DestinationEvent.SelectTarget(option.knowledgeBaseId, option.folderId))
-                        expanded = false
-                    },
-                )
+    var knowledgeBaseExpanded by remember { mutableStateOf(false) }
+    var folderExpanded by remember { mutableStateOf(false) }
+    val knowledgeBaseEnabled = state.knowledgeBaseOptions.isNotEmpty() &&
+        state.knowledgeBaseLoadState != DestinationTargetLoadState.LOADING
+    val folderEnabled = state.imaTargetSelected &&
+        state.folderLoadState != DestinationTargetLoadState.LOADING
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ExposedDropdownMenuBox(
+            expanded = knowledgeBaseExpanded,
+            onExpandedChange = { if (knowledgeBaseEnabled) knowledgeBaseExpanded = !knowledgeBaseExpanded },
+        ) {
+            OutlinedTextField(
+                value = state.selectedKnowledgeBaseName,
+                onValueChange = {},
+                readOnly = true,
+                enabled = knowledgeBaseEnabled,
+                isError = state.knowledgeBaseLoadState == DestinationTargetLoadState.FAILED,
+                label = { Text("知识库") },
+                placeholder = { Text("请选择知识库") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(knowledgeBaseExpanded) },
+                modifier = Modifier
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = knowledgeBaseEnabled)
+                    .fillMaxWidth()
+                    .testTag("destination-knowledge-base"),
+            )
+            ExposedDropdownMenu(
+                expanded = knowledgeBaseExpanded,
+                onDismissRequest = { knowledgeBaseExpanded = false },
+            ) {
+                state.knowledgeBaseOptions.forEachIndexed { index, option ->
+                    DropdownMenuItem(
+                        text = { Text(option.name) },
+                        onClick = {
+                            onEvent(DestinationEvent.SelectKnowledgeBase(option.id))
+                            knowledgeBaseExpanded = false
+                            folderExpanded = false
+                        },
+                        modifier = Modifier.testTag("destination-knowledge-base-option-$index"),
+                    )
+                }
             }
         }
+
+        TargetLoadStatus(state.knowledgeBaseLoadState, isKnowledgeBase = true)
+
+        ExposedDropdownMenuBox(
+            expanded = folderExpanded,
+            onExpandedChange = { if (folderEnabled) folderExpanded = !folderExpanded },
+        ) {
+            OutlinedTextField(
+                value = if (state.imaTargetSelected) state.selectedFolderPath else "",
+                onValueChange = {},
+                readOnly = true,
+                enabled = folderEnabled,
+                isError = state.folderLoadState == DestinationTargetLoadState.FAILED,
+                label = { Text("文件夹") },
+                placeholder = { Text("请先选择知识库") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(folderExpanded) },
+                modifier = Modifier
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = folderEnabled)
+                    .fillMaxWidth()
+                    .testTag("destination-folder"),
+            )
+            ExposedDropdownMenu(
+                expanded = folderExpanded,
+                onDismissRequest = { folderExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("根目录") },
+                    onClick = {
+                        onEvent(DestinationEvent.SelectFolder(""))
+                        folderExpanded = false
+                    },
+                    modifier = Modifier.testTag("destination-folder-option-0"),
+                )
+                state.folderOptions.forEachIndexed { index, option ->
+                    DropdownMenuItem(
+                        text = { Text(option.displayPath) },
+                        onClick = {
+                            onEvent(DestinationEvent.SelectFolder(option.id))
+                            folderExpanded = false
+                        },
+                        modifier = Modifier.testTag("destination-folder-option-${index + 1}"),
+                    )
+                }
+            }
+        }
+
+        TargetLoadStatus(state.folderLoadState, isKnowledgeBase = false)
     }
+}
+
+@Composable
+private fun TargetLoadStatus(state: DestinationTargetLoadState, isKnowledgeBase: Boolean) {
+    val message = when (state) {
+        DestinationTargetLoadState.LOADING -> if (isKnowledgeBase) "正在加载知识库..." else "正在加载文件夹..."
+        DestinationTargetLoadState.EMPTY -> if (isKnowledgeBase) "当前账号没有可选知识库。" else "当前知识库没有子文件夹，可使用根目录。"
+        DestinationTargetLoadState.FAILED -> if (isKnowledgeBase) "知识库加载失败，请重试。" else "文件夹加载失败，可重试或选择根目录。"
+        DestinationTargetLoadState.IDLE, DestinationTargetLoadState.LOADED -> null
+    } ?: return
+    Text(
+        message,
+        color = if (state == DestinationTargetLoadState.FAILED) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier
+            .testTag(if (isKnowledgeBase) "destination-knowledge-base-status" else "destination-folder-status")
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    )
 }
 
 @Composable

@@ -24,6 +24,32 @@ class ImaDestinationStateTest {
     }
 
     @Test
+    fun targetValidatorsAcceptOnlyKnownIdsAndTreatBlankFolderAsRoot() {
+        val bases = listOf(ImaKnowledgeBase("kb-1", "课程库"))
+        val folders = listOf(ImaFolder("folder-1", "第一章"))
+
+        assertEquals("kb-1", validatedImaKnowledgeBaseId(" kb-1 ", bases))
+        assertEquals(null, validatedImaKnowledgeBaseId("kb-unknown", bases))
+        assertEquals("", validatedImaFolderId("  ", folders))
+        assertEquals("folder-1", validatedImaFolderId("folder-1", folders))
+        assertEquals(null, validatedImaFolderId("folder-unknown", folders))
+    }
+
+    @Test
+    fun folderTraversalBudgetRejectsCyclesDepthOverflowAndItemOverflow() {
+        val budget = ImaFolderTraversalBudget(maximumDepth = 2, maximumItems = 2)
+
+        assertTrue(budget.canDescend(0))
+        assertTrue(budget.claim("folder-1"))
+        assertFalse(budget.claim("folder-1"))
+        assertTrue(budget.canDescend(1))
+        assertTrue(budget.claim("folder-2"))
+        assertFalse(budget.canDescend(1))
+        assertFalse(budget.canDescend(2))
+        assertFalse(budget.claim("folder-3"))
+    }
+
+    @Test
     fun imageDeliveryDistinguishesEmbeddedPartialAndBudgetFallback() {
         val embedded = ImaImageDelivery.from(
             rendered = MarkdownCardRenderer.EmbeddedAssetsResult(

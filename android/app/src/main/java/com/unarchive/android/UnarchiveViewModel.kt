@@ -52,6 +52,7 @@ import com.unarchive.android.card.SingleCardRecoveryRecord
 import com.unarchive.android.card.SingleCardRecoveryStage
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.state.GraphRelationOperationState
+import com.unarchive.android.ui.state.DestinationTargetLoadState
 import com.unarchive.android.ui.state.NoteVersionKey
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
@@ -96,6 +97,8 @@ import com.unarchive.android.sync.ImaKnowledgeBase
 import com.unarchive.android.sync.ImaSyncService
 import com.unarchive.android.sync.imaDestinationSyncUnavailableReason
 import com.unarchive.android.sync.safeImaErrorMessage
+import com.unarchive.android.sync.validatedImaFolderId
+import com.unarchive.android.sync.validatedImaKnowledgeBaseId
 import com.unarchive.android.sync.DestinationTargetState
 import com.unarchive.android.sync.DestinationTargetStateMapper
 import com.unarchive.android.storage.AndroidStorageStatsProvider
@@ -114,6 +117,7 @@ import com.unarchive.android.card.KnowledgeSyncTarget
 import com.unarchive.android.security.AndroidCredentialVault
 import com.unarchive.android.security.ConnectionCheckResult
 import com.unarchive.android.security.ConnectionFailureReason
+import com.unarchive.android.security.ClearResult
 import com.unarchive.android.security.CredentialMutationResult
 import com.unarchive.android.security.CredentialConnectionChecker
 import com.unarchive.android.security.MapCredentialConnectionCheckerProvider
@@ -256,6 +260,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private var knowledgeSyncRevision by mutableIntStateOf(0)
     var imaKnowledgeBases by mutableStateOf<List<ImaKnowledgeBase>>(emptyList())
     var imaFolders by mutableStateOf<List<ImaFolder>>(emptyList())
+    internal var imaKnowledgeBaseLoadState by mutableStateOf(DestinationTargetLoadState.IDLE)
+    internal var imaFolderLoadState by mutableStateOf(DestinationTargetLoadState.IDLE)
+    var imaFolderKnowledgeBaseId by mutableStateOf("")
     var destinationCardId by mutableStateOf<String?>(null)
     var destinationCardVersion by mutableStateOf<String?>(null)
     var destinationCardError by mutableStateOf<String?>(null)
@@ -405,6 +412,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private var favoritesJob: Job? = null
     private var imaTargetsJob: Job? = null
     private var imaTargetRefreshGeneration = 0L
+    private var imaTargetsLoadedAtEpochMs = 0L
+    val imaTargetsLoading: Boolean
+        get() = imaTargetsJob?.isActive == true
     private var activeBatchManifest: BatchManifest? = null
     private var batchGeneratingCard = false
     private var batchCardJob: Job? = null
@@ -637,15 +647,22 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun cancelClearSecureCredentials() = securitySettingsController.cancelClear()
 
-    fun confirmClearSecureCredentials(): com.unarchive.android.security.ClearResult {
+    fun confirmClearSecureCredentials(): ClearResult {
         val result = securitySettingsController.confirmClear()
-        if (!securitySettingsController.state.value.isConfigured(SecurityProfile.IMA)) {
+        if (result == ClearResult.Cleared(SecurityProfile.IMA)) {
             imaTargetRefreshGeneration++
             imaTargetsJob?.cancel()
             imaTargetsJob = null
             imaCredentialsConfigured = false
             imaKnowledgeBases = emptyList()
             imaFolders = emptyList()
+            imaKnowledgeBaseLoadState = DestinationTargetLoadState.IDLE
+            imaFolderLoadState = DestinationTargetLoadState.IDLE
+            imaFolderKnowledgeBaseId = ""
+            imaTargetsLoadedAtEpochMs = 0L
+            imaKnowledgeBaseId = ""
+            imaFolderId = ""
+            persistImaTarget("", "")
         }
         return result
     }
@@ -691,6 +708,13 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         AppLogger.info(TAG, "B站已退出登录")
     }
 
+    fun ensureImaTargetsLoaded() {
+        if (!imaCredentialsConfigured) return
+        val isFresh = imaTargetsLoadedAtEpochMs > 0L &&
+            System.currentTimeMillis() - imaTargetsLoadedAtEpochMs < IMA_TARGET_FRESHNESS_MS
+        if (!isFresh && !imaTargetsLoading) refreshImaTargets()
+    }
+
     /** Refreshes ima destination names after credentials are saved or checked. */
     fun refreshImaTargets() {
         val clientId = imaCredentialStore.clientId().orEmpty()
@@ -702,8 +726,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         if (!imaCredentialsConfigured) {
             imaKnowledgeBases = emptyList()
             imaFolders = emptyList()
+            imaKnowledgeBaseLoadState = DestinationTargetLoadState.IDLE
+            imaFolderLoadState = DestinationTargetLoadState.IDLE
+            imaFolderKnowledgeBaseId = ""
             return
         }
+        imaKnowledgeBaseLoadState = DestinationTargetLoadState.LOADING
         imaTargetsJob = viewModelScope.launch {
             try {
                 val client = ImaClient(clientId, apiKey)
@@ -711,18 +739,60 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 val bases = client.listKnowledgeBases()
                 if (generation != imaTargetRefreshGeneration) return@launch
                 imaKnowledgeBases = bases
-                if (bases.none { it.id == imaKnowledgeBaseId }) {
+                imaKnowledgeBaseLoadState = if (bases.isEmpty()) {
+                    DestinationTargetLoadState.EMPTY
+                } else {
+                    DestinationTargetLoadState.LOADED
+                }
+                val validatedKnowledgeBaseId = validatedImaKnowledgeBaseId(imaKnowledgeBaseId, bases)
+                if (validatedKnowledgeBaseId == null) {
                     imaKnowledgeBaseId = ""
                     imaFolderId = ""
                     imaFolders = emptyList()
-                } else if (imaKnowledgeBaseId.isNotBlank()) {
-                    val folders = client.listKnowledgeBaseFolders(imaKnowledgeBaseId)
-                    if (generation != imaTargetRefreshGeneration) return@launch
-                    imaFolders = folders
-                    if (folders.none { it.id == imaFolderId }) imaFolderId = ""
+                    imaFolderKnowledgeBaseId = ""
+                    imaFolderLoadState = DestinationTargetLoadState.IDLE
+                    persistImaTarget("", "")
+                    imaTargetsLoadedAtEpochMs = System.currentTimeMillis()
+                } else {
+                    val persistedKnowledgeBaseId = imaKnowledgeBaseId
+                    val persistedFolderId = imaFolderId
+                    imaKnowledgeBaseId = validatedKnowledgeBaseId
+                    imaFolderLoadState = DestinationTargetLoadState.LOADING
+                    try {
+                        val folders = client.listKnowledgeBaseFolders(validatedKnowledgeBaseId)
+                        if (generation != imaTargetRefreshGeneration) return@launch
+                        imaFolders = folders
+                        imaFolderKnowledgeBaseId = validatedKnowledgeBaseId
+                        imaFolderLoadState = if (folders.isEmpty()) {
+                            DestinationTargetLoadState.EMPTY
+                        } else {
+                            DestinationTargetLoadState.LOADED
+                        }
+                        val validatedFolderId = validatedImaFolderId(imaFolderId, folders)
+                        if (validatedFolderId == null) {
+                            imaFolderId = ""
+                            persistImaTarget(validatedKnowledgeBaseId, "")
+                        } else {
+                            imaFolderId = validatedFolderId
+                            if (persistedKnowledgeBaseId != validatedKnowledgeBaseId ||
+                                persistedFolderId != validatedFolderId
+                            ) {
+                                persistImaTarget(validatedKnowledgeBaseId, validatedFolderId)
+                            }
+                        }
+                        imaTargetsLoadedAtEpochMs = System.currentTimeMillis()
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (error: Exception) {
+                        if (generation == imaTargetRefreshGeneration) {
+                            imaFolderLoadState = DestinationTargetLoadState.FAILED
+                            AppLogger.warn(TAG, "ima 文件夹读取失败：${CardProcessingLog.safeError(error)}")
+                        }
+                    }
                 }
             } catch (error: Exception) {
                 if (error !is CancellationException && generation == imaTargetRefreshGeneration) {
+                    imaKnowledgeBaseLoadState = DestinationTargetLoadState.FAILED
                     AppLogger.warn(TAG, "ima 目标读取失败：${CardProcessingLog.safeError(error)}")
                 }
             } finally {
@@ -732,14 +802,58 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectImaKnowledgeBase(id: String) {
-        if (imaKnowledgeBases.none { it.id == id }) return
-        imaKnowledgeBaseId = id
+        val selectedId = validatedImaKnowledgeBaseId(id, imaKnowledgeBases) ?: return
+        if (selectedId == imaKnowledgeBaseId && imaFolderKnowledgeBaseId == selectedId) return
+        val clientId = imaCredentialStore.clientId().orEmpty()
+        val apiKey = imaCredentialStore.apiKey().orEmpty()
+        if (clientId.isBlank() || apiKey.isBlank()) return
+        val generation = ++imaTargetRefreshGeneration
+        imaTargetsJob?.cancel()
+        imaKnowledgeBaseId = selectedId
         imaFolderId = ""
         imaFolders = emptyList()
+        imaFolderKnowledgeBaseId = selectedId
+        imaFolderLoadState = DestinationTargetLoadState.LOADING
+        persistImaTarget(selectedId, "")
+        imaTargetsJob = viewModelScope.launch {
+            try {
+                val client = ImaClient(clientId, apiKey)
+                client.connect()
+                val folders = client.listKnowledgeBaseFolders(selectedId)
+                if (generation != imaTargetRefreshGeneration || imaKnowledgeBaseId != selectedId) return@launch
+                imaFolders = folders
+                imaFolderKnowledgeBaseId = selectedId
+                imaFolderLoadState = if (folders.isEmpty()) {
+                    DestinationTargetLoadState.EMPTY
+                } else {
+                    DestinationTargetLoadState.LOADED
+                }
+                imaTargetsLoadedAtEpochMs = System.currentTimeMillis()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                if (generation == imaTargetRefreshGeneration && imaKnowledgeBaseId == selectedId) {
+                    imaFolderLoadState = DestinationTargetLoadState.FAILED
+                    AppLogger.warn(TAG, "ima 文件夹读取失败：${CardProcessingLog.safeError(error)}")
+                }
+            } finally {
+                if (generation == imaTargetRefreshGeneration) imaTargetsJob = null
+            }
+        }
     }
 
     fun selectImaFolder(id: String) {
-        if (id.isBlank() || imaFolders.any { it.id == id }) imaFolderId = id
+        if (imaFolderKnowledgeBaseId != imaKnowledgeBaseId) return
+        val selectedId = validatedImaFolderId(id, imaFolders) ?: return
+        imaFolderId = selectedId
+        persistImaTarget(imaKnowledgeBaseId, selectedId)
+    }
+
+    private fun persistImaTarget(knowledgeBaseId: String, folderId: String) {
+        prefs.edit()
+            .putString("ima_kb_id", knowledgeBaseId.trim())
+            .putString("ima_folder_id", folderId.trim())
+            .apply()
     }
 
     fun syncKnowledgeCard(card: KnowledgeCard) {
@@ -1233,7 +1347,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         imaKnowledgeBases.firstOrNull { it.id == imaKnowledgeBaseId }?.name ?: "知识库"
 
     private fun currentImaFolderName(): String =
-        imaFolders.firstOrNull { it.id == imaFolderId }?.name ?: if (imaFolderId.isBlank()) "根目录" else "文件夹"
+        imaFolders.firstOrNull { it.id == imaFolderId }?.displayPath
+            ?: if (imaFolderId.isBlank()) "根目录" else "文件夹"
 
     val currentImaTargetDisplayName: String
         get() = buildString {
@@ -1250,6 +1365,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         destinationExportMissingAssetCount = 0
         destinationExportSucceeded = false
         destinationExportFailed = false
+        ensureImaTargetsLoaded()
     }
 
     fun reportDestinationCardMissing(cardId: String, cardVersion: String?) {
@@ -1283,17 +1399,6 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             updatedAtEpochMs = document.updatedAtEpochMs,
             markdown = NoteMarkdownProjection.render(document),
         )
-    }
-
-    fun selectImaTarget(knowledgeBaseId: String, folderId: String) {
-        if (knowledgeBaseId.isBlank()) return
-        imaKnowledgeBaseId = knowledgeBaseId
-        imaFolderId = folderId
-        prefs.edit()
-            .putString("ima_kb_id", knowledgeBaseId.trim())
-            .putString("ima_folder_id", folderId.trim())
-            .apply()
-        status = "已切换当前同步目标。"
     }
 
     fun exportDestinationCard() {
@@ -2469,6 +2574,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private const val TAG = "UnarchiveViewModel"
         private const val PREF_SELECTED_ENGINE = "selected_asr_engine"
         private const val PREF_CACHE_BUDGET_BYTES = "cache_budget_bytes"
+        private const val IMA_TARGET_FRESHNESS_MS = 5 * 60 * 1000L
     }
 
     private fun loadPersistedEngine(): AsrEngineKind = prefs.getString(PREF_SELECTED_ENGINE, null)

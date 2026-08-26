@@ -93,7 +93,9 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 DestinationEvent.ExportMarkdown -> vm.exportDestinationCard()
                 DestinationEvent.SyncIma -> vm.destinationCardForUi()?.let(vm::syncKnowledgeCard)
                 is DestinationEvent.RetryIma -> vm.destinationCardForUi()?.let { vm.retryDestinationTarget(it, event.ref) }
-                is DestinationEvent.SelectTarget -> vm.selectImaTarget(event.knowledgeBaseId, event.folderId)
+                DestinationEvent.RefreshTargets -> vm.refreshImaTargets()
+                is DestinationEvent.SelectKnowledgeBase -> vm.selectImaKnowledgeBase(event.knowledgeBaseId)
+                is DestinationEvent.SelectFolder -> vm.selectImaFolder(event.folderId)
                 DestinationEvent.OpenSecuritySettings -> Unit
             }
         },

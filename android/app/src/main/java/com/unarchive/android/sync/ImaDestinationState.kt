@@ -22,6 +22,22 @@ internal fun imaDestinationSyncUnavailableReason(
     else -> null
 }
 
+internal fun validatedImaKnowledgeBaseId(
+    requestedId: String,
+    available: List<ImaKnowledgeBase>,
+): String? = requestedId.trim().takeIf { candidate ->
+    candidate.isNotBlank() && available.any { it.id == candidate }
+}
+
+internal fun validatedImaFolderId(
+    requestedId: String,
+    available: List<ImaFolder>,
+): String? {
+    val candidate = requestedId.trim()
+    if (candidate.isBlank()) return ""
+    return candidate.takeIf { id -> available.any { it.id == id } }
+}
+
 /** How image assets were represented in the remote note. */
 enum class ImaImageMode {
     UNKNOWN,
