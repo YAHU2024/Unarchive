@@ -7,6 +7,21 @@ import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.KnowledgeSyncTarget
 import com.unarchive.android.card.MarkdownCardRenderer
 
+/**
+ * Keeps prerequisite validation ahead of [KnowledgeSyncTarget] construction.
+ * The target type rejects a blank ID by design, so UI actions must present a
+ * recoverable state instead of letting that invariant terminate the process.
+ */
+internal fun imaDestinationSyncUnavailableReason(
+    clientId: String,
+    apiKey: String,
+    knowledgeBaseId: String,
+): String? = when {
+    clientId.isBlank() || apiKey.isBlank() -> "请先配置 ima 凭据。"
+    knowledgeBaseId.isBlank() -> "请先选择 ima 知识库。"
+    else -> null
+}
+
 /** How image assets were represented in the remote note. */
 enum class ImaImageMode {
     UNKNOWN,

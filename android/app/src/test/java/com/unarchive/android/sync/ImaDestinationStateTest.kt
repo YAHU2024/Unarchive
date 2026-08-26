@@ -15,6 +15,15 @@ class ImaDestinationStateTest {
     private val cardId = KnowledgeCardId("bilibili", "BV_DESTINATION")
 
     @Test
+    fun syncPrerequisiteRejectsBlankKnowledgeBaseBeforeTargetConstruction() {
+        assertEquals(
+            "请先选择 ima 知识库。",
+            imaDestinationSyncUnavailableReason("client", "api-key", ""),
+        )
+        assertEquals(null, imaDestinationSyncUnavailableReason("client", "api-key", "kb-1"))
+    }
+
+    @Test
     fun imageDeliveryDistinguishesEmbeddedPartialAndBudgetFallback() {
         val embedded = ImaImageDelivery.from(
             rendered = MarkdownCardRenderer.EmbeddedAssetsResult(

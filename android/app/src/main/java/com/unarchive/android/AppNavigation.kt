@@ -1276,6 +1276,13 @@ private fun DestinationScreen(
                             "当前目标：${state.currentTargetLabel}",
                             style = MaterialTheme.typography.bodyMedium,
                         )
+                        if (!state.imaTargetSelected) {
+                            Text(
+                                "请先选择一个知识库后再同步。",
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("destination-target-required"),
+                            )
+                        }
                         state.imaStateWarning?.let { warning ->
                             Text(
                                 warning,
@@ -1287,7 +1294,7 @@ private fun DestinationScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = { onEvent(DestinationEvent.SyncIma) },
-                                enabled = !state.imaSyncing,
+                                enabled = state.imaTargetSelected && !state.imaSyncing,
                                 modifier = Modifier.testTag("destination-sync-ima"),
                             ) { Text(if (state.imaSyncing) "同步中..." else "立即同步") }
                             OutlinedButton(onClick = onOpenSecuritySettings) { Text("管理凭据") }

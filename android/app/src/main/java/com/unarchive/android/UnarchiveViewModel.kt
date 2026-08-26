@@ -94,6 +94,7 @@ import com.unarchive.android.sync.ImaCredentialStore
 import com.unarchive.android.sync.ImaFolder
 import com.unarchive.android.sync.ImaKnowledgeBase
 import com.unarchive.android.sync.ImaSyncService
+import com.unarchive.android.sync.imaDestinationSyncUnavailableReason
 import com.unarchive.android.sync.safeImaErrorMessage
 import com.unarchive.android.sync.DestinationTargetState
 import com.unarchive.android.sync.DestinationTargetStateMapper
@@ -780,6 +781,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         if (imaSyncing || generateJob != null || runningJob != null || exportJob != null) return
         val clientId = imaCredentialStore.clientId().orEmpty()
         val apiKey = imaCredentialStore.apiKey().orEmpty()
+        val targetId = requestedTarget?.id ?: imaKnowledgeBaseId
+        imaDestinationSyncUnavailableReason(clientId, apiKey, targetId)?.let { reason ->
+            status = reason
+            return
+        }
         val target = requestedTarget ?: KnowledgeSyncTarget(
             type = "ima",
             id = imaKnowledgeBaseId,
@@ -787,7 +793,6 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             folderId = imaFolderId,
             folderName = currentImaFolderName(),
         )
-        if (clientId.isBlank() || apiKey.isBlank() || target.id.isBlank()) { status = "请先配置 ima 凭据和知识库"; return }
         imaSyncing = true
         viewModelScope.launch {
             try {

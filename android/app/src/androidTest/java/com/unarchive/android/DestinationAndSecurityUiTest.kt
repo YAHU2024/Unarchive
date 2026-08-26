@@ -2,6 +2,7 @@ package com.unarchive.android
 
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -68,6 +69,45 @@ class DestinationAndSecurityUiTest {
         composeRule.onNodeWithText("本地笔记").assertIsDisplayed()
         composeRule.onNodeWithTag("destination-export").assertIsDisplayed()
         composeRule.onNodeWithText("BV_DESTINATION").assertDoesNotExist()
+    }
+
+    @Test
+    fun destinationWithoutSelectedKnowledgeBaseExplainsAndDisablesSync() {
+        val card = card()
+        val state = UnarchiveUiState(
+            create = CreateUiState("", false, "", false, 0),
+            notes = NotesUiState(1, 0, listOf(document().title), listOf(card), listOf(document())),
+            graph = GraphUiState(1),
+            me = MeUiState(),
+            destinations = DestinationUiState(
+                card = card,
+                localSaved = true,
+                imaConfigured = true,
+                imaTargetSelected = false,
+                currentTargetLabel = "未选择目标",
+            ),
+        )
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = {},
+                    onNotesEvent = {},
+                    onDestinationEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                    securityContent = { _ -> Text("security") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("bottom-nav-notes").performClick()
+        composeRule.onNodeWithText("分享与去向").performClick()
+        composeRule.onNodeWithTag("destination-target-required").assertIsDisplayed()
+        composeRule.onNodeWithTag("destination-sync-ima").assertIsNotEnabled()
     }
 
     private fun card() = KnowledgeCard(
