@@ -43,6 +43,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.NavigationBar
@@ -92,6 +93,8 @@ import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.CreateProcessingStage
+import com.unarchive.android.ui.state.displayLabel
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.DestinationEvent
 import com.unarchive.android.ui.state.DestinationTargetLoadState
@@ -414,26 +417,69 @@ private fun CreateScreen(
                             .fillMaxWidth()
                             .testTag("create-generate-note"),
                     ) {
-                        Text(if (state.isProcessing) "处理中..." else "开始生成笔记草稿")
+                        Text(
+                            when {
+                                state.isProcessing -> "处理中..."
+                                state.processing.stage == CreateProcessingStage.RECOVERABLE &&
+                                    state.processing.checkpointSegmentCount > 0 -> "继续生成笔记草稿"
+                                else -> "开始生成笔记草稿"
+                            },
+                        )
                     }
                 }
             }
         }
-        if (state.isProcessing || state.statusMessage.isNotBlank()) {
+        if (state.isProcessing || state.statusMessage.isNotBlank() ||
+            state.processing.stage != CreateProcessingStage.IDLE
+        ) {
             item {
                 GlassSurface(modifier = Modifier.fillMaxWidth()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            if (state.isProcessing) "正在处理视频" else "最近状态",
+                            if (state.isProcessing) "正在处理视频" else "处理状态",
                             style = MaterialTheme.typography.titleMedium,
                         )
+                        if (state.processing.stage != CreateProcessingStage.IDLE) {
+                            Text(
+                                state.processing.stage.displayLabel,
+                                modifier = Modifier
+                                    .testTag("create-processing-stage")
+                                    .semantics {
+                                        contentDescription = "处理阶段：${state.processing.stage.displayLabel}"
+                                        liveRegion = LiveRegionMode.Polite
+                                    },
+                                color = if (state.processing.stage == CreateProcessingStage.FAILED) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        if (state.isProcessing) {
+                            LinearProgressIndicator(
+                                progress = { state.processing.progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("create-progress"),
+                            )
+                        }
                         Text(
                             state.statusMessage,
                             modifier = Modifier.testTag("create-status"),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (state.processing.checkpointSegmentCount > 0) {
+                            Text(
+                                "检查点已保存：${state.processing.checkpointSegmentCount} 段文本，可安全中断。",
+                                modifier = Modifier.testTag("create-checkpoint"),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         if (state.isProcessing) {
-                            OutlinedButton(onClick = { onEvent(CreateEvent.CancelProcessing) }) {
+                            OutlinedButton(
+                                onClick = { onEvent(CreateEvent.CancelProcessing) },
+                                enabled = state.processing.isCancellable,
+                            ) {
                                 Text("取消处理")
                             }
                         }

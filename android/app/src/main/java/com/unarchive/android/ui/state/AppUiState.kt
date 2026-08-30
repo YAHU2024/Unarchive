@@ -16,6 +16,47 @@ enum class GraphRelationOperationState { IDLE, SAVING, SAVED, FAILED }
 
 enum class DestinationOperationState { IDLE, RUNNING, SUCCEEDED, FAILED }
 
+/**
+ * Stable, product-facing stages for the Create flow.  The underlying
+ * pipeline may add or rename implementation stages without forcing a Compose
+ * screen (or a future presentation) to understand those details.
+ */
+internal enum class CreateProcessingStage {
+    IDLE,
+    VALIDATING,
+    DOWNLOADING,
+    TRANSCRIBING,
+    SAVING_CARD,
+    GENERATING_AI,
+    CAPTURING_SCREENSHOTS,
+    COMPLETED,
+    FAILED,
+    CANCELLED,
+    RECOVERABLE,
+}
+
+internal val CreateProcessingStage.displayLabel: String
+    get() = when (this) {
+        CreateProcessingStage.IDLE -> "等待开始"
+        CreateProcessingStage.VALIDATING -> "准备中"
+        CreateProcessingStage.DOWNLOADING -> "下载音频"
+        CreateProcessingStage.TRANSCRIBING -> "转写中"
+        CreateProcessingStage.SAVING_CARD -> "保存知识卡片"
+        CreateProcessingStage.GENERATING_AI -> "AI 整理中"
+        CreateProcessingStage.CAPTURING_SCREENSHOTS -> "获取章节截图"
+        CreateProcessingStage.COMPLETED -> "已完成"
+        CreateProcessingStage.FAILED -> "处理失败"
+        CreateProcessingStage.CANCELLED -> "已取消"
+        CreateProcessingStage.RECOVERABLE -> "可以恢复"
+    }
+
+internal data class CreateProcessingUiState(
+    val stage: CreateProcessingStage = CreateProcessingStage.IDLE,
+    val progress: Float = 0f,
+    val checkpointSegmentCount: Int = 0,
+    val isCancellable: Boolean = false,
+)
+
 internal enum class DestinationTargetLoadState { IDLE, LOADING, LOADED, EMPTY, FAILED }
 
 internal data class DestinationKnowledgeBaseOption(
@@ -89,6 +130,7 @@ internal data class CreateUiState(
     val storedResultCount: Int,
     val latestNoteDocument: NoteDocument? = null,
     val recoveries: List<RecoveryUiItem> = emptyList(),
+    val processing: CreateProcessingUiState = CreateProcessingUiState(),
 )
 
 internal data class RecoveryUiItem(
@@ -262,6 +304,12 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
                     errorMessage = record.lastError,
                 )
             },
+            processing = CreateProcessingUiState(
+                stage = createProcessingStage,
+                progress = progress.coerceIn(0f, 1f),
+                checkpointSegmentCount = checkpointSegmentCount,
+                isCancellable = runningJob?.isActive == true || generateJob?.isActive == true,
+            ),
         ),
         notes = NotesUiState(
             noteCount = libraryItems.count { it.kind == NotesLibraryItemKind.SAVED_NOTE },

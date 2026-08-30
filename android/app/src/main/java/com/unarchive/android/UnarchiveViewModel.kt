@@ -53,6 +53,7 @@ import com.unarchive.android.card.SingleCardRecoveryStage
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.state.GraphRelationOperationState
 import com.unarchive.android.ui.state.DestinationTargetLoadState
+import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.NoteVersionKey
 import com.unarchive.android.checkpoint.FileTranscriptionCheckpointRepository
 import com.unarchive.android.checkpoint.LocalAudioCheckpointRunner
@@ -351,6 +352,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var selectedKnowledgeCard by mutableStateOf(knowledgeCards.firstOrNull())
         private set
     var status by mutableStateOf("请输入 B站链接或选择本地音频。")
+    /** Product-facing Create stage; pipeline-specific stages stay below this boundary. */
+    internal var createProcessingStage by mutableStateOf(CreateProcessingStage.IDLE)
+        private set
     var coverRetryInProgress by mutableStateOf(false)
         private set
     internal var coverRetryKeys by mutableStateOf<Set<NoteVersionKey>>(emptySet())
@@ -1564,6 +1568,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         )
         singleCardRecoveryRepository.save(recovering)
         singleCardRecoveries = singleCardRecoveries.map { if (it.operationId == operationId) recovering else it }
+        createProcessingStage = CreateProcessingStage.SAVING_CARD
         generateCard(stored, recovering)
     }
 
@@ -1591,12 +1596,14 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         generateNote: Boolean,
     ) {
         if (runningJob != null || generateJob != null || exportJob != null) return
+        createProcessingStage = CreateProcessingStage.VALIDATING
         if (
             BuildConfig.SHERPA_ENABLED &&
             selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
             !modelRepository.allInstalled()
         ) {
             status = "模型未安装。请先到「设置」页的 Models 区下载 SenseVoice 和 Silero VAD。"
+            createProcessingStage = CreateProcessingStage.FAILED
             AppLogger.warn(TAG, "模型未安装，已中止视频处理")
             return
         }
@@ -1638,13 +1645,24 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
                 if (generateNote) noteSource = videoResult?.storedResult
+                createProcessingStage = if (generateNote) {
+                    CreateProcessingStage.SAVING_CARD
+                } else {
+                    CreateProcessingStage.COMPLETED
+                }
             } catch (_: CancellationException) {
                 selectedStoredResult = previousStoredResult
                 status = "视频处理已取消。"
+                createProcessingStage = if (checkpointSegmentCount > 0) {
+                    CreateProcessingStage.RECOVERABLE
+                } else {
+                    CreateProcessingStage.CANCELLED
+                }
                 AppLogger.warn(TAG, "视频处理已取消")
             } catch (error: Exception) {
                 selectedStoredResult = previousStoredResult
                 status = error.message ?: "视频处理失败。"
+                createProcessingStage = CreateProcessingStage.FAILED
                 AppLogger.error(TAG, "视频处理失败：${error.message}")
             } finally {
                 runningJob = null
@@ -1655,17 +1673,20 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun startBatch() {
         if (runningJob != null) return
+        createProcessingStage = CreateProcessingStage.VALIDATING
         if (
             BuildConfig.SHERPA_ENABLED &&
             selectedEngine == AsrEngineKind.SENSE_VOICE_SHERPA &&
             !modelRepository.allInstalled()
         ) {
             status = "模型未安装。请先到「设置」中安装模型。"
+            createProcessingStage = CreateProcessingStage.FAILED
             return
         }
         val items = favoriteVideos.filter { it.isAvailable && it.videoId?.value in selectedFavoriteVideoIds }
         if (items.isEmpty()) {
             status = "请先选择至少一个可用视频。"
+            createProcessingStage = CreateProcessingStage.FAILED
             return
         }
         val config = currentAsrConfig()
@@ -1707,6 +1728,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         val manifest = activeBatchManifest
         if (manifest == null) {
             status = "没有可恢复的批次。"
+            createProcessingStage = CreateProcessingStage.FAILED
             return
         }
         if (manifest.configSignature != currentAsrConfig().signature()) {
@@ -1716,12 +1738,15 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     "manifestVersion=${manifest.schemaVersion} reason=config_mismatch",
             )
             status = "批次配置已变化，无法恢复。请重新创建批次。"
+            createProcessingStage = CreateProcessingStage.FAILED
             return
         }
         if (manifest.items.none { it.state in targetStates && (targetVideoIds == null || it.videoId in targetVideoIds) }) {
             status = "没有可恢复的项目。"
+            createProcessingStage = CreateProcessingStage.FAILED
             return
         }
+        createProcessingStage = CreateProcessingStage.VALIDATING
         batchRecoveryAvailable = false
         AppLogger.info(
             TAG,
@@ -1834,6 +1859,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 batchCardSucceededCount = cardSucceeded
                 batchCardPartialCount = cardPartial
                 status = "批量完成：转录成功 ${summary.succeeded}，跳过 ${summary.skipped}，不可用 ${summary.unavailable}，失败 ${summary.failed}；知识卡片完成 $cardSucceeded，部分完成 $cardPartial。"
+                createProcessingStage = CreateProcessingStage.COMPLETED
                 if (activeBatchManifest?.unfinished() != true) {
                     batchManifestRepository.delete()
                     activeBatchManifest = null
@@ -1846,10 +1872,16 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 batchCardJob?.cancel()
                 status = "批量处理已取消。可从批次清单恢复。"
                 batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
+                createProcessingStage = if (batchRecoveryAvailable) {
+                    CreateProcessingStage.RECOVERABLE
+                } else {
+                    CreateProcessingStage.CANCELLED
+                }
             } catch (error: Exception) {
                 status = error.message ?: "批量处理失败。"
                 AppLogger.error(TAG, "批量处理失败：${error.message}")
                 batchRecoveryAvailable = activeBatchManifest?.unfinished() == true
+                createProcessingStage = CreateProcessingStage.FAILED
             } finally {
                 // Covers cancellation initiated by lifecycle teardown or a
                 // parent scope, where the UI cancel callback is not involved.
@@ -2093,6 +2125,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             config = config ?: currentAsrConfig(),
             forceRefreshAudio = forceRefreshAudio,
             progressListener = SingleVideoProgressListener { update ->
+                createProcessingStage = update.stage.toCreateProcessingStage()
                 val now = SystemClock.elapsedRealtime()
                 if (update.stage == SingleVideoStage.COMPLETE ||
                     now - lastProgressEmitMs >= PROGRESS_EMIT_INTERVAL_MS
@@ -2109,6 +2142,22 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
+    private fun SingleVideoStage.toCreateProcessingStage(): CreateProcessingStage = when (this) {
+        SingleVideoStage.RESOLVING_REFERENCE,
+        SingleVideoStage.FETCHING_METADATA,
+        SingleVideoStage.FETCHING_SUBTITLE,
+        SingleVideoStage.RESOLVING_AUDIO,
+        SingleVideoStage.CHECKING_AUDIO_CACHE
+        -> CreateProcessingStage.VALIDATING
+        SingleVideoStage.DOWNLOADING_AUDIO,
+        SingleVideoStage.USING_CACHED_AUDIO
+        -> CreateProcessingStage.DOWNLOADING
+        SingleVideoStage.RESUMING_TRANSCRIPTION,
+        SingleVideoStage.TRANSCRIBING
+        -> CreateProcessingStage.TRANSCRIBING
+        SingleVideoStage.COMPLETE -> CreateProcessingStage.COMPLETED
+    }
+
     fun startLocalAudio() {
         val uri = selectedAudio ?: return
         if (
@@ -2117,6 +2166,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             !modelRepository.allInstalled()
         ) {
             status = "模型未安装。请先到「设置」页的 Models 区下载 SenseVoice 和 Silero VAD。"
+            createProcessingStage = CreateProcessingStage.FAILED
             AppLogger.warn(TAG, "模型未安装，已中止本地基准测试")
             return
         }
@@ -2126,6 +2176,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         progress = 0f
         checkpointSegmentCount = 0
         status = "正在运行基准测试..."
+        createProcessingStage = CreateProcessingStage.TRANSCRIBING
         AppLogger.info(TAG, "本地音频基准测试开始：${selectedAudioName}")
         runningJob = viewModelScope.launch {
             try {
@@ -2187,11 +2238,18 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     else -> "基准测试完成。该引擎未接入原生语音识别。"
                 }
+                createProcessingStage = CreateProcessingStage.COMPLETED
             } catch (_: CancellationException) {
                 status = "基准测试已取消。"
+                createProcessingStage = if (checkpointSegmentCount > 0) {
+                    CreateProcessingStage.RECOVERABLE
+                } else {
+                    CreateProcessingStage.CANCELLED
+                }
                 AppLogger.warn(TAG, "本地基准测试已取消")
             } catch (error: Exception) {
                 status = error.message ?: "语音识别基准测试失败。"
+                createProcessingStage = CreateProcessingStage.FAILED
                 AppLogger.error(TAG, "本地基准测试失败：${error.message}")
             } finally {
                 runningJob = null
@@ -2223,6 +2281,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         recoveryRecord: SingleCardRecoveryRecord? = null,
     ) {
         if (generateJob != null || (runningJob != null && !batchGeneratingCard) || exportJob != null) return
+        createProcessingStage = CreateProcessingStage.SAVING_CARD
         val apiKey = apiKeyStore.get()
         status = if (apiKey == null) "正在保存基础知识卡片..." else "正在保存基础知识卡片..."
         val operationId = recoveryRecord?.operationId ?: UUID.randomUUID().toString()
@@ -2303,6 +2362,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     val aiStartedAt = SystemClock.elapsedRealtime()
                     CardProcessingLog.event(operationId, CardProcessingLog.Stage.AI, CardProcessingLog.State.STARTED, cardId)
                     try {
+                        createProcessingStage = CreateProcessingStage.GENERATING_AI
                         status = "正在生成 AI 卡片..."
                         analysis = cardAnalyzer.analyze(
                             apiKey, stored.segments, stored.audioDurationMs, thinkingEnabled,
@@ -2348,6 +2408,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     recovery = persistSingleCardRecovery(
                         recovery.copy(stage = SingleCardRecoveryStage.SCREENSHOTS),
                     )
+                    createProcessingStage = CreateProcessingStage.CAPTURING_SCREENSHOTS
                     screenshotsState = CardStageState.RUNNING
                     card = card.copy(
                         analysis = analysis,
@@ -2479,6 +2540,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 )
                 refreshKnowledgeCardsAndWait()
                 selectedKnowledgeCard = card
+                createProcessingStage = CreateProcessingStage.COMPLETED
                 status = when {
                     analysisState == CardStageState.FAILED -> "基础知识卡片已保存，AI 生成失败，可重试。"
                     screenshotsState == CardStageState.FAILED || screenshotsState == CardStageState.PARTIAL ->
@@ -2503,6 +2565,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     state = SingleCardRecoveryState.RECOVERABLE,
                     error = "生成已暂停，可在创作页继续",
                 )
+                createProcessingStage = CreateProcessingStage.RECOVERABLE
                 status = "AI 卡片生成已暂停，可在创作页继续。"
                 CardProcessingLog.event(
                     operationId, CardProcessingLog.Stage.CARD, CardProcessingLog.State.CANCELLED, cardId,
@@ -2515,6 +2578,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     state = SingleCardRecoveryState.FAILED,
                     error = CardProcessingLog.safeError(error),
                 )
+                createProcessingStage = CreateProcessingStage.FAILED
                 status = if (error is InsufficientStorageException) {
                     "基础知识卡片已保存；" + error.recoveryMessage()
                 } else {

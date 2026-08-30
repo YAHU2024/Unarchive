@@ -11,6 +11,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.CreateProcessingStage
+import com.unarchive.android.ui.state.CreateProcessingUiState
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
 import com.unarchive.android.ui.state.MeUiState
@@ -170,6 +172,72 @@ class D1NavigationTest {
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.ResumeSingleCard("recovery-1")), events)
         }
+    }
+
+    @Test
+    fun createProcessingStateShowsStableStageProgressAndCheckpoint() {
+        val state = sampleState().copy(
+            create = sampleState().create.copy(
+                isProcessing = true,
+                statusMessage = "正在识别音频...",
+                processing = CreateProcessingUiState(
+                    stage = CreateProcessingStage.TRANSCRIBING,
+                    progress = 0.42f,
+                    checkpointSegmentCount = 3,
+                    isCancellable = true,
+                ),
+            ),
+        )
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = {},
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
+        composeRule.onNodeWithText("转写中").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-progress").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-checkpoint").assertIsDisplayed()
+        composeRule.onNodeWithText("检查点已保存：3 段文本，可安全中断。").assertIsDisplayed()
+    }
+
+    @Test
+    fun recoverableCheckpointUsesContinueAction() {
+        val state = sampleState().copy(
+            create = sampleState().create.copy(
+                videoReference = "BV1PS42197aM",
+                statusMessage = "视频处理已取消。",
+                processing = CreateProcessingUiState(
+                    stage = CreateProcessingStage.RECOVERABLE,
+                    checkpointSegmentCount = 3,
+                ),
+            ),
+        )
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = {},
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("继续生成笔记草稿").assertIsDisplayed()
     }
 
     private fun sampleState() = UnarchiveUiState(
