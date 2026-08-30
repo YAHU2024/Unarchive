@@ -28,23 +28,105 @@ import com.unarchive.android.card.NoteGeneration
 import com.unarchive.android.card.NoteGenerationState
 import com.unarchive.android.card.NotePublishingState
 import com.unarchive.android.card.NoteSource
+import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.DestinationUiState
 import com.unarchive.android.ui.state.DestinationEvent
 import com.unarchive.android.ui.state.DestinationFolderOption
 import com.unarchive.android.ui.state.DestinationKnowledgeBaseOption
 import com.unarchive.android.ui.state.DestinationTargetLoadState
+import com.unarchive.android.ui.state.DestinationTargetRef
+import com.unarchive.android.ui.state.DestinationTargetUiState
 import com.unarchive.android.ui.state.GraphUiState
 import com.unarchive.android.ui.state.MeUiState
 import com.unarchive.android.ui.state.NotesUiState
 import com.unarchive.android.ui.state.UnarchiveUiState
+import com.unarchive.android.ui.destination.DestinationScreen
 import com.unarchive.android.ui.theme.UnarchiveTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
 class DestinationAndSecurityUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun destinationPresentationCanRenderAndEmitEventsWithoutNavigationHost() {
+        val events = mutableListOf<DestinationEvent>()
+        var backPressed = false
+        composeRule.setContent {
+            UnarchiveTheme {
+                DestinationScreen(
+                    state = DestinationUiState(card = card(), localSaved = true),
+                    onEvent = { events += it },
+                    onBack = { backPressed = true },
+                    onOpenSecuritySettings = { events += DestinationEvent.OpenSecuritySettings },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("destination-export").assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("destination-back").performClick()
+
+        assertEquals(listOf(DestinationEvent.ExportMarkdown), events)
+        assertTrue(backPressed)
+    }
+
+    @Test
+    fun destinationMissingCardKeepsBackActionReachable() {
+        var backPressed = false
+        composeRule.setContent {
+            UnarchiveTheme {
+                DestinationScreen(
+                    state = DestinationUiState(cardError = "笔记版本已不存在"),
+                    onEvent = {},
+                    onBack = { backPressed = true },
+                    onOpenSecuritySettings = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("笔记版本已不存在").assertIsDisplayed()
+        composeRule.onNodeWithTag("destination-back").performClick()
+
+        assertTrue(backPressed)
+    }
+
+    @Test
+    fun destinationRetryForwardsExactTargetReference() {
+        val retryRef = DestinationTargetRef("ima", "kb-1", "folder-1", 7L)
+        val events = mutableListOf<DestinationEvent>()
+        composeRule.setContent {
+            UnarchiveTheme {
+                DestinationScreen(
+                    state = DestinationUiState(
+                        card = card(),
+                        localSaved = true,
+                        targetRecords = listOf(
+                            DestinationTargetUiState(
+                                targetLabel = "课程库",
+                                folderLabel = "课程 / 第一章",
+                                state = KnowledgeSyncState.RETRYABLE_FAILURE,
+                                stateLabel = "可重试",
+                                detail = "网络暂时不可用",
+                                canRetry = true,
+                                retryRef = retryRef,
+                            ),
+                        ),
+                    ),
+                    onEvent = { events += it },
+                    onBack = {},
+                    onOpenSecuritySettings = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("重试").performClick()
+
+        assertEquals(listOf(DestinationEvent.RetryIma(retryRef)), events)
+    }
 
     @Test
     fun notesReachShareAndDestinationSurfaceWithoutShowingInternalIds() {
