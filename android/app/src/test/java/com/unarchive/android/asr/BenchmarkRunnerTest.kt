@@ -58,6 +58,31 @@ class BenchmarkRunnerTest {
             }
         }
     }
+
+    @Test
+    fun passesFullAsrConfigToConfigurationAwareProvider() = runTest {
+        var received: AsrConfig? = null
+        val provider = object : AsrEngineProvider {
+            override fun create(kind: AsrEngineKind): AsrEngine = FakeEngine(kind, 1_000)
+
+            override fun create(config: AsrConfig): AsrEngine {
+                received = config
+                return FakeEngine(config.engine, 1_000)
+            }
+        }
+        val config = AsrConfig(
+            engine = AsrEngineKind.SILICONFLOW_CLOUD,
+            siliconFlowModel = "Qwen/ASR-Test",
+        )
+
+        BenchmarkRunner(provider, SequenceClock(0, 1)).run(
+            source = AudioSource("sample.wav", "content://sample"),
+            config = config,
+            progressListener = AsrProgressListener {},
+        )
+
+        assertEquals(config, received)
+    }
 }
 
 private class FakeEngine(

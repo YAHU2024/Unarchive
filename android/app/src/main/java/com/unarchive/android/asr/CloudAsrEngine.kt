@@ -28,7 +28,7 @@ fun interface CloudAsrClient {
 class SiliconFlowAsrClient(
     private val apiKey: String,
     private val baseUrl: String = "https://api.siliconflow.cn/v1",
-    private val model: String = "FunAudioLLM/SenseVoiceSmall",
+    private val model: String = SiliconFlowModelCatalog.DEFAULT_MODEL,
     private val connectTimeoutMs: Int = 30_000,
     private val readTimeoutMs: Int = 300_000,
 ) : CloudAsrClient {

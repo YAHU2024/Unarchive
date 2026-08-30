@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -19,10 +20,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.model.ModelManagementSection
@@ -67,6 +71,15 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
                 Text(engine.displayName)
             }
         }
+
+        SiliconFlowModelSettings(
+            models = vm.siliconFlowModels,
+            selectedModel = vm.selectedSiliconFlowModel,
+            status = vm.siliconFlowModelStatus,
+            enabled = vm.runningJob == null && vm.generateJob == null,
+            onSelect = vm::selectSiliconFlowModel,
+            onAdd = vm::addSiliconFlowModel,
+        )
 
         HorizontalDivider()
 
@@ -141,6 +154,80 @@ internal fun SettingsTab(vm: UnarchiveViewModel) {
             modelsDirectory = File(context.filesDir, "models"),
             enabled = vm.runningJob == null,
         )
+    }
+}
+
+@Composable
+internal fun SiliconFlowModelSettings(
+    models: List<String>,
+    selectedModel: String,
+    status: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+    onAdd: (String) -> Boolean,
+) {
+    var modelInput by rememberSaveable { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("siliconflow-model-section"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("SiliconFlow 模型", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "仅在选择 SiliconFlow 云端引擎时使用。可添加服务商支持的模型名称并切换；修改后会作为新的转写配置。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        models.forEachIndexed { index, model ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("siliconflow-model-option-$index"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    modifier = Modifier.testTag("siliconflow-model-radio-$index"),
+                    selected = model == selectedModel,
+                    onClick = { onSelect(model) },
+                    enabled = enabled,
+                )
+                Text(model)
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = modelInput,
+                onValueChange = { modelInput = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("siliconflow-model-input"),
+                enabled = enabled,
+                singleLine = true,
+                label = { Text("添加模型名称") },
+            )
+            Button(
+                modifier = Modifier.testTag("siliconflow-model-add"),
+                onClick = {
+                    if (onAdd(modelInput)) modelInput = ""
+                },
+                enabled = enabled && modelInput.isNotBlank(),
+            ) {
+                Text("添加")
+            }
+        }
+        if (status.isNotBlank()) {
+            Text(
+                status,
+                modifier = Modifier.testTag("siliconflow-model-status"),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 

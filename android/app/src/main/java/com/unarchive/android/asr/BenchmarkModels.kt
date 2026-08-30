@@ -34,7 +34,7 @@ class BenchmarkRunner(
         progressListener: AsrProgressListener,
         initialSegments: List<TranscriptSegment> = emptyList(),
     ): BenchmarkResult {
-        val engine = engineProvider.create(config.engine)
+        val engine = engineProvider.create(config)
         require(engine.kind == config.engine) {
             "Engine provider returned ${engine.kind} for ${config.engine}"
         }

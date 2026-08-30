@@ -50,9 +50,14 @@ data class AsrConfig(
      * overhead; default 30 s.
      */
     val vadMaxSpeechSeconds: Int = DEFAULT_VAD_MAX_SPEECH_SECONDS,
+    /** SiliconFlow model identifier used when [engine] is cloud ASR. */
+    val siliconFlowModel: String = SiliconFlowModelCatalog.DEFAULT_MODEL,
 ) {
     init {
         require(sampleRateHz > 0) { "sampleRateHz must be positive" }
+        require(SiliconFlowModelCatalog.normalize(siliconFlowModel) == siliconFlowModel) {
+            "siliconFlowModel must be a normalized model identifier"
+        }
         require(contextPaddingMs >= 0) { "contextPaddingMs cannot be negative" }
         require(numThreads == null || numThreads > 0) { "numThreads must be positive" }
         require(parallelWorkers > 0) { "parallelWorkers must be positive" }
@@ -72,6 +77,15 @@ data class AsrConfig(
 fun AsrConfig.signature(): String {
     val source = listOf(
         engine.name,
+        // Keep the historical default signature stable; a non-default model is
+        // a distinct cloud configuration and must not reuse its old result.
+        if (engine == AsrEngineKind.SILICONFLOW_CLOUD &&
+            siliconFlowModel != SiliconFlowModelCatalog.DEFAULT_MODEL
+        ) {
+            siliconFlowModel
+        } else {
+            ""
+        },
         language,
         sampleRateHz.toString(),
         enableVad.toString(),
@@ -197,6 +211,12 @@ interface AsrEngine {
 
 fun interface AsrEngineProvider {
     fun create(kind: AsrEngineKind): AsrEngine
+
+    /**
+     * Configuration-aware creation added without breaking existing test and
+     * compatibility providers that only need the engine kind.
+     */
+    fun create(config: AsrConfig): AsrEngine = create(config.engine)
 }
 
 data class AudioSource(

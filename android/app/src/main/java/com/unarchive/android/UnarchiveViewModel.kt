@@ -17,6 +17,8 @@ import com.unarchive.android.analyzer.ApiKeyStore
 import com.unarchive.android.analyzer.CardAnalyzer
 import com.unarchive.android.asr.AndroidAsrEngineProvider
 import com.unarchive.android.asr.SiliconFlowKeyStore
+import com.unarchive.android.asr.SiliconFlowModelAddResult
+import com.unarchive.android.asr.SiliconFlowModelStore
 import com.unarchive.android.asr.AsrConfig
 import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.asr.AsrEngineSelection
@@ -155,6 +157,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val context: Context = application.applicationContext
     private val prefs = context.getSharedPreferences("unarchive", Context.MODE_PRIVATE)
+    private val siliconFlowModelStore = SiliconFlowModelStore(prefs)
+    private val initialSiliconFlowModelState = siliconFlowModelStore.load()
 
     // --- dependencies (previously `remember { ... }` in the composable) ---
 
@@ -317,6 +321,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
 
     var selectedEngine by mutableStateOf(loadPersistedEngine())
+    var siliconFlowModels by mutableStateOf(initialSiliconFlowModelState.models)
+        private set
+    var selectedSiliconFlowModel by mutableStateOf(initialSiliconFlowModelState.selectedModel)
+        private set
+    var siliconFlowModelStatus by mutableStateOf("")
+        private set
     var selectedThreads by mutableStateOf<Int?>(null)
     var selectedEnableVad by mutableStateOf(false)
     var selectedVadMaxSeconds by mutableIntStateOf(AsrConfig.DEFAULT_VAD_MAX_SPEECH_SECONDS)
@@ -615,6 +625,42 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         selectedEngine = engine
         prefs.edit().putString(PREF_SELECTED_ENGINE, engine.name).apply()
         AppLogger.info(TAG, "引擎已切换为 ${engine.name}")
+    }
+
+    /** Adds a model identifier for temporary provider/model compatibility testing. */
+    fun addSiliconFlowModel(rawModel: String): Boolean {
+        if (runningJob != null || generateJob != null) {
+            siliconFlowModelStatus = "当前有任务正在运行，暂时不能修改模型。"
+            return false
+        }
+        return when (siliconFlowModelStore.add(rawModel)) {
+            SiliconFlowModelAddResult.ADDED -> {
+                refreshSiliconFlowModelState()
+                siliconFlowModelStatus = "模型已添加，请点击列表中的模型切换。"
+                true
+            }
+            SiliconFlowModelAddResult.ALREADY_PRESENT -> {
+                siliconFlowModelStatus = "该模型已在列表中。"
+                false
+            }
+            SiliconFlowModelAddResult.INVALID -> {
+                siliconFlowModelStatus = "模型名称不能为空，且不能包含控制字符。"
+                false
+            }
+        }
+    }
+
+    fun selectSiliconFlowModel(model: String) {
+        if (runningJob != null || generateJob != null) {
+            siliconFlowModelStatus = "当前有任务正在运行，暂时不能切换模型。"
+            return
+        }
+        if (!siliconFlowModelStore.select(model)) {
+            siliconFlowModelStatus = "该模型不在已添加列表中。"
+            return
+        }
+        refreshSiliconFlowModelState()
+        siliconFlowModelStatus = "已切换模型：$selectedSiliconFlowModel"
     }
 
     fun setThreads(threads: Int?) {
@@ -2107,6 +2153,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun currentAsrConfig() = AsrConfig(
         engine = selectedEngine,
+        siliconFlowModel = selectedSiliconFlowModel,
         numThreads = selectedThreads,
         enableVad = selectedEnableVad,
         vadMaxSpeechSeconds = selectedVadMaxSeconds,
@@ -2182,6 +2229,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val config = AsrConfig(
                     engine = selectedEngine,
+                    siliconFlowModel = selectedSiliconFlowModel,
                     numThreads = selectedThreads,
                     vadMaxSpeechSeconds = selectedVadMaxSeconds,
                 )
@@ -2643,6 +2691,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun loadPersistedEngine(): AsrEngineKind = prefs.getString(PREF_SELECTED_ENGINE, null)
         .let(AsrEngineSelection::fromPersistedName)
+
+    private fun refreshSiliconFlowModelState() {
+        val state = siliconFlowModelStore.load()
+        siliconFlowModels = state.models
+        selectedSiliconFlowModel = state.selectedModel
+    }
 
     private fun BatchManifestItem.toFavoriteVideo(folderId: String): BilibiliFavoriteVideo =
         BilibiliFavoriteVideo(

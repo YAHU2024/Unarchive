@@ -8,11 +8,19 @@ class AndroidAsrEngineProvider(
     private val siliconFlowKeyStore: SiliconFlowKeyStore = SiliconFlowKeyStore(context),
 ) : AsrEngineProvider {
     override fun create(kind: AsrEngineKind): AsrEngine {
+        return create(AsrConfig(kind))
+    }
+
+    override fun create(config: AsrConfig): AsrEngine {
+        val kind = config.engine
         requireAvailable(kind)
         if (kind == AsrEngineKind.SILICONFLOW_CLOUD) {
             val apiKey = siliconFlowKeyStore.get()
                 ?: throw IllegalStateException("请先在上方配置 SiliconFlow API Key")
-            return CloudAsrEngine(context, SiliconFlowAsrClient(apiKey))
+            return CloudAsrEngine(
+                context,
+                SiliconFlowAsrClient(apiKey, model = config.siliconFlowModel),
+            )
         }
         if (kind != AsrEngineKind.SENSE_VOICE_SHERPA || !BuildConfig.SHERPA_ENABLED) {
             return PreviewAsrEngine(kind)

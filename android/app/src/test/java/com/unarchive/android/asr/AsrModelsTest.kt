@@ -2,6 +2,7 @@ package com.unarchive.android.asr
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,6 +22,19 @@ class AsrModelsTest {
         assertThrows(IllegalArgumentException::class.java) {
             AsrConfig(engine = AsrEngineKind.SENSE_VOICE_SHERPA, parallelWorkers = 0)
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            AsrConfig(engine = AsrEngineKind.SILICONFLOW_CLOUD, siliconFlowModel = " ")
+        }
+    }
+
+    @Test
+    fun cloudModelChangesSignatureButDoesNotInvalidateLocalConfig() {
+        val cloud = AsrConfig(AsrEngineKind.SILICONFLOW_CLOUD)
+        val alternateCloud = cloud.copy(siliconFlowModel = "Qwen/ASR-Test")
+        assertNotEquals(cloud.signature(), alternateCloud.signature())
+
+        val local = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA)
+        assertEquals(local.signature(), local.copy(siliconFlowModel = "Qwen/ASR-Test").signature())
     }
 
     @Test
