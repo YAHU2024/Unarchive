@@ -240,6 +240,69 @@ class D1NavigationTest {
         composeRule.onNodeWithText("继续生成笔记草稿").assertIsDisplayed()
     }
 
+    @Test
+    fun processingCancelEmitsTypedEvent() {
+        val events = mutableListOf<CreateEvent>()
+        val state = sampleState().copy(
+            create = sampleState().create.copy(
+                isProcessing = true,
+                statusMessage = "正在识别音频...",
+                processing = CreateProcessingUiState(
+                    stage = CreateProcessingStage.TRANSCRIBING,
+                    progress = 0.42f,
+                    isCancellable = true,
+                ),
+            ),
+        )
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = events::add,
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("create-cancel").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(listOf(CreateEvent.CancelProcessing), events)
+        }
+    }
+
+    @Test
+    fun batchRecoveryEmitsTypedEvent() {
+        val events = mutableListOf<CreateEvent>()
+        val state = sampleState().copy(create = sampleState().create.copy(hasRecovery = true))
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = state,
+                    onCreateEvent = events::add,
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("create-batch-recovery").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-resume-batch").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(listOf(CreateEvent.ResumeBatch), events)
+        }
+    }
+
     private fun sampleState() = UnarchiveUiState(
         create = CreateUiState(
             videoReference = "",

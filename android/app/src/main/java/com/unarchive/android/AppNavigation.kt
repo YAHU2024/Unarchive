@@ -479,6 +479,7 @@ private fun CreateScreen(
                             OutlinedButton(
                                 onClick = { onEvent(CreateEvent.CancelProcessing) },
                                 enabled = state.processing.isCancellable,
+                                modifier = Modifier.testTag("create-cancel"),
                             ) {
                                 Text("取消处理")
                             }
@@ -489,14 +490,21 @@ private fun CreateScreen(
         }
         if (state.hasRecovery) {
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                GlassSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("create-batch-recovery"),
+                ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("发现未完成任务", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "已保留可以继续使用的处理中成果。",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Button(onClick = { onEvent(CreateEvent.ResumeBatch) }) {
+                        Button(
+                            onClick = { onEvent(CreateEvent.ResumeBatch) },
+                            modifier = Modifier.testTag("create-resume-batch"),
+                        ) {
                             Text("继续处理")
                         }
                     }
