@@ -7,12 +7,15 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.unarchive.android.card.FileKnowledgeCardRepository
 import com.unarchive.android.card.FileKnowledgeSyncRepository
 import com.unarchive.android.card.FileNoteDocumentRepository
+import com.unarchive.android.card.FileNoteContentRepository
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.KnowledgeSyncKey
 import com.unarchive.android.card.KnowledgeSyncState
-import com.unarchive.android.card.NoteMarkdownProjection
-import com.unarchive.android.card.NoteDocumentSavePhase
+import com.unarchive.android.card.NoteContentMigration
+import com.unarchive.android.card.NoteContentMigrationDecision
+import com.unarchive.android.card.NoteContent
+import com.unarchive.android.card.NoteMarkdownWriteback
 import com.unarchive.android.sync.ImaClient
 import com.unarchive.android.sync.ImaCredentialException
 import com.unarchive.android.sync.ImaCredentialStore
@@ -74,16 +77,24 @@ class LiveImaAcceptanceTest {
     @Test
     fun saveNewLocalRevisionForAppendAcceptance() {
         val fixture = loadFixture()
-        val repository = FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
+        val repository = FileNoteContentRepository(File(context.filesDir, "knowledge-markdown-content"))
         val current = requireNotNull(repository.find(fixture.card.cardId, fixture.card.cardVersion))
-        val baseTitle = current.title.replace(ACCEPTANCE_PREFIX_PATTERN, "")
-        val updatedTitle = "D4-IMA-${requireArgument(ARG_RUN_ID)}-$baseTitle"
-        val saved = repository.save(current.copy(title = updatedTitle))
+        val marker = "<!-- D4-IMA-${requireArgument(ARG_RUN_ID)} -->"
+        val updatedMarkdown = current.markdown.trimEnd() + "\n\n" + marker + "\n"
+        val writeback = NoteMarkdownWriteback.apply(current.structuredMetadata, updatedMarkdown)
+        val saved = repository.save(
+            current.copy(
+                markdown = updatedMarkdown,
+                structuredMetadata = writeback.document,
+                structuredProjection = writeback.projection,
+                projectionStatus = writeback.status,
+                lastSaveError = writeback.error?.let { "Markdown 投影解析失败：$it" },
+            ),
+        )
 
-        assertEquals(NoteDocumentSavePhase.COMPLETE, saved.phase)
         assertTrue(saved.isComplete)
-        assertTrue(saved.document.editing.contentRevision > current.editing.contentRevision)
-        assertTrue(saved.document.title.startsWith("D4-IMA-${requireArgument(ARG_RUN_ID)}-"))
+        assertTrue(saved.content.markdownRevision > current.markdownRevision)
+        assertTrue(saved.content.markdown.contains(marker))
     }
 
     @Test
@@ -217,17 +228,16 @@ class LiveImaAcceptanceTest {
             FileNoteDocumentRepository(File(context.filesDir, "knowledge-notes"))
                 .find(cardId, storedCard.cardVersion),
         ) { "No structured note exists for the current card version" }
-        val card = storedCard.copy(
-            title = document.title,
-            timingAccuracy = document.source.timingAccuracy,
-            transcript = document.sourceTranscript,
-            tags = document.tags,
-            relations = document.relations,
-            assets = document.assets,
-            updatedAtEpochMs = document.updatedAtEpochMs,
-            markdown = NoteMarkdownProjection.render(document),
+        val contentRepository = FileNoteContentRepository(File(context.filesDir, "knowledge-markdown-content"))
+        val content = contentRepository.find(cardId, storedCard.cardVersion)
+            ?: migrateContent(contentRepository, document, storedCard)
+        val snapshot = com.unarchive.android.card.FormalMarkdownSnapshotResolver.resolve(
+            card = storedCard,
+            content = content,
+            legacyMarkdownRevision = document.editing.contentRevision,
         )
-        val contentRevision = document.editing.contentRevision
+        val card = snapshot.card
+        val contentRevision = snapshot.markdownRevision
         val syncRepository = FileKnowledgeSyncRepository(
             File(context.filesDir, "knowledge-cards/ima-sync.json"),
         )
@@ -249,6 +259,22 @@ class LiveImaAcceptanceTest {
                 contentRevision,
             ),
         )
+    }
+
+    private fun migrateContent(
+        repository: FileNoteContentRepository,
+        document: com.unarchive.android.card.NoteDocument,
+        card: KnowledgeCard,
+    ): NoteContent {
+        val decision = NoteContentMigration.fromNoteDocument(document, card.markdown)
+        val ready = when (decision) {
+            is NoteContentMigrationDecision.Ready -> decision
+            is NoteContentMigrationDecision.Conflict ->
+                NoteContentMigration.resolveConflict(decision, decision.backup.markdown)
+        }
+        val result = repository.saveMigrated(ready.content, ready.backup)
+        require(result.isComplete) { "Unable to create v3 formal Markdown fixture" }
+        return result.content
     }
 
     private fun requireArgument(name: String): String =
@@ -275,6 +301,5 @@ class LiveImaAcceptanceTest {
         const val ARG_IMA_CONFIG_BASE64 = "ima_config_base64"
         const val ARG_EXPECT_REVISION_APPEND = "expect_revision_append"
         val BV_PATTERN = Regex("BV[0-9A-Za-z]{10}")
-        val ACCEPTANCE_PREFIX_PATTERN = Regex("^D4-(?:IMA-)?(?:\\d{8}-\\d{6}-)?")
     }
 }

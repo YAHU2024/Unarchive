@@ -102,6 +102,39 @@ class MarkdownEditorUiTest {
     }
 
     @Test
+    fun aiCandidateShowsDiffAndRequiresExplicitApplyOrReject() {
+        val formal = content()
+        val proposal = MarkdownAiProposalBuilder.create(
+            content = formal,
+            proposedMarkdown = "# AI 标题\n\nAI 摘要",
+            proposalId = "ui-proposal",
+            model = "test-model",
+            createdAtEpochMs = 2_000L,
+        )
+        var applied = false
+        var rejected = false
+        composeRule.setContent {
+            UnarchiveTheme {
+                MarkdownEditorScreen(
+                    state = MarkdownEditorUiState(content = formal, aiProposal = proposal),
+                    onEvent = { event ->
+                        applied = event == MarkdownEditorEvent.ApplyAiProposal
+                        rejected = event == MarkdownEditorEvent.RejectAiProposal
+                    },
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("markdown-ai-proposal").assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-ai-proposal-diff-summary").assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-ai-proposal-apply").performClick()
+        assert(applied)
+        composeRule.onNodeWithTag("markdown-ai-proposal-reject").performClick()
+        assert(rejected)
+    }
+
+    @Test
     fun migrationRouteOpensEditorAfterPersistingV2Backup() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val directory = File(context.cacheDir, "markdown-migration-${System.nanoTime()}")

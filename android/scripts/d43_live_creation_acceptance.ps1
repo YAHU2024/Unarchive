@@ -11,7 +11,8 @@ process launch. It never uninstalls the package or clears app data.
 param(
     [string]$DeviceSerial = "",
     [string]$VideoReference = "BV1PS42197aM",
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$ReviewMarkdownCandidate
 )
 
 $ErrorActionPreference = "Stop"
@@ -104,6 +105,11 @@ function Invoke-LiveTest {
 
 Write-Host "Running real create/edit/save acceptance for: $VideoReference"
 Invoke-LiveTest -Method "createEditAndSave"
+
+if ($ReviewMarkdownCandidate) {
+    Write-Host "Reviewing a real Markdown AI candidate without applying it"
+    Invoke-LiveTest -Method "reviewMarkdownCandidate"
+}
 
 Write-Host "Force-stopping app before persistence verification"
 Invoke-Adb -Arguments @("-s", $DeviceSerial, "shell", "am", "force-stop", $packageName) | Out-Null

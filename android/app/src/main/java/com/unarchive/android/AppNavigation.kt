@@ -92,6 +92,8 @@ import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.editor.NoteDocumentProposalRepository
+import com.unarchive.android.editor.MarkdownAiProposalGenerator
+import com.unarchive.android.editor.MarkdownAiProposalRepository
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.displayLabel
@@ -161,6 +163,8 @@ internal fun UnarchiveNavigationHost(
     onMeEvent: (MeEvent) -> Unit,
     aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
     proposalRepository: NoteDocumentProposalRepository? = null,
+    markdownAiProposalGenerator: MarkdownAiProposalGenerator? = null,
+    markdownAiProposalRepository: MarkdownAiProposalRepository? = null,
     legacyTestContent: @Composable (onBack: () -> Unit, onOpenLogs: () -> Unit) -> Unit,
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit,
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
@@ -247,6 +251,8 @@ internal fun UnarchiveNavigationHost(
                         document = document,
                         contentRepository = noteContentRepository,
                         documentRepository = noteDocumentRepository,
+                        aiProposalGenerator = markdownAiProposalGenerator,
+                        aiProposalRepository = markdownAiProposalRepository,
                         onBack = { navController.popBackStack() },
                         assetResolver = if (card != null && knowledgeCardRepository != null) {
                             cardAssetMarkdownResolver(card, knowledgeCardRepository)

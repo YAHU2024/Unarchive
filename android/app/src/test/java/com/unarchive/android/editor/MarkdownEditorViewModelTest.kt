@@ -10,6 +10,7 @@ import com.unarchive.android.card.NoteContent
 import com.unarchive.android.card.NoteContentAtomicWriter
 import com.unarchive.android.card.NoteContentMigration
 import com.unarchive.android.card.NoteMarkdownProjection
+import com.unarchive.android.card.NoteProjectionStatus
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
@@ -144,7 +145,7 @@ class MarkdownEditorViewModelTest {
     }
 
     @Test
-    fun formalSaveIncrementsRevisionAndMarksProjectionPartial() = runTest {
+    fun formalSaveIncrementsRevisionAndMarksProjectionCurrent() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
         try {
@@ -160,9 +161,73 @@ class MarkdownEditorViewModelTest {
             assertEquals(MarkdownEditorSaveState.SAVED, viewModel.uiState.value.saveState)
             assertEquals(1L, viewModel.uiState.value.content.markdownRevision)
             assertEquals("# 正式正文", viewModel.uiState.value.content.markdown)
-            assertEquals(com.unarchive.android.card.NoteProjectionStatus.PARTIAL,
+            assertEquals(com.unarchive.android.card.NoteProjectionStatus.CURRENT,
                 viewModel.uiState.value.content.projectionStatus)
             assertNull(FileNoteContentRepository(directory).find(saved.cardId, saved.cardVersion)?.draftState)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun formalSaveWritesBackSupportedFieldsAndRepeatedSaveKeepsRevision() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val directory = temporaryFolder.newFolder("writeback")
+            val repository = FileNoteContentRepository(directory)
+            val saved = repository.save(content()).content
+            val viewModel = MarkdownEditorViewModel(saved.cardId, saved.cardVersion, repository, dispatcher)
+            val edited = saved.markdown
+                .replace("# 编辑器测试", "# 新标题")
+                .replace("原始转写待整理", "新的摘要")
+
+            viewModel.onEvent(MarkdownEditorEvent.MarkdownChanged(edited))
+            viewModel.onEvent(MarkdownEditorEvent.Save)
+            advanceUntilIdle()
+
+            assertEquals(MarkdownEditorSaveState.SAVED, viewModel.uiState.value.saveState)
+            assertEquals(NoteProjectionStatus.CURRENT, viewModel.uiState.value.content.projectionStatus)
+            assertEquals("新标题", viewModel.uiState.value.content.structuredMetadata.title)
+            assertEquals(
+                "新的摘要",
+                viewModel.uiState.value.content.structuredMetadata.blocks
+                    .first { it.type == com.unarchive.android.card.NoteBlockType.SUMMARY }.text,
+            )
+            assertEquals(1L, viewModel.uiState.value.content.markdownRevision)
+
+            viewModel.onEvent(MarkdownEditorEvent.Save)
+            advanceUntilIdle()
+            assertEquals(1L, viewModel.uiState.value.content.markdownRevision)
+            assertEquals(2, repository.listVersions(saved.cardId).size)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun partialWritebackStillPublishesMarkdownAndKeepsProjectionDiagnosticSeparate() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(dispatcher)
+        try {
+            val directory = temporaryFolder.newFolder("partial-writeback")
+            val repository = FileNoteContentRepository(directory)
+            val saved = repository.save(content()).content
+            val viewModel = MarkdownEditorViewModel(saved.cardId, saved.cardVersion, repository, dispatcher)
+            val edited = saved.markdown + "\n## 自定义\n| A | B |\n| - | - |\n"
+
+            viewModel.onEvent(MarkdownEditorEvent.MarkdownChanged(edited))
+            viewModel.onEvent(MarkdownEditorEvent.Save)
+            advanceUntilIdle()
+
+            assertEquals(MarkdownEditorSaveState.SAVED, viewModel.uiState.value.saveState)
+            assertEquals(NoteProjectionStatus.PARTIAL, viewModel.uiState.value.content.projectionStatus)
+            assertNull(viewModel.uiState.value.content.lastSaveError)
+            assertEquals(edited, repository.find(saved.cardId, saved.cardVersion)?.markdown)
+            assertTrue(
+                repository.find(saved.cardId, saved.cardVersion)?.structuredProjection?.unknownMarkdown
+                    ?.contains("## 自定义") == true,
+            )
         } finally {
             Dispatchers.resetMain()
         }

@@ -11,7 +11,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +65,8 @@ internal fun MarkdownEditorMigrationRoute(
     onBack: () -> Unit,
     assetResolver: MarkdownAssetResolver = NoOpMarkdownAssetResolver,
     imageOptions: List<MarkdownEditorImageOption> = emptyList(),
+    aiProposalGenerator: MarkdownAiProposalGenerator? = null,
+    aiProposalRepository: MarkdownAiProposalRepository? = null,
 ) {
     val migrationViewModel: MarkdownEditorMigrationViewModel = viewModel(
         key = "markdown-editor-migration-${document.cardId.value}-${document.generation.cardVersion}",
@@ -81,6 +85,8 @@ internal fun MarkdownEditorMigrationRoute(
             onBack = onBack,
             assetResolver = assetResolver,
             imageOptions = imageOptions,
+            aiProposalGenerator = aiProposalGenerator,
+            aiProposalRepository = aiProposalRepository,
         )
         is MarkdownEditorMigrationUiState.Conflict -> MarkdownEditorMigrationConflict(
             state = state,
@@ -106,10 +112,18 @@ internal fun MarkdownEditorRoute(
     onBack: () -> Unit,
     assetResolver: MarkdownAssetResolver = NoOpMarkdownAssetResolver,
     imageOptions: List<MarkdownEditorImageOption> = emptyList(),
+    aiProposalGenerator: MarkdownAiProposalGenerator? = null,
+    aiProposalRepository: MarkdownAiProposalRepository? = null,
 ) {
     val editorViewModel: MarkdownEditorViewModel = viewModel(
         key = "markdown-editor-${cardId.value}-$cardVersion",
-        factory = MarkdownEditorViewModelFactory(cardId, cardVersion, repository),
+        factory = MarkdownEditorViewModelFactory(
+            cardId,
+            cardVersion,
+            repository,
+            aiProposalGenerator,
+            aiProposalRepository,
+        ),
     )
     val state by editorViewModel.uiState.collectAsStateWithLifecycle()
     MarkdownEditorScreen(
@@ -281,6 +295,16 @@ internal fun MarkdownEditorScreen(
                 },
                 actions = {
                     IconButton(
+                        onClick = { onEvent(MarkdownEditorEvent.RequestAiProposal) },
+                        enabled = state.aiProposalState != MarkdownAiProposalState.RUNNING &&
+                            state.saveState != MarkdownEditorSaveState.SAVING,
+                        modifier = Modifier
+                            .testTag("markdown-ai-proposal-request")
+                            .semantics { contentDescription = "生成 Markdown AI 候选" },
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null)
+                    }
+                    IconButton(
                         onClick = { onEvent(MarkdownEditorEvent.Save) },
                         enabled = state.saveState != MarkdownEditorSaveState.SAVING,
                         modifier = Modifier
@@ -301,6 +325,12 @@ internal fun MarkdownEditorScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             MarkdownEditorStatus(state)
+            if (state.aiProposal != null ||
+                state.aiProposalState == MarkdownAiProposalState.RUNNING ||
+                state.aiProposalError != null
+            ) {
+                MarkdownAiProposalCard(state = state, onEvent = onEvent)
+            }
             state.recoveryDraft?.let { draft ->
                 RecoveryDraftCard(
                     markdown = draft.markdown,
@@ -317,6 +347,86 @@ internal fun MarkdownEditorScreen(
                 assetResolver = assetResolver,
                 imageOptions = imageOptions,
             )
+        }
+    }
+}
+
+@Composable
+private fun MarkdownAiProposalCard(
+    state: MarkdownEditorUiState,
+    onEvent: (MarkdownEditorEvent) -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("markdown-ai-proposal"),
+        emphasized = state.aiProposal != null,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("AI Markdown 候选", style = MaterialTheme.typography.titleMedium)
+            when {
+                state.aiProposalState == MarkdownAiProposalState.RUNNING -> {
+                    Text(
+                        "正在生成候选。你仍可阅读正文；生成完成后必须先查看差异再应用。",
+                        modifier = Modifier.semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            contentDescription = "正在生成 AI Markdown 候选"
+                        },
+                    )
+                }
+                state.aiProposal != null -> {
+                    val proposal = state.aiProposal
+                    val diff = proposal.diffAgainst(state.content.markdown)
+                    Text("模型：${proposal.model} · 基于正式修订 ${proposal.baseMarkdownRevision}")
+                    Text(
+                        "差异：新增 ${diff.addedLines} 行，删除 ${diff.removedLines} 行，替换 ${diff.changedLines} 行",
+                        modifier = Modifier.testTag("markdown-ai-proposal-diff-summary"),
+                    )
+                    if (diff.removedPreview.isNotEmpty()) {
+                        Text("删除预览：", style = MaterialTheme.typography.labelMedium)
+                        diff.removedPreview.forEach { line ->
+                            Text("− $line", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    if (diff.addedPreview.isNotEmpty()) {
+                        Text("新增预览：", style = MaterialTheme.typography.labelMedium)
+                        diff.addedPreview.forEach { line ->
+                            Text("+ $line", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Text(
+                        if (state.aiProposalApplied) {
+                            "候选已放入草稿，点击正式保存后才会替换正文。"
+                        } else {
+                            "候选不会自动覆盖正文；应用后仍需正式保存。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { onEvent(MarkdownEditorEvent.ApplyAiProposal) },
+                            enabled = !state.aiProposalApplied,
+                            modifier = Modifier.testTag("markdown-ai-proposal-apply"),
+                        ) { Text(if (state.aiProposalApplied) "已应用" else "应用候选") }
+                        TextButton(
+                            onClick = { onEvent(MarkdownEditorEvent.RejectAiProposal) },
+                            modifier = Modifier.testTag("markdown-ai-proposal-reject"),
+                        ) { Text("拒绝") }
+                    }
+                }
+            }
+            state.aiProposalError?.let { message ->
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .testTag("markdown-ai-proposal-error")
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
         }
     }
 }
@@ -395,13 +505,21 @@ class MarkdownEditorViewModelFactory(
     private val cardId: KnowledgeCardId,
     private val cardVersion: String,
     private val repository: FileNoteContentRepository,
+    private val aiProposalGenerator: MarkdownAiProposalGenerator? = null,
+    private val aiProposalRepository: MarkdownAiProposalRepository? = null,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(MarkdownEditorViewModel::class.java)) {
             "Unsupported ViewModel: ${modelClass.name}"
         }
-        return MarkdownEditorViewModel(cardId, cardVersion, repository) as T
+        return MarkdownEditorViewModel(
+            cardId,
+            cardVersion,
+            repository,
+            aiProposalGenerator = aiProposalGenerator,
+            aiProposalRepository = aiProposalRepository,
+        ) as T
     }
 }
 

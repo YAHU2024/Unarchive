@@ -6,7 +6,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** Deterministic Markdown export projection; the structured note remains authoritative. */
+/** Deterministic Markdown projection used for migration/export and controlled writeback. */
 object NoteMarkdownProjection {
     fun render(document: NoteDocument): String = buildString {
         appendLine("---")

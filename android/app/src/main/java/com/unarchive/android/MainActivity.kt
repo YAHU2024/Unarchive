@@ -54,6 +54,8 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         state = state,
         aiProposalGenerator = vm.noteDocumentAiProposalGenerator(),
         proposalRepository = vm.noteDocumentProposalRepository,
+        markdownAiProposalGenerator = vm.markdownAiProposalGenerator(),
+        markdownAiProposalRepository = vm.markdownAiProposalRepository,
         onCreateEvent = { event ->
             when (event) {
                 is CreateEvent.VideoReferenceChanged -> vm.videoReference = event.value

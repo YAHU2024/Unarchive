@@ -72,7 +72,11 @@ class FileNoteContentRepository(
             markdownRevision = revision,
             draftState = null,
             lastKnownGoodMarkdown = content.markdown,
-            lastSaveError = null,
+            // A parser diagnostic is allowed to travel with a committed
+            // Markdown revision only for the explicit FAILED projection
+            // state. Any CURRENT/PARTIAL save clears an older diagnostic.
+            lastSaveError = content.lastSaveError
+                ?.takeIf { content.projectionStatus == NoteProjectionStatus.FAILED },
             updatedAtEpochMs = now,
         )
         val target = revisionDirectory(prepared.cardId, prepared.cardVersion, prepared.markdownRevision)

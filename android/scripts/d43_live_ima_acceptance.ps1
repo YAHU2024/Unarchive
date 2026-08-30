@@ -4,7 +4,7 @@ Runs opt-in real ima synchronization and recovery acceptance on one device.
 
 .DESCRIPTION
 Builds and incrementally installs the app/test APKs, synchronizes the latest
-structured revision to the app's configured ima target, force-stops the app,
+formally saved Markdown revision to the app's configured ima target, force-stops the app,
 verifies durable state in a fresh process, and checks invalid-to-valid
 credential connection recovery without changing stored credentials. It never
 uninstalls the package or clears app data. A successful run may append the

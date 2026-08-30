@@ -109,6 +109,26 @@ class LiveCreationAcceptanceTest {
         )
     }
 
+    /**
+     * Exercises the production Markdown AI adapter without changing the real
+     * card: the candidate must reach the diff review surface and is rejected
+     * explicitly so the acceptance marker remains intact for the restart test.
+     */
+    @Test
+    fun reviewMarkdownCandidate() {
+        composeRule.onNodeWithTag("bottom-nav-create").performClick()
+        waitForTag("create-latest-note", REOPEN_TIMEOUT_MS)
+        composeRule.onNodeWithTag("create-latest-note").performClick()
+        prepareMarkdownEditor(REOPEN_TIMEOUT_MS)
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
+        waitForTag("markdown-editor-source", REOPEN_TIMEOUT_MS)
+        composeRule.onNodeWithTag("markdown-ai-proposal-request").performClick()
+        waitForTag("markdown-ai-proposal-diff-summary", CREATION_TIMEOUT_MS)
+        composeRule.onNodeWithTag("markdown-ai-proposal-reject").performClick()
+        // Rejection is an explicit event; the source editor remains unchanged.
+        assertTrue("Markdown source disappeared after candidate rejection", hasTag("markdown-editor-source"))
+    }
+
     private fun prepareMarkdownEditor(timeoutMillis: Long = UI_TIMEOUT_MS) {
         composeRule.waitUntil(timeoutMillis) {
             hasTag("markdown-editor-spike") ||

@@ -52,7 +52,8 @@ For the repeatable portion of the Android redesign acceptance, run:
 The runner executes JVM tests, builds the Debug and instrumentation APKs,
 installs both with `adb install -r`, launches `MainActivity`, and runs the
 focused D1, editor, graph, destination, and security/accessibility Compose
-tests. The current PHQ110 gate contains 11 cases; four verify 2x-font scroll
+tests. The current PHQ110 gate contains 20 cases; eight cover the Create and
+compatibility-entry flow, and four verify 2x-font scroll
 reachability, heading/presence/status/live-region/password semantics, default
 visual order, and clear-dialog cancellation. Reports are written under the
 ignored `android/build/reports/d43-focus/` directory.
@@ -159,7 +160,7 @@ selections.
 
 ## D4.3 real ima gate
 
-After the live creation gate has saved a fresh structured revision and the app
+After the live creation gate has saved a fresh formal Markdown revision and the app
 has valid ima credentials plus a selected target, run:
 
 ```powershell
@@ -176,7 +177,7 @@ the report.
 
 This opt-in runner uses the credentials and target already stored by the app
 without printing secret values or internal target IDs. It synchronizes the
-latest revision through the real ima API, force-stops the app, verifies the
+latest formal Markdown revision through the real ima API, force-stops the app, verifies the
 target-scoped durable record in a new process, and checks invalid-to-valid
 credential connection recovery without replacing the stored credentials. It
 uses only `adb install -r`, never uninstalls, and never clears app data. A run

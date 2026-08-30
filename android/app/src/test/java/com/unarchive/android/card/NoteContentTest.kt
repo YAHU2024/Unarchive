@@ -80,6 +80,37 @@ class NoteContentTest {
     }
 
     @Test
+    fun failedProjectionDiagnosticCanBeCommittedAndClearsOnNextHealthySave() {
+        val directory = temporaryFolder.newFolder("projection-error")
+        val repository = FileNoteContentRepository(directory)
+        val first = repository.save(content()).content
+
+        val failedProjection = repository.save(
+            first.copy(
+                markdown = "# 可恢复正文",
+                projectionStatus = NoteProjectionStatus.FAILED,
+                lastSaveError = "Markdown 投影解析失败",
+            ),
+        ).content
+
+        assertEquals(NoteProjectionStatus.FAILED, failedProjection.projectionStatus)
+        assertEquals("Markdown 投影解析失败", failedProjection.lastSaveError)
+        assertEquals(
+            "Markdown 投影解析失败",
+            FileNoteContentRepository(directory).find(first.cardId, first.cardVersion)?.lastSaveError,
+        )
+
+        val healthy = repository.save(
+            failedProjection.copy(
+                markdown = "# 已修复正文",
+                projectionStatus = NoteProjectionStatus.CURRENT,
+            ),
+        ).content
+        assertNull(healthy.lastSaveError)
+        assertNull(FileNoteContentRepository(directory).find(first.cardId, first.cardVersion)?.lastSaveError)
+    }
+
+    @Test
     fun incompleteCommitIsIgnoredAndOlderRevisionRemainsReadable() {
         val directory = temporaryFolder.newFolder("content")
         val repository = FileNoteContentRepository(directory)
