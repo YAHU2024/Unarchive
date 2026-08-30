@@ -27,7 +27,7 @@ import kotlin.coroutines.resume
  * SAF via [FFmpegKitConfig.getSafParameterForRead]).
  */
 fun interface CloudAudioTranscoder {
-    /** Returns a newly created AAC file the caller owns and must delete. */
+    /** Returns a newly created provider-compatible audio file the caller owns and must delete. */
     suspend fun transcode(sourceUri: String, context: Context?): File
 }
 
@@ -75,6 +75,54 @@ class FfmpegAacTranscoder : CloudAudioTranscoder {
                 reSession.allLogsAsString.orEmpty().takeLast(2_000)
         }
         return reOutput
+    }
+
+    private suspend fun runFfmpeg(arguments: Array<String>): FFmpegSession =
+        suspendCancellableCoroutine { continuation ->
+            val running = FFmpegKit.executeWithArgumentsAsync(arguments) { completed ->
+                if (continuation.isActive) continuation.resume(completed)
+            }
+            continuation.invokeOnCancellation { running.cancel() }
+        }
+
+    private fun inputArgument(uri: Uri, context: Context?): String = when (uri.scheme?.lowercase()) {
+        ContentResolver.SCHEME_FILE -> requireNotNull(uri.path) { "Selected file URI has no path" }
+        ContentResolver.SCHEME_CONTENT -> FFmpegKitConfig.getSafParameterForRead(
+            requireNotNull(context) { "content:// audio requires a Context" },
+            uri,
+        )
+        else -> uri.toString()
+    }
+}
+
+/**
+ * WAV upload path for SiliconFlow models whose backend does not accept the ADTS
+ * AAC stream used by the legacy SenseVoice route. PCM WAV is intentionally
+ * used here because the min FFmpeg build does not ship an MP3 encoder.
+ */
+class FfmpegWavTranscoder : CloudAudioTranscoder {
+    override suspend fun transcode(sourceUri: String, context: Context?): File {
+        val inputArgument = inputArgument(Uri.parse(sourceUri), context)
+
+        val output = File.createTempFile("cloud_asr_", ".wav")
+        val reSession = runFfmpeg(
+            arrayOf(
+                "-hide_banner", "-nostdin", "-y",
+                "-i", inputArgument,
+                "-map", "0:a:0",
+                "-vn",
+                "-ac", "1",
+                "-ar", "16000",
+                "-c:a", "pcm_s16le",
+                "-f", "wav",
+                output.absolutePath,
+            ),
+        )
+        check(ReturnCode.isSuccess(reSession.returnCode)) {
+            "云端转写音频转码失败：returnCode=${reSession.returnCode}\n" +
+                reSession.allLogsAsString.orEmpty().takeLast(2_000)
+        }
+        return output
     }
 
     private suspend fun runFfmpeg(arguments: Array<String>): FFmpegSession =

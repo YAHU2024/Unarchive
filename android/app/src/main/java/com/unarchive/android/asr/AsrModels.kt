@@ -20,7 +20,7 @@ enum class AsrEngineKind(
     SENSE_VOICE_SHERPA("SenseVoice int8 / sherpa-onnx", available = true, category = "本地"),
     WHISPER_SHERPA("Whisper / sherpa-onnx", available = false, category = "本地"),
     WHISPER_CPP("Whisper / whisper.cpp", available = false, category = "本地"),
-    SILICONFLOW_CLOUD("SiliconFlow SenseVoice / 云端", available = true, category = "云端"),
+    SILICONFLOW_CLOUD("SiliconFlow ASR / 云端", available = true, category = "云端"),
     BILIBILI_SUBTITLE("B站官方字幕", available = true, selectable = false, category = "官方字幕"),
 }
 
@@ -77,11 +77,10 @@ data class AsrConfig(
 fun AsrConfig.signature(): String {
     val source = listOf(
         engine.name,
-        // Keep the historical default signature stable; a non-default model is
-        // a distinct cloud configuration and must not reuse its old result.
-        if (engine == AsrEngineKind.SILICONFLOW_CLOUD &&
-            siliconFlowModel != SiliconFlowModelCatalog.DEFAULT_MODEL
-        ) {
+        // Cloud results are provider/model-specific. Include the model even
+        // for the default so changing the default cannot reuse a result that
+        // was produced by the historical SenseVoice backend.
+        if (engine == AsrEngineKind.SILICONFLOW_CLOUD) {
             siliconFlowModel
         } else {
             ""

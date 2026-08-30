@@ -233,7 +233,11 @@ private fun MarkdownEditorMigrationFailed(
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+                .testTag("markdown-editor-migration-failed"),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("迁移未完成：${state.message}", color = MaterialTheme.colorScheme.error)

@@ -20,6 +20,11 @@ class AndroidAsrEngineProvider(
             return CloudAsrEngine(
                 context,
                 SiliconFlowAsrClient(apiKey, model = config.siliconFlowModel),
+                transcoder = if (config.siliconFlowModel == SiliconFlowModelCatalog.DEFAULT_MODEL) {
+                    FfmpegWavTranscoder()
+                } else {
+                    FfmpegAacTranscoder()
+                },
             )
         }
         if (kind != AsrEngineKind.SENSE_VOICE_SHERPA || !BuildConfig.SHERPA_ENABLED) {

@@ -2,9 +2,11 @@ package com.unarchive.android
 
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -63,23 +65,25 @@ class LiveCreationAcceptanceTest {
             }.getOrDefault(false)
         }
         composeRule.onNodeWithTag("create-latest-note").performClick()
-        waitForTag("note-editor-title")
+        prepareMarkdownEditor()
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
+        waitForTag("markdown-editor-source")
 
-        val currentTitle = textForTag("note-editor-title")
-        val baseTitle = currentTitle.replace(ACCEPTANCE_PREFIX_PATTERN, "")
-        val expectedTitle = titlePrefix + baseTitle
-        composeRule.onNodeWithTag("note-editor-title")
-            .performTextReplacement(expectedTitle)
-        composeRule.onNodeWithTag("note-editor-save").performClick()
+        val acceptanceMarker = acceptanceMarker(titlePrefix)
+        val currentMarkdown = textForTag("markdown-editor-source")
+        val editedMarkdown = currentMarkdown.trimEnd() + "\n\n" + acceptanceMarker + "\n"
+        composeRule.onNodeWithTag("markdown-editor-source")
+            .performTextReplacement(editedMarkdown)
+        composeRule.onNodeWithTag("markdown-editor-save").performClick()
 
         waitForTerminalStatus(
-            tag = "note-editor-status",
-            success = "已保存",
+            tag = "markdown-editor-status",
+            success = "已正式保存",
             timeoutMillis = SAVE_TIMEOUT_MS,
         )
         assertTrue(
-            "Saved editor title did not retain the acceptance prefix",
-            textForTag("note-editor-title").startsWith(titlePrefix),
+            "Saved Markdown did not retain the acceptance marker",
+            textForTag("markdown-editor-source").contains(acceptanceMarker),
         )
     }
 
@@ -90,18 +94,41 @@ class LiveCreationAcceptanceTest {
         composeRule.onNodeWithTag("bottom-nav-create").performClick()
         waitForTag("create-latest-note", REOPEN_TIMEOUT_MS)
         composeRule.onNodeWithTag("create-latest-note").performClick()
-        waitForTag("note-editor-title", REOPEN_TIMEOUT_MS)
+        prepareMarkdownEditor(REOPEN_TIMEOUT_MS)
+        composeRule.onNodeWithTag("markdown-editor-edit-tab").performClick()
+        waitForTag("markdown-editor-source", REOPEN_TIMEOUT_MS)
 
         assertTrue(
-            "Reopened title does not start with the saved acceptance prefix",
-            textForTag("note-editor-title").startsWith(titlePrefix),
+            "Reopened Markdown does not contain the saved acceptance marker",
+            textForTag("markdown-editor-source").contains(acceptanceMarker(titlePrefix)),
         )
-        waitForTerminalStatus(
-            tag = "note-editor-status",
-            success = "已保存",
-            timeoutMillis = REOPEN_TIMEOUT_MS,
+        waitForTag("markdown-editor-status", REOPEN_TIMEOUT_MS)
+        assertTrue(
+            "Reopened Markdown is not clean after persistence verification",
+            textForTag("markdown-editor-status").contains("尚未编辑"),
         )
     }
+
+    private fun prepareMarkdownEditor(timeoutMillis: Long = UI_TIMEOUT_MS) {
+        composeRule.waitUntil(timeoutMillis) {
+            hasTag("markdown-editor-spike") ||
+                hasTag("markdown-editor-use-structured") ||
+                hasTag("markdown-editor-keep-legacy") ||
+                hasTag("markdown-editor-migration-failed")
+        }
+        if (hasTag("markdown-editor-migration-failed")) {
+            throw AssertionError("Markdown editor migration failed")
+        }
+        if (!hasTag("markdown-editor-spike")) {
+            composeRule.onNodeWithTag("markdown-editor-use-structured").performClick()
+            waitForTag("markdown-editor-spike", timeoutMillis)
+        }
+    }
+
+    private fun hasTag(tag: String): Boolean =
+        composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    private fun acceptanceMarker(titlePrefix: String): String = "<!-- $titlePrefix -->"
 
     private fun requireArgument(name: String): String =
         requireNotNull(arguments.getString(name)?.takeIf(String::isNotBlank)) {
@@ -110,6 +137,13 @@ class LiveCreationAcceptanceTest {
 
     private fun waitForTag(tag: String, timeoutMillis: Long = UI_TIMEOUT_MS) {
         composeRule.waitUntil(timeoutMillis) {
+            val visible = composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+            if (!visible) {
+                runCatching {
+                    composeRule.onNodeWithTag("create-screen")
+                        .performScrollToNode(hasTestTag(tag))
+                }
+            }
             composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
     }
@@ -143,7 +177,6 @@ class LiveCreationAcceptanceTest {
         const val SAVE_TIMEOUT_MS = 30_000L
         const val REOPEN_TIMEOUT_MS = 30_000L
         const val CREATION_TIMEOUT_MS = 10 * 60_000L
-        val ACCEPTANCE_PREFIX_PATTERN = Regex("^D4-(?:\\d{8}-\\d{6}-)?")
         val FAILURE_MARKERS = listOf("失败", "错误", "未配置", "模型未安装")
     }
 }

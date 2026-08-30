@@ -20,8 +20,20 @@ class SiliconFlowModelStoreTest {
     fun serializationPreservesModelIdentifiers() {
         val models = listOf("Qwen/ASR-Test", "FunAudioLLM/SenseVoiceSmall")
         assertEquals(
-            listOf(SiliconFlowModelCatalog.DEFAULT_MODEL, "Qwen/ASR-Test"),
+            listOf(
+                SiliconFlowModelCatalog.DEFAULT_MODEL,
+                "Qwen/ASR-Test",
+                SiliconFlowModelCatalog.LEGACY_DEFAULT_MODEL,
+            ),
             SiliconFlowModelCatalog.decode(SiliconFlowModelCatalog.encode(models)),
+        )
+    }
+
+    @Test
+    fun legacyDefaultRemainsAvailableForExistingExplicitSelections() {
+        assertEquals(
+            listOf(SiliconFlowModelCatalog.DEFAULT_MODEL, SiliconFlowModelCatalog.LEGACY_DEFAULT_MODEL),
+            SiliconFlowModelCatalog.canonicalize(listOf(SiliconFlowModelCatalog.LEGACY_DEFAULT_MODEL)),
         )
     }
 
@@ -31,6 +43,7 @@ class SiliconFlowModelStoreTest {
         assertNull(SiliconFlowModelCatalog.normalize("  \n  "))
         assertNull(SiliconFlowModelCatalog.normalize("x".repeat(SiliconFlowModelCatalog.MAX_MODEL_LENGTH + 1)))
         assertEquals("Qwen/ASR-Test", SiliconFlowModelCatalog.normalize("  Qwen/ASR-Test  "))
-        assertTrue(SiliconFlowModelCatalog.normalize("FunAudioLLM/SenseVoiceSmall") != null)
+        assertTrue(SiliconFlowModelCatalog.normalize(SiliconFlowModelCatalog.DEFAULT_MODEL) != null)
+        assertTrue(SiliconFlowModelCatalog.normalize(SiliconFlowModelCatalog.LEGACY_DEFAULT_MODEL) != null)
     }
 }

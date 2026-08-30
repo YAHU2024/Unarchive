@@ -114,4 +114,4 @@ Invoke-LiveTest -Method "verifySavedNoteAfterProcessRestart"
 Invoke-Adb -Arguments @("-s", $DeviceSerial, "shell", "am", "start", "-n", "$packageName/.MainActivity") | Write-Host
 
 Write-Host "Live creation acceptance passed. Report: $reportPath"
-Write-Host "Saved acceptance title prefix: $titlePrefix"
+Write-Host "Saved acceptance Markdown marker: <!-- $titlePrefix -->"

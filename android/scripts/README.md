@@ -135,16 +135,27 @@ DeepSeek, and model configuration, run the opt-in live workflow:
 
 This runner uses Compose semantics instead of screen coordinates or the active
 input method. It builds and installs both APKs with `adb install -r`, performs
-the real Bilibili-to-knowledge-card flow, edits and explicitly saves the note,
-force-stops the app, and verifies the saved title after process restart. The
+the real Bilibili-to-knowledge-card flow, opens the current Markdown migration
+route, edits the Markdown source, formally saves it, force-stops the app, and
+verifies the saved marker after process restart. If a legacy/v3 migration
+conflict is shown, the test explicitly chooses the structured projection. The
 test is skipped unless the runner supplies the explicit live-acceptance flag,
 so it is not part of ordinary automated tests. Reports are written under the
 ignored `android/build/reports/d43-live/` directory.
 
-The runner never uninstalls or clears app data. It intentionally updates the
-accepted note title with one replaceable `D4-<timestamp>-` prefix as persistence
-evidence. System-share receiving and Base64 image rendering were accepted
-manually with WPS on PHQ110; ima API recovery remains an independent live gate.
+The runner never uninstalls or clears app data. It appends one synthetic,
+replaceable `<!-- D4-<timestamp>- -->` Markdown marker as persistence evidence;
+the marker contains no real card content. System-share receiving and Base64
+image rendering were accepted manually with WPS on PHQ110; ima API recovery
+remains an independent live gate.
+
+The current default SiliconFlow model is
+`XingChenAGI/XingChenASR-V3.2-Ultra`. Its real PHQ110 path uploads a 16 kHz
+mono PCM WAV because the XingChen route rejects the legacy ADTS AAC form. The
+client keeps the multipart request minimal (`model` and `file`) and retries
+HTTP 503 within a bounded budget. The older
+`FunAudioLLM/SenseVoiceSmall` model remains available for explicit existing
+selections.
 
 ## D4.3 real ima gate
 

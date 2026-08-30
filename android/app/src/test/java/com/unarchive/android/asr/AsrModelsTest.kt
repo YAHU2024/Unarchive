@@ -32,6 +32,10 @@ class AsrModelsTest {
         val cloud = AsrConfig(AsrEngineKind.SILICONFLOW_CLOUD)
         val alternateCloud = cloud.copy(siliconFlowModel = "Qwen/ASR-Test")
         assertNotEquals(cloud.signature(), alternateCloud.signature())
+        assertNotEquals(
+            cloud.signature(),
+            cloud.copy(siliconFlowModel = SiliconFlowModelCatalog.LEGACY_DEFAULT_MODEL).signature(),
+        )
 
         val local = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA)
         assertEquals(local.signature(), local.copy(siliconFlowModel = "Qwen/ASR-Test").signature())

@@ -9,13 +9,16 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
  * Cloud transcription backend for the `CloudAsrEngine`. Implementations upload
- * an audio file and return plain transcribed text.
+ * an audio file and return plain transcribed text. The provider's default
+ * response format is intentionally used because newer ASR models may reject
+ * the optional `response_format` multipart field.
  */
 fun interface CloudAsrClient {
     suspend fun transcribe(audioFile: File): String
@@ -31,16 +34,61 @@ class SiliconFlowAsrClient(
     private val model: String = SiliconFlowModelCatalog.DEFAULT_MODEL,
     private val connectTimeoutMs: Int = 30_000,
     private val readTimeoutMs: Int = 300_000,
+    private val maxServiceUnavailableRetries: Int = 2,
+    private val retryBaseDelayMs: Long = 1_000L,
 ) : CloudAsrClient {
+    init {
+        require(apiKey.isNotBlank()) { "SiliconFlow API key must not be blank" }
+        require(SiliconFlowModelCatalog.normalize(model) == model) {
+            "SiliconFlow model must be a normalized model identifier"
+        }
+        require(maxServiceUnavailableRetries >= 0) {
+            "maxServiceUnavailableRetries cannot be negative"
+        }
+        require(retryBaseDelayMs >= 0) { "retryBaseDelayMs cannot be negative" }
+    }
+
     override suspend fun transcribe(audioFile: File): String = withContext(Dispatchers.IO) {
+        AppLogger.info("CloudAsr", "开始请求 SiliconFlow ASR 模型=$model")
+        var serviceUnavailableRetries = 0
+        while (true) {
+            try {
+                return@withContext transcribeOnce(audioFile)
+            } catch (error: SiliconFlowHttpException) {
+                if (error.statusCode != HttpURLConnection.HTTP_UNAVAILABLE ||
+                    serviceUnavailableRetries >= maxServiceUnavailableRetries
+                ) {
+                    throw error
+                }
+
+                val retryNumber = serviceUnavailableRetries + 1
+                serviceUnavailableRetries = retryNumber
+                val delayMs = error.retryAfterMs
+                    ?: retryBaseDelayMs * (1L shl (retryNumber - 1)).coerceAtMost(30L)
+                AppLogger.warn(
+                    "CloudAsr",
+                    "SiliconFlow HTTP 503，${delayMs}ms 后重试（$retryNumber/$maxServiceUnavailableRetries）",
+                )
+                delay(delayMs)
+            }
+        }
+        error("SiliconFlow transcription retry loop ended unexpectedly")
+    }
+
+    private fun transcribeOnce(audioFile: File): String {
         val boundary = "----Unarchive${System.currentTimeMillis()}"
         val connection = URL("$baseUrl/audio/transcriptions").openConnection() as HttpURLConnection
-        try {
+        return try {
             connection.requestMethod = "POST"
             connection.doOutput = true
             connection.connectTimeout = connectTimeoutMs
             connection.readTimeout = readTimeoutMs
             connection.setRequestProperty("Authorization", "Bearer $apiKey")
+            // SiliconFlow documents both bearer and x-api-key authentication;
+            // sending the latter as well keeps newer provider routes that only
+            // inspect the API-key header compatible without exposing the key.
+            connection.setRequestProperty("x-api-key", apiKey)
+            connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
 
             val uploadStart = android.os.SystemClock.elapsedRealtime()
@@ -54,9 +102,12 @@ class SiliconFlowAsrClient(
 
             val status = connection.responseCode
             if (status != HttpURLConnection.HTTP_OK) {
-                val errorBody = connection.errorStream
-                    ?.readBytes()?.toString(StandardCharsets.UTF_8).orEmpty()
-                throw IOException("云端转写失败：HTTP $status $errorBody")
+                val errorBody = readResponseBody(connection)
+                throw SiliconFlowHttpException(
+                    statusCode = status,
+                    responseBody = errorBody,
+                    retryAfterMs = parseRetryAfterMs(connection.getHeaderField("Retry-After")),
+                )
             }
             val response = connection.inputStream.readBytes().toString(StandardCharsets.UTF_8)
             val readDone = android.os.SystemClock.elapsedRealtime()
@@ -76,6 +127,18 @@ class SiliconFlowAsrClient(
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun parseRetryAfterMs(value: String?): Long? = value
+        ?.trim()
+        ?.toLongOrNull()
+        ?.takeIf { it >= 0 }
+        ?.coerceAtMost(30L)
+        ?.times(1_000L)
+
+    private fun readResponseBody(connection: HttpURLConnection): String {
+        val stream = connection.errorStream ?: runCatching { connection.inputStream }.getOrNull()
+        return stream?.use { it.readBytes().toString(StandardCharsets.UTF_8) }.orEmpty().trim()
     }
 
     private fun writePart(output: java.io.OutputStream, boundary: String, name: String, value: String) {
@@ -116,11 +179,23 @@ class SiliconFlowAsrClient(
     }
 }
 
+/** Structured provider error so retry policy never relies on parsing a message string. */
+class SiliconFlowHttpException(
+    val statusCode: Int,
+    val responseBody: String,
+    val retryAfterMs: Long?,
+) : IOException(
+    buildString {
+        append("云端转写失败：HTTP ").append(statusCode)
+        if (responseBody.isNotBlank()) append(' ').append(responseBody.take(500))
+    },
+)
+
 /**
- * Cloud ASR engine (SiliconFlow SenseVoice). Transcodes the audio to 16 kHz
- * AAC, uploads it, and returns the text as a single segment; the pipeline
- * fills in the true audio duration, since the cloud API returns plain text
- * without timestamps.
+ * Cloud ASR engine (SiliconFlow). The provider-specific transcoder produces an
+ * API-compatible upload, then the engine returns the text as a single segment;
+ * the pipeline fills in the true audio duration because the cloud API returns
+ * plain text without timestamps.
  */
 class CloudAsrEngine(
     private val context: android.content.Context?,

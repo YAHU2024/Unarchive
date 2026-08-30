@@ -373,7 +373,8 @@ private fun CreateScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 20.dp)
+            .testTag("create-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
     ) {

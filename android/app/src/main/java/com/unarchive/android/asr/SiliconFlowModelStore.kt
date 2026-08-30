@@ -23,10 +23,12 @@ class SiliconFlowModelStore(
     private val preferences: SharedPreferences,
 ) {
     fun load(): SiliconFlowModelState {
+        val selectedCandidate = SiliconFlowModelCatalog.normalize(preferences.getString(KEY_SELECTED, null))
         val models = SiliconFlowModelCatalog.canonicalize(
-            SiliconFlowModelCatalog.decode(preferences.getString(KEY_MODELS, null)),
+            SiliconFlowModelCatalog.decode(preferences.getString(KEY_MODELS, null)) +
+                listOfNotNull(selectedCandidate),
         )
-        val selected = SiliconFlowModelCatalog.normalize(preferences.getString(KEY_SELECTED, null))
+        val selected = selectedCandidate
             ?.takeIf { it in models }
             ?: SiliconFlowModelCatalog.DEFAULT_MODEL
         return SiliconFlowModelState(models = models, selectedModel = selected)
@@ -58,7 +60,10 @@ class SiliconFlowModelStore(
 
 /** Pure catalog rules kept separate so persistence and UI behavior are testable on the JVM. */
 object SiliconFlowModelCatalog {
-    const val DEFAULT_MODEL = "FunAudioLLM/SenseVoiceSmall"
+    /** Verified SiliconFlow ASR backend used for new installations. */
+    const val DEFAULT_MODEL = "XingChenAGI/XingChenASR-V3.2-Ultra"
+    /** Kept in the catalog when an existing user already selected it. */
+    const val LEGACY_DEFAULT_MODEL = "FunAudioLLM/SenseVoiceSmall"
     const val MAX_MODEL_LENGTH = 200
 
     fun normalize(rawModel: String?): String? {
