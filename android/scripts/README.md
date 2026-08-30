@@ -67,6 +67,28 @@ The accessibility cases are repeatable structural proxies. They do not prove
 the words TalkBack actually speaks or the exact on-screen appearance of masked
 characters; those two checks remain manual.
 
+## A5-2 device security gate
+
+To verify the Android Keystore migration/clear boundary and private log
+retention on one authorized device, run:
+
+```powershell
+.\android\scripts\d43_focus_acceptance.ps1 `
+    -DeviceSerial 5b14556a `
+    -SkipBuild `
+    -ReportGroup a52-security `
+    -TestClass com.unarchive.android.SecurityDeviceAcceptanceTest
+```
+
+The test uses synthetic credential values, verifies that legacy DeepSeek and
+SiliconFlow values migrate out of plaintext preferences, clears all four
+credential aliases, and restores the original encrypted values in `finally`.
+It also verifies log redaction, explicit clearing, and the 1 MiB file reset
+boundary. The runner only uses `adb install -r`; it never uninstalls or clears
+package data. The source history has no pre-Keystore ima plaintext store, so
+ima migration from an older released APK remains unverified. This is a device
+implementation gate, not proof of a complete release-upgrade test.
+
 ## Notes P1 focused gate
 
 To verify Notes library filtering, user-facing card metadata, and the
