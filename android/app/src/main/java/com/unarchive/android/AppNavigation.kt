@@ -119,6 +119,7 @@ internal object AppRoutes {
     const val NOTES = "notes"
     const val GRAPH = "graph"
     const val ME = "me"
+    const val MORE_TOOLS = "more-tools"
     const val NOTE_EDITOR = "notes/{platform}/{videoId}/{cardVersion}/edit"
     const val DESTINATIONS = "destinations/{platform}/{videoId}/{cardVersion}"
     const val LEGACY_TEST = "legacy/test"
@@ -291,10 +292,17 @@ internal fun UnarchiveNavigationHost(
                 MeScreen(
                     state = state.me,
                     onEvent = onMeEvent,
-                    onOpenDeveloper = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
-                    onOpenLogs = { navController.navigate(AppRoutes.LEGACY_LOG) },
-                    onOpenTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
                     onOpenSecurity = { navController.navigate(AppRoutes.SECURITY) },
+                    onOpenMoreTools = { navController.navigate(AppRoutes.MORE_TOOLS) },
+                )
+            }
+            composable(AppRoutes.MORE_TOOLS) {
+                MoreToolsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
+                    onOpenResults = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
+                    onOpenLogs = { navController.navigate(AppRoutes.LEGACY_LOG) },
+                    onOpenSettings = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
                 )
             }
             composable(AppRoutes.LEGACY_TEST) {
@@ -1509,10 +1517,8 @@ private fun destinationStateColor(state: KnowledgeSyncState) = when (state) {
 private fun MeScreen(
     state: MeUiState,
     onEvent: (MeEvent) -> Unit,
-    onOpenDeveloper: () -> Unit,
-    onOpenLogs: () -> Unit,
-    onOpenTest: () -> Unit,
     onOpenSecurity: () -> Unit,
+    onOpenMoreTools: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1536,28 +1542,82 @@ private fun MeScreen(
             Spacer(Modifier.width(8.dp))
             Text("安全设置")
         }
-        Text("开发者能力", style = MaterialTheme.typography.titleMedium)
         OutlinedButton(
             onClick = {
                 onEvent(MeEvent.OpenDeveloperOptions)
-                onOpenDeveloper()
+                onOpenMoreTools()
             },
             enabled = state.developerToolsAvailable,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("me-more-tools"),
         ) {
             Icon(Icons.Filled.Settings, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("开发者选项")
+            Text("更多工具")
         }
-        OutlinedButton(onClick = onOpenTest, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Edit, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("打开处理测试台")
-        }
-        OutlinedButton(onClick = onOpenLogs, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Info, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("查看运行日志")
+    }
+}
+
+@Composable
+private fun MoreToolsScreen(
+    onBack: () -> Unit,
+    onOpenTest: () -> Unit,
+    onOpenResults: () -> Unit,
+    onOpenLogs: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    LegacyRouteFrame(title = "更多工具", onBack = onBack) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "高级处理、历史数据和诊断入口集中在这里。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = onOpenTest,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("more-tools-test"),
+            ) {
+                Icon(Icons.Filled.Edit, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("打开处理测试台")
+            }
+            OutlinedButton(
+                onClick = onOpenResults,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("more-tools-results"),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("查看历史结果")
+            }
+            OutlinedButton(
+                onClick = onOpenLogs,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("more-tools-logs"),
+            ) {
+                Icon(Icons.Filled.Info, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("查看运行日志")
+            }
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("more-tools-settings"),
+            ) {
+                Icon(Icons.Filled.Settings, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("开发者选项")
+            }
         }
     }
 }

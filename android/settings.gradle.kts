@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "UnarchiveAndroid"
 include(":app")
+include(":graph-spike")

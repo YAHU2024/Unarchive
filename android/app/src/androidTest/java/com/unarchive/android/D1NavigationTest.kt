@@ -6,7 +6,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.GraphUiState
@@ -47,7 +50,7 @@ class D1NavigationTest {
     }
 
     @Test
-    fun meKeepsDeveloperEntryVisible() {
+    fun meProvidesMoreToolsEntryAndKeepsLegacyRoutesReachable() {
         composeRule.setContent {
             UnarchiveTheme {
                 UnarchiveNavigationHost(
@@ -55,17 +58,48 @@ class D1NavigationTest {
                     onCreateEvent = {},
                     onNotesEvent = {},
                     onMeEvent = {},
-                    legacyTestContent = { _, _ -> Text("legacy test") },
-                    legacyResultsContent = { _ -> Text("legacy results") },
-                    legacyLogContent = { _ -> Text("legacy log") },
-                    legacySettingsContent = { _ -> Text("legacy settings") },
+                    legacyTestContent = { onBack, _ ->
+                        LegacyRouteFrame(title = "legacy test", onBack = onBack) {
+                            Text("legacy test", modifier = Modifier.testTag("legacy-test-content"))
+                        }
+                    },
+                    legacyResultsContent = { onBack ->
+                        LegacyRouteFrame(title = "legacy results", onBack = onBack) {
+                            Text("legacy results", modifier = Modifier.testTag("legacy-results-content"))
+                        }
+                    },
+                    legacyLogContent = { onBack ->
+                        LegacyRouteFrame(title = "legacy log", onBack = onBack) {
+                            Text("legacy log", modifier = Modifier.testTag("legacy-log-content"))
+                        }
+                    },
+                    legacySettingsContent = { onBack ->
+                        LegacyRouteFrame(title = "legacy settings", onBack = onBack) {
+                            Text("legacy settings", modifier = Modifier.testTag("legacy-settings-content"))
+                        }
+                    },
                 )
             }
         }
 
         composeRule.onNodeWithTag("bottom-nav-me").performClick()
-        composeRule.onNodeWithText("开发者选项").assertIsDisplayed()
-        composeRule.onNodeWithText("查看运行日志").assertIsDisplayed()
+        composeRule.onNodeWithTag("me-more-tools").performClick()
+        composeRule.onNodeWithText("更多工具").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("more-tools-test").performClick()
+        composeRule.onNodeWithTag("legacy-test-content").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("返回").performClick()
+
+        composeRule.onNodeWithTag("more-tools-results").performClick()
+        composeRule.onNodeWithTag("legacy-results-content").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("返回").performClick()
+
+        composeRule.onNodeWithTag("more-tools-logs").performClick()
+        composeRule.onNodeWithTag("legacy-log-content").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("返回").performClick()
+
+        composeRule.onNodeWithTag("more-tools-settings").performClick()
+        composeRule.onNodeWithTag("legacy-settings-content").assertIsDisplayed()
     }
 
     @Test
