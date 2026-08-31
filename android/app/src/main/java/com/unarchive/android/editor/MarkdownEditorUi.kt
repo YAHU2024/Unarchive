@@ -283,7 +283,7 @@ internal fun MarkdownEditorScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "Markdown 笔记",
+                        "编辑笔记",
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -324,6 +324,7 @@ internal fun MarkdownEditorScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            MarkdownEditorHeader(state)
             MarkdownEditorStatus(state)
             if (state.aiProposal != null ||
                 state.aiProposalState == MarkdownAiProposalState.RUNNING ||
@@ -348,6 +349,29 @@ internal fun MarkdownEditorScreen(
                 imageOptions = imageOptions,
             )
         }
+    }
+}
+
+@Composable
+private fun MarkdownEditorHeader(state: MarkdownEditorUiState) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("markdown-editor-header"),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(
+            "Markdown 正文",
+            style = MaterialTheme.typography.titleLarge,
+        )
+        Text(
+            listOfNotNull(
+                state.content.structuredMetadata.source.ownerName.takeIf(String::isNotBlank),
+                "正式修订 ${state.content.markdownRevision}",
+            ).joinToString(" · "),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

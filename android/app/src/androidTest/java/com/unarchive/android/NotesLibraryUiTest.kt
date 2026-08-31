@@ -41,6 +41,7 @@ import com.unarchive.android.ui.state.NotesLibraryItem
 import com.unarchive.android.ui.state.NotesLibraryItemKind
 import com.unarchive.android.ui.state.NotesUiState
 import com.unarchive.android.ui.state.UnarchiveUiState
+import com.unarchive.android.ui.notes.NotesScreen
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -50,6 +51,28 @@ import java.io.File
 class NotesLibraryUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun notesPresentationCanMountWithoutNavigationHostAndForwardsRefresh() {
+        val events = mutableListOf<NotesEvent>()
+        composeRule.setContent {
+            UnarchiveTheme {
+                NotesScreen(
+                    state = state(document(), material()).notes,
+                    onEvent = events::add,
+                    onOpenLegacyNotes = {},
+                    onOpenEditor = {},
+                    onOpenDestinations = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("notes-refresh").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(listOf(NotesEvent.Refresh), events)
+        }
+    }
 
     @Test
     fun filtersNotesAndMaterialsAndExposesCompleteUserFacingMetadata() {
