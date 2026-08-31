@@ -52,9 +52,11 @@ class LlmClient(
 
             val status = connection.responseCode
             if (status != HttpURLConnection.HTTP_OK) {
-                val errorBody = connection.errorStream
-                    ?.readBytes()?.toString(Charsets.UTF_8).orEmpty()
-                throw IOException("LLM 请求失败：HTTP $status $errorBody")
+                // Keep provider response bodies out of exception messages: the
+                // caller may persist/log them, and they can contain request
+                // echoes, account data, or provider diagnostics.
+                connection.errorStream?.close()
+                throw IOException("LLM 请求失败：HTTP $status")
             }
             val response = connection.inputStream.readBytes().toString(Charsets.UTF_8)
             JSONObject(response)

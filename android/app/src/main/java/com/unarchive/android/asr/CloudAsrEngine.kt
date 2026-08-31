@@ -187,7 +187,6 @@ class SiliconFlowHttpException(
 ) : IOException(
     buildString {
         append("云端转写失败：HTTP ").append(statusCode)
-        if (responseBody.isNotBlank()) append(' ').append(responseBody.take(500))
     },
 )
 

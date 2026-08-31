@@ -34,7 +34,18 @@ internal object ImaSyncLog {
         val text = fields.entries.filter { it.value != null }.joinToString(" ") { (name, value) ->
             "$name=${sanitize(value.toString())}"
         }
-        if (warning) AppLogger.warn(TAG, text) else AppLogger.info(TAG, text)
+        AppLogger.event(
+            level = if (warning) com.unarchive.android.log.LogLevel.WARN else com.unarchive.android.log.LogLevel.INFO,
+            tag = TAG,
+            message = text,
+            category = "ima-sync",
+            eventName = "ima_sync",
+            operationId = operationId,
+            stage = stage,
+            result = state,
+            durationMs = System.currentTimeMillis() - startedAtMs,
+            provider = "ima",
+        )
     }
 
     fun safeError(error: Throwable): String = when (error) {

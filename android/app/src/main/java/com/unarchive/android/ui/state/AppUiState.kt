@@ -7,6 +7,10 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.toNoteDocument
+import com.unarchive.android.result.StoredVideoResult
+import com.unarchive.android.result.VideoResultKey
+import com.unarchive.android.asr.AsrEngineKind
+import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.sync.DestinationAction
 import com.unarchive.android.sync.DestinationTargetStateMapper
 import com.unarchive.android.sync.ImaFolder
@@ -120,6 +124,37 @@ internal data class UnarchiveUiState(
     val graph: GraphUiState,
     val me: MeUiState,
     val destinations: DestinationUiState = DestinationUiState(),
+    val results: ResultsUiState = ResultsUiState(),
+    val settings: SettingsUiState = SettingsUiState(),
+)
+
+internal data class ResultsUiState(
+    val results: List<StoredVideoResult> = emptyList(),
+    val selected: StoredVideoResult? = null,
+    val isBusy: Boolean = false,
+    val statusMessage: String = "",
+)
+
+internal data class SettingsUiState(
+    val availableEngines: List<AsrEngineKind> = emptyList(),
+    val selectedEngine: AsrEngineKind = AsrEngineKind.SILICONFLOW_CLOUD,
+    val siliconFlowModels: List<String> = emptyList(),
+    val selectedSiliconFlowModel: String = "",
+    val siliconFlowModelStatus: String = "",
+    val selectedThreads: Int? = null,
+    val selectedEnableVad: Boolean = false,
+    val selectedVadMaxSeconds: Int = 10,
+    val thinkingEnabled: Boolean = false,
+    val isBusy: Boolean = false,
+    val storageLoading: Boolean = false,
+    val storageSnapshot: AppStorageSnapshot? = null,
+    val storageError: String = "",
+    val cacheClearing: Boolean = false,
+    val cacheClearStatus: String = "",
+    val effectiveCacheBudgetBytes: Long = 0L,
+    val configuredCacheBudgetBytes: Long = 0L,
+    val customCacheBudgetInput: String = "",
+    val cacheBudgetStatus: String = "",
 )
 
 internal data class CreateUiState(
@@ -216,6 +251,34 @@ internal sealed interface GraphEvent {
 
 internal sealed interface MeEvent {
     data object OpenDeveloperOptions : MeEvent
+}
+
+internal sealed interface ResultsEvent {
+    data class Select(val key: VideoResultKey) : ResultsEvent
+    data object CopyTranscript : ResultsEvent
+    data object Share : ResultsEvent
+    data object ExportCard : ResultsEvent
+    data object ExportAudio : ResultsEvent
+    data object GenerateCard : ResultsEvent
+    data object Rerun : ResultsEvent
+    data object RerunFresh : ResultsEvent
+}
+
+internal sealed interface SettingsEvent {
+    data class SelectEngine(val engine: AsrEngineKind) : SettingsEvent
+    data class SelectSiliconFlowModel(val model: String) : SettingsEvent
+    data class AddSiliconFlowModel(val model: String) : SettingsEvent
+    data class SetThreads(val threads: Int?) : SettingsEvent
+    data class SetEnableVad(val enabled: Boolean) : SettingsEvent
+    data class SetVadMaxSeconds(val seconds: Int) : SettingsEvent
+    data class SetThinkingEnabled(val enabled: Boolean) : SettingsEvent
+    data object RefreshStorage : SettingsEvent
+    data object OpenSystemStorageSettings : SettingsEvent
+    data object ClearRebuildableCache : SettingsEvent
+    data object UseAutomaticCacheBudget : SettingsEvent
+    data class UsePresetCacheBudget(val gibibytes: Long) : SettingsEvent
+    data class CustomCacheBudgetChanged(val value: String) : SettingsEvent
+    data object SaveCustomCacheBudget : SettingsEvent
 }
 
 internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
@@ -423,6 +486,33 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
                 },
             )
         },
+        results = ResultsUiState(
+            results = storedResults,
+            selected = selectedStoredResult,
+            isBusy = runningJob != null || generateJob != null || exportJob != null,
+            statusMessage = status,
+        ),
+        settings = SettingsUiState(
+            availableEngines = AsrEngineKind.entries.filter { it.selectable && it.available },
+            selectedEngine = selectedEngine,
+            siliconFlowModels = siliconFlowModels,
+            selectedSiliconFlowModel = selectedSiliconFlowModel,
+            siliconFlowModelStatus = siliconFlowModelStatus,
+            selectedThreads = selectedThreads,
+            selectedEnableVad = selectedEnableVad,
+            selectedVadMaxSeconds = selectedVadMaxSeconds,
+            thinkingEnabled = thinkingEnabled,
+            isBusy = runningJob != null || generateJob != null || exportJob != null || imaSyncing,
+            storageLoading = storageLoading,
+            storageSnapshot = storageSnapshot,
+            storageError = storageError,
+            cacheClearing = cacheClearing,
+            cacheClearStatus = cacheClearStatus,
+            effectiveCacheBudgetBytes = effectiveCacheBudgetBytes,
+            configuredCacheBudgetBytes = configuredCacheBudgetBytes,
+            customCacheBudgetInput = customCacheBudgetInput,
+            cacheBudgetStatus = cacheBudgetStatus,
+        ),
     )
 }
 

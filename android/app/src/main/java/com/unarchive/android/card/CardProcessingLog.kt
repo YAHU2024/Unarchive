@@ -36,9 +36,16 @@ object CardProcessingLog {
         elapsedMs: Long? = null,
         metadata: Map<String, Any?> = emptyMap(),
     ) {
-        AppLogger.info(
-            TAG,
-            formatEvent(operationId, stage, state, cardId, elapsedMs, metadata),
+        AppLogger.event(
+            level = com.unarchive.android.log.LogLevel.INFO,
+            tag = TAG,
+            message = formatEvent(operationId, stage, state, cardId, elapsedMs, metadata),
+            category = "card-processing",
+            eventName = "card_processing",
+            operationId = operationId,
+            stage = stage,
+            result = state,
+            durationMs = elapsedMs,
         )
     }
 

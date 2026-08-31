@@ -9,13 +9,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.DestinationEvent
 import com.unarchive.android.ui.state.GraphEvent
 import com.unarchive.android.ui.state.NotesEvent
+import com.unarchive.android.ui.state.ResultsEvent
+import com.unarchive.android.ui.state.SettingsEvent
 import com.unarchive.android.ui.state.toUnarchiveUiState
 import com.unarchive.android.ui.theme.UnarchiveTheme
+import com.unarchive.android.ui.results.ResultsScreen
+import com.unarchive.android.ui.settings.SettingsScreen
 
 class MainActivity : ComponentActivity() {
     private val sharedAudio = mutableStateOf<Uri?>(null)
@@ -50,6 +55,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun UnarchiveApp(vm: UnarchiveViewModel) {
     val state = vm.toUnarchiveUiState()
+    val context = LocalContext.current
     UnarchiveNavigationHost(
         state = state,
         aiProposalGenerator = vm.noteDocumentAiProposalGenerator(),
@@ -71,6 +77,71 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 is NotesEvent.GenerateDraft -> vm.generateCardFromStoredResult(event.platform, event.videoId)
                 is NotesEvent.RetryCover -> vm.retryNoteCover(event.platform, event.videoId, event.cardVersion)
             }
+        },
+        legacyResultsContent = { onBack ->
+            ResultsScreen(
+                state = state.results,
+                onBack = onBack,
+                onEvent = { event ->
+                    val selected = state.results.selected
+                    when (event) {
+                        is ResultsEvent.Select -> vm.storedResults.firstOrNull { it.key == event.key }?.let(vm::selectStoredResult)
+                        ResultsEvent.CopyTranscript -> selected?.let {
+                            context.copyText(it.transcript)
+                            vm.status = "Transcript copied."
+                        }
+                        ResultsEvent.Share -> selected?.let { context.shareText(it.title, it.shareText()) }
+                        ResultsEvent.ExportCard -> selected?.let {
+                            context.exportCard(it)
+                            vm.status = "知识卡片已导出。"
+                        }
+                        ResultsEvent.ExportAudio -> selected?.let(vm::exportCachedAudio)
+                        ResultsEvent.GenerateCard -> selected?.let(vm::generateCard)
+                        ResultsEvent.Rerun -> selected?.let {
+                            vm.videoReference = it.canonicalUrl
+                            vm.processVideo(it.canonicalUrl)
+                        }
+                        ResultsEvent.RerunFresh -> selected?.let {
+                            vm.videoReference = it.canonicalUrl
+                            vm.processVideo(it.canonicalUrl, forceRefreshAudio = true)
+                        }
+                    }
+                },
+            )
+        },
+        legacySettingsContent = { onBack ->
+            SettingsScreen(
+                state = state.settings,
+                modelsDirectory = java.io.File(vm.getApplication<android.app.Application>().filesDir, "models"),
+                loginContent = {
+                    BilibiliLoginSection(
+                        authStore = vm.authStore,
+                        loginClient = vm.loginClient,
+                        loggedIn = vm.loggedIn,
+                        onLoggedIn = vm::onLoggedIn,
+                        onLoggedOut = vm::onLoggedOut,
+                    )
+                },
+                onBack = onBack,
+                onEvent = { event ->
+                    when (event) {
+                        is SettingsEvent.SelectEngine -> vm.setEngine(event.engine)
+                        is SettingsEvent.SelectSiliconFlowModel -> vm.selectSiliconFlowModel(event.model)
+                        is SettingsEvent.AddSiliconFlowModel -> vm.addSiliconFlowModel(event.model)
+                        is SettingsEvent.SetThreads -> vm.setThreads(event.threads)
+                        is SettingsEvent.SetEnableVad -> vm.setEnableVad(event.enabled)
+                        is SettingsEvent.SetVadMaxSeconds -> vm.selectedVadMaxSeconds = event.seconds
+                        is SettingsEvent.SetThinkingEnabled -> vm.updateThinkingEnabled(event.enabled)
+                        SettingsEvent.RefreshStorage -> vm.refreshStorageStats()
+                        SettingsEvent.OpenSystemStorageSettings -> vm.openSystemStorageSettings()
+                        SettingsEvent.ClearRebuildableCache -> vm.clearRebuildableCache()
+                        SettingsEvent.UseAutomaticCacheBudget -> vm.useAutomaticCacheBudget()
+                        is SettingsEvent.UsePresetCacheBudget -> vm.usePresetCacheBudget(event.gibibytes)
+                        is SettingsEvent.CustomCacheBudgetChanged -> vm.customCacheBudgetInput = event.value
+                        SettingsEvent.SaveCustomCacheBudget -> vm.saveCustomCacheBudget()
+                    }
+                },
+            )
         },
         onGraphEvent = { event ->
             when (event) {
@@ -107,20 +178,8 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 TestTab(vm, onOpenLogs = onOpenLogs)
             }
         },
-        legacyResultsContent = { onBack ->
-            LegacyRouteFrame(title = "历史结果", onBack = onBack) {
-                ResultsTab(vm)
-            }
-        },
         legacyLogContent = { onBack ->
-            LegacyRouteFrame(title = "运行日志", onBack = onBack) {
-                LogTab()
-            }
-        },
-        legacySettingsContent = { onBack ->
-            LegacyRouteFrame(title = "设置", onBack = onBack) {
-                SettingsTab(vm)
-            }
+            LogTab(onBack)
         },
         securityContent = { onBack ->
             LegacyRouteFrame(title = "安全设置", onBack = onBack) {

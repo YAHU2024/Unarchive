@@ -8,4 +8,9 @@ object LogRedactor {
             Regex("(?i)(api[-_ ]?key|token|cookie|authorization|sessdata|bili_jct)\\s*[:=]\\s*[^\\s,;]+"),
             "$1=<redacted>",
         )
+        .replace(
+            Regex("(?i)(videoId|cardId|folderId|noteId|batchId|uname|username|filename)\\s*[:=]\\s*[^\\s,;]+"),
+            "$1=<redacted>",
+        )
+        .replace(Regex("(?i)([A-Z]:\\\\|/data/|/storage/)[^\\s,;]+"), "<path>")
 }
