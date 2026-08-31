@@ -78,6 +78,8 @@ import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.editor.MarkdownAiProposalGenerator
 import com.unarchive.android.editor.MarkdownAiProposalRepository
 import com.unarchive.android.ui.create.CreateScreen
+import com.unarchive.android.ui.batch.BatchCreateScreen
+import com.unarchive.android.ui.state.BatchCreateEvent
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.DestinationEvent
 import com.unarchive.android.ui.state.DestinationUiState
@@ -96,6 +98,7 @@ import com.unarchive.android.ui.notes.NotesScreen
 
 internal object AppRoutes {
     const val CREATE = "create"
+    const val BATCH_CREATE = "create/batch"
     const val NOTES = "notes"
     const val GRAPH = "graph"
     const val ME = "me"
@@ -132,6 +135,7 @@ private val mainDestinations = listOf(
 internal fun UnarchiveNavigationHost(
     state: UnarchiveUiState,
     onCreateEvent: (CreateEvent) -> Unit,
+    onBatchCreateEvent: (BatchCreateEvent) -> Unit = {},
     onNotesEvent: (NotesEvent) -> Unit,
     onGraphEvent: (GraphEvent) -> Unit = {},
     onDestinationEvent: (DestinationEvent) -> Unit = {},
@@ -196,7 +200,15 @@ internal fun UnarchiveNavigationHost(
                     onEvent = onCreateEvent,
                     onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
                     onOpenLatestNote = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
+                    onOpenBatchCreate = { navController.navigate(AppRoutes.BATCH_CREATE) },
                     onOpenDeveloperTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
+                )
+            }
+            composable(AppRoutes.BATCH_CREATE) {
+                BatchCreateScreen(
+                    state = state.batchCreate,
+                    onEvent = onBatchCreateEvent,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable(AppRoutes.NOTES) {

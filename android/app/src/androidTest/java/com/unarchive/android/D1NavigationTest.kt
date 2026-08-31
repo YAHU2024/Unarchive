@@ -15,6 +15,9 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import com.unarchive.android.ui.create.CreateScreen
+import com.unarchive.android.ui.batch.BatchCreateScreen
+import com.unarchive.android.ui.state.BatchCreateEvent
+import com.unarchive.android.ui.state.BatchCreateUiState
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateProcessingUiState
@@ -25,6 +28,9 @@ import com.unarchive.android.ui.state.NotesUiState
 import com.unarchive.android.ui.state.RecoveryUiItem
 import com.unarchive.android.ui.state.UnarchiveUiState
 import com.unarchive.android.card.SingleCardRecoveryState
+import com.unarchive.android.platform.bilibili.BilibiliFavoriteFolder
+import com.unarchive.android.platform.bilibili.BilibiliFavoriteVideo
+import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -170,6 +176,66 @@ class D1NavigationTest {
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.GenerateNoteDraft), events)
+        }
+    }
+
+    @Test
+    fun createPageOpensIndependentBatchCreateRoute() {
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = sampleState(),
+                    onCreateEvent = {},
+                    onNotesEvent = {},
+                    onMeEvent = {},
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { _ -> Text("legacy settings") },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("create-batch-create").performClick()
+        composeRule.onNodeWithTag("batch-create-screen").assertIsDisplayed()
+        composeRule.onNodeWithText("批量创作").assertIsDisplayed()
+    }
+
+    @Test
+    fun batchCreatePresentationForwardsSelectionAndRunEvents() {
+        val events = mutableListOf<BatchCreateEvent>()
+        val videoId = "BVbatch1"
+        val state = BatchCreateUiState(
+            isLoggedIn = true,
+            favoriteFolders = listOf(BilibiliFavoriteFolder("folder-1", "学习", 1)),
+            favoriteVideos = listOf(
+                BilibiliFavoriteVideo(
+                    folderId = "folder-1",
+                    title = "批量视频",
+                    videoId = PlatformVideoId("bilibili", videoId),
+                    durationSeconds = 120,
+                    author = "作者",
+                ),
+            ),
+            selectedVideoIds = setOf(videoId),
+        )
+        composeRule.setContent {
+            UnarchiveTheme {
+                BatchCreateScreen(state = state, onEvent = events::add, onBack = {})
+            }
+        }
+
+        composeRule.onNodeWithTag("batch-video-$videoId").performClick()
+        composeRule.onNodeWithTag("batch-start").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(
+                    BatchCreateEvent.ToggleVideo(videoId),
+                    BatchCreateEvent.StartBatch,
+                ),
+                events,
+            )
         }
     }
 

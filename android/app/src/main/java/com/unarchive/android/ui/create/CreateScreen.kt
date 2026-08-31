@@ -49,6 +49,7 @@ internal fun CreateScreen(
     onEvent: (CreateEvent) -> Unit,
     onOpenNotes: () -> Unit,
     onOpenLatestNote: (NoteDocument) -> Unit,
+    onOpenBatchCreate: () -> Unit = {},
     onOpenDeveloperTest: () -> Unit,
 ) {
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
@@ -270,6 +271,12 @@ internal fun CreateScreen(
                     Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("查看笔记")
+                }
+                OutlinedButton(
+                    onClick = onOpenBatchCreate,
+                    modifier = Modifier.testTag("create-batch-create"),
+                ) {
+                    Text("批量创作")
                 }
                 TextButton(onClick = onOpenDeveloperTest) {
                     Icon(Icons.Filled.Settings, contentDescription = null)

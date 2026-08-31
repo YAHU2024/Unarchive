@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.BatchCreateEvent
 import com.unarchive.android.ui.state.DestinationEvent
 import com.unarchive.android.ui.state.GraphEvent
 import com.unarchive.android.ui.state.NotesEvent
@@ -69,6 +70,25 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                 CreateEvent.CancelProcessing -> vm.cancel()
                 CreateEvent.ResumeBatch -> vm.resumeBatch()
                 is CreateEvent.ResumeSingleCard -> vm.resumeSingleCard(event.operationId)
+            }
+        },
+        onBatchCreateEvent = { event ->
+            when (event) {
+                BatchCreateEvent.LoadFavoriteFolders -> vm.loadFavoriteFolders()
+                is BatchCreateEvent.LoadFavoriteVideos -> vm.favoriteFolders
+                    .firstOrNull { it.id == event.folderId }
+                    ?.let(vm::loadFavoriteVideos)
+                is BatchCreateEvent.ToggleVideo -> vm.favoriteVideos
+                    .firstOrNull { it.videoId?.value == event.videoId }
+                    ?.let(vm::toggleFavoriteVideo)
+                BatchCreateEvent.SelectAllAvailable -> vm.selectAllAvailableFavoriteVideos()
+                BatchCreateEvent.ClearSelection -> vm.clearFavoriteVideoSelection()
+                BatchCreateEvent.StartBatch -> vm.startBatch()
+                BatchCreateEvent.ResumeBatch -> vm.resumeBatch()
+                BatchCreateEvent.RetryFailedBatch -> vm.retryFailedBatch()
+                BatchCreateEvent.AbandonBatchRecovery -> vm.abandonBatchRecovery()
+                BatchCreateEvent.SyncIma -> vm.startImaBatchSync()
+                BatchCreateEvent.RetryIma -> vm.retryImaBatch()
             }
         },
         onNotesEvent = { event ->

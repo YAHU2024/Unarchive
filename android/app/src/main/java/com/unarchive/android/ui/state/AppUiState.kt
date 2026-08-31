@@ -15,6 +15,10 @@ import com.unarchive.android.sync.DestinationAction
 import com.unarchive.android.sync.DestinationTargetStateMapper
 import com.unarchive.android.sync.ImaFolder
 import com.unarchive.android.sync.ImaKnowledgeBase
+import com.unarchive.android.platform.bilibili.BilibiliFavoriteFolder
+import com.unarchive.android.platform.bilibili.BilibiliFavoriteVideo
+import com.unarchive.android.pipeline.BatchManifestItem
+import com.unarchive.android.pipeline.BatchRunSummary
 
 enum class GraphRelationOperationState { IDLE, SAVING, SAVED, FAILED }
 
@@ -120,12 +124,34 @@ internal data class DestinationUiState(
 
 internal data class UnarchiveUiState(
     val create: CreateUiState,
+    val batchCreate: BatchCreateUiState = BatchCreateUiState(),
     val notes: NotesUiState,
     val graph: GraphUiState,
     val me: MeUiState,
     val destinations: DestinationUiState = DestinationUiState(),
     val results: ResultsUiState = ResultsUiState(),
     val settings: SettingsUiState = SettingsUiState(),
+)
+
+/** Presentation boundary for the foreground Bilibili batch flow. */
+internal data class BatchCreateUiState(
+    val isLoggedIn: Boolean = false,
+    val isBusy: Boolean = false,
+    val statusMessage: String = "",
+    val favoriteFolders: List<BilibiliFavoriteFolder> = emptyList(),
+    val selectedFolderId: String? = null,
+    val favoriteVideos: List<BilibiliFavoriteVideo> = emptyList(),
+    val selectedVideoIds: Set<String> = emptySet(),
+    val favoritesLoading: Boolean = false,
+    val batchSummary: BatchRunSummary? = null,
+    val batchCardSucceededCount: Int = 0,
+    val batchCardPartialCount: Int = 0,
+    val batchManifestItems: List<BatchManifestItem> = emptyList(),
+    val batchRecoveryAvailable: Boolean = false,
+    val recoveryFolderLabel: String = "",
+    val imaSyncAvailable: Boolean = false,
+    val imaPendingCount: Int = 0,
+    val imaRetryCount: Int = 0,
 )
 
 internal data class ResultsUiState(
@@ -218,6 +244,20 @@ internal sealed interface CreateEvent {
     data object CancelProcessing : CreateEvent
     data object ResumeBatch : CreateEvent
     data class ResumeSingleCard(val operationId: String) : CreateEvent
+}
+
+internal sealed interface BatchCreateEvent {
+    data object LoadFavoriteFolders : BatchCreateEvent
+    data class LoadFavoriteVideos(val folderId: String) : BatchCreateEvent
+    data class ToggleVideo(val videoId: String) : BatchCreateEvent
+    data object SelectAllAvailable : BatchCreateEvent
+    data object ClearSelection : BatchCreateEvent
+    data object StartBatch : BatchCreateEvent
+    data object ResumeBatch : BatchCreateEvent
+    data object RetryFailedBatch : BatchCreateEvent
+    data object AbandonBatchRecovery : BatchCreateEvent
+    data object SyncIma : BatchCreateEvent
+    data object RetryIma : BatchCreateEvent
 }
 
 internal sealed interface NotesEvent {
@@ -373,6 +413,25 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
                 checkpointSegmentCount = checkpointSegmentCount,
                 isCancellable = runningJob?.isActive == true || generateJob?.isActive == true,
             ),
+        ),
+        batchCreate = BatchCreateUiState(
+            isLoggedIn = loggedIn,
+            isBusy = runningJob != null || generateJob != null || exportJob != null,
+            statusMessage = status,
+            favoriteFolders = favoriteFolders,
+            selectedFolderId = selectedFavoriteFolderId,
+            favoriteVideos = favoriteVideos,
+            selectedVideoIds = selectedFavoriteVideoIds,
+            favoritesLoading = favoritesLoading,
+            batchSummary = batchSummary,
+            batchCardSucceededCount = batchCardSucceededCount,
+            batchCardPartialCount = batchCardPartialCount,
+            batchManifestItems = batchManifestItems,
+            batchRecoveryAvailable = batchRecoveryAvailable,
+            recoveryFolderLabel = recoveryBatchFolderLabel,
+            imaSyncAvailable = batchImaSyncAvailable,
+            imaPendingCount = batchImaPendingCount,
+            imaRetryCount = batchImaRetryCount,
         ),
         notes = NotesUiState(
             noteCount = libraryItems.count { it.kind == NotesLibraryItemKind.SAVED_NOTE },
