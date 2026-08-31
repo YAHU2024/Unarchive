@@ -1,6 +1,9 @@
 package com.unarchive.android
 
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -8,8 +11,10 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import com.unarchive.android.ui.create.CreateScreen
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateProcessingUiState
@@ -28,6 +33,42 @@ import org.junit.Test
 class D1NavigationTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun createPresentationCanMountWithoutNavigationHostAndForwardsInput() {
+        val events = mutableListOf<CreateEvent>()
+        var createState by mutableStateOf(sampleState().create)
+        composeRule.setContent {
+            UnarchiveTheme {
+                CreateScreen(
+                    state = createState,
+                    onEvent = { event ->
+                        events += event
+                        if (event is CreateEvent.VideoReferenceChanged) {
+                            createState = createState.copy(videoReference = event.value)
+                        }
+                    },
+                    onOpenNotes = {},
+                    onOpenLatestNote = {},
+                    onOpenDeveloperTest = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("create-video-reference")
+            .performTextReplacement("BV1PS42197aM")
+        composeRule.onNodeWithTag("create-generate-note").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(
+                    CreateEvent.VideoReferenceChanged("BV1PS42197aM"),
+                    CreateEvent.GenerateNoteDraft,
+                ),
+                events,
+            )
+        }
+    }
 
     @Test
     fun startsOnCreateAndNavigatesToGraph() {
