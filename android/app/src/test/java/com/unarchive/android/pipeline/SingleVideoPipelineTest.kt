@@ -40,6 +40,50 @@ class SingleVideoPipelineTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun runsWithAReplacementPlatformAdapterWithoutBilibiliTypes() = runTest {
+        val audio = temporaryFolder.newFile("replacement.audio")
+        audio.writeBytes(byteArrayOf(1, 2, 3))
+        val repository = InMemoryResultRepository()
+        val pipeline = SingleVideoPipeline(
+            platformAdapter = ReplacementPlatformAdapter(),
+            audioDownloader = AudioDownloader { _, _, _, _ ->
+                DownloadedAudio(audio, audio.length(), reused = false)
+            },
+            benchmarkRunner = BenchmarkRunner(
+                engineProvider = AsrEngineProvider { kind ->
+                    object : AsrEngine {
+                        override val kind = kind
+
+                        override suspend fun transcribe(
+                            source: AudioSource,
+                            config: AsrConfig,
+                            progressListener: AsrProgressListener,
+                        ) = AsrOutput(
+                            listOf(TranscriptSegment(0, 1_000, "replacement transcript")),
+                            1_000,
+                        )
+                    }
+                },
+                clock = SequenceClock(0, 100),
+            ),
+            resultRepository = repository,
+            wallClockEpochMs = { 1_000L },
+        )
+
+        val result = pipeline.run(
+            input = "https://example.test/watch/42",
+            config = AsrConfig(AsrEngineKind.SENSE_VOICE_SHERPA),
+            progressListener = SingleVideoProgressListener {},
+        )
+
+        assertEquals("example", result.metadata.id.platform)
+        assertEquals("video-42", result.metadata.id.value)
+        assertEquals("replacement transcript", result.benchmark.segments.single().text)
+        assertEquals(VideoResultKey("example", "video-42"), result.storedResult?.key)
+        assertEquals(1, repository.list().size)
+    }
+
+    @Test
     fun runsResolvedDownloadThroughAsrInStageOrder() = runTest {
         val audio = temporaryFolder.newFile("audio.m4a")
         audio.writeBytes(byteArrayOf(1, 2, 3))
@@ -544,6 +588,48 @@ private class FakePlatformAdapter(
     private fun canonicalReference() = VideoReference.Canonical(
         PlatformVideoId(platform, "BV1PS42197aM"),
         "https://www.bilibili.com/video/BV1PS42197aM",
+    )
+}
+
+private class ReplacementPlatformAdapter : VideoPlatformAdapter {
+    override val platform = "example"
+
+    override fun parseReference(input: String) = canonicalReference()
+
+    override suspend fun resolveReference(input: String) = canonicalReference()
+
+    override suspend fun fetchMetadata(reference: VideoReference.Canonical) = VideoMetadata(
+        id = reference.id,
+        canonicalUrl = reference.url,
+        title = "Replacement source",
+        ownerName = "Example owner",
+        durationSeconds = 1,
+        cid = 0,
+    )
+
+    override suspend fun resolveAudio(metadata: VideoMetadata) = AudioStream(
+        url = "https://example.test/audio",
+        backupUrls = emptyList(),
+        bandwidth = 1,
+        mimeType = "audio/mp4",
+        codecs = null,
+    )
+
+    override suspend fun resolveVideo(metadata: VideoMetadata) = VideoStream(
+        url = "https://example.test/video",
+        backupUrls = emptyList(),
+        bandwidth = 1,
+        width = 640,
+        height = 360,
+        mimeType = "video/mp4",
+        codecs = null,
+    )
+
+    override suspend fun fetchSubtitles(metadata: VideoMetadata): List<SubtitleSegment>? = null
+
+    private fun canonicalReference() = VideoReference.Canonical(
+        PlatformVideoId(platform, "video-42"),
+        "https://example.test/watch/42",
     )
 }
 
