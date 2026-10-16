@@ -34,8 +34,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -61,6 +59,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.GlassDock
+import com.unarchive.android.ui.components.GlassDockItem
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.FileNoteContentRepository
@@ -338,19 +338,14 @@ private fun AppBottomNavigation(
     currentRoute: String,
     onSelect: (MainDestination) -> Unit,
 ) {
-    NavigationBar(modifier = Modifier.navigationBarsPadding()) {
+    GlassDock {
         mainDestinations.forEach { destination ->
-            NavigationBarItem(
-                modifier = Modifier.testTag("bottom-nav-${destination.route}"),
+            GlassDockItem(
+                label = destination.label,
+                icon = destination.icon,
                 selected = currentRoute == destination.route,
+                testTag = "bottom-nav-${destination.route}",
                 onClick = { onSelect(destination) },
-                icon = {
-                    Icon(
-                        imageVector = destination.icon,
-                        contentDescription = "导航：${destination.label}",
-                    )
-                },
-                label = { Text(destination.label) },
             )
         }
     }

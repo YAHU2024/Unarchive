@@ -31,8 +31,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         acceptIntent(intent)
         setContent {
-            UnarchiveTheme {
-                val vm: UnarchiveViewModel = viewModel()
+            val vm: UnarchiveViewModel = viewModel()
+            UnarchiveTheme(liquidGlassEnabled = vm.liquidGlassEnabled) {
                 LaunchedEffect(sharedAudio.value, sharedVideoReference.value) {
                     vm.acceptSharedInput(sharedAudio.value, sharedVideoReference.value)
                 }
@@ -152,6 +152,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                         is SettingsEvent.SetEnableVad -> vm.setEnableVad(event.enabled)
                         is SettingsEvent.SetVadMaxSeconds -> vm.selectedVadMaxSeconds = event.seconds
                         is SettingsEvent.SetThinkingEnabled -> vm.updateThinkingEnabled(event.enabled)
+                        is SettingsEvent.SetLiquidGlassEnabled -> vm.updateLiquidGlassEnabled(event.enabled)
                         SettingsEvent.RefreshStorage -> vm.refreshStorageStats()
                         SettingsEvent.OpenSystemStorageSettings -> vm.openSystemStorageSettings()
                         SettingsEvent.ClearRebuildableCache -> vm.clearRebuildableCache()

@@ -73,3 +73,6 @@ android/scripts/bench/out/
 release-artifacts/
 android/keystore/
 android/keystore.properties
+
+# Firecrawl output 
+.firecrawl/

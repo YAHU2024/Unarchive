@@ -294,6 +294,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var thinkingEnabled by mutableStateOf(apiKeyStore.getThinkingEnabled())
         private set
 
+    /** Decorative glass is opt-out so low-end devices can use an opaque surface. */
+    var liquidGlassEnabled by mutableStateOf(prefs.getBoolean(PREF_LIQUID_GLASS_ENABLED, true))
+        private set
+
     var storageSnapshot by mutableStateOf<AppStorageSnapshot?>(null)
         private set
     var storageLoading by mutableStateOf(false)
@@ -679,6 +683,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     fun setEnableVad(enabled: Boolean) {
         selectedEnableVad = enabled
         AppLogger.info(TAG, "VAD 静音检测：${if (enabled) "开启" else "关闭"}")
+    }
+
+    fun updateLiquidGlassEnabled(enabled: Boolean) {
+        liquidGlassEnabled = enabled
+        prefs.edit().putBoolean(PREF_LIQUID_GLASS_ENABLED, enabled).apply()
+        AppLogger.info(TAG, "液态玻璃效果：${if (enabled) "开启" else "关闭"}")
     }
 
     val securitySettingsState: SecuritySettingsState
@@ -2764,6 +2774,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private const val TAG = "UnarchiveViewModel"
         private const val PREF_SELECTED_ENGINE = "selected_asr_engine"
         private const val PREF_CACHE_BUDGET_BYTES = "cache_budget_bytes"
+        private const val PREF_LIQUID_GLASS_ENABLED = "liquid_glass_enabled"
         private const val IMA_TARGET_FRESHNESS_MS = 5 * 60 * 1000L
     }
 

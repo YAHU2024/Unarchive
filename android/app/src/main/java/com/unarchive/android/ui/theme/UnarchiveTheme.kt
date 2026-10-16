@@ -8,9 +8,30 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+
+/** Whether decorative liquid-glass layers may use translucent treatment. */
+internal val LocalLiquidGlassEnabled = staticCompositionLocalOf { true }
+
+/** Project-owned values for the bounded liquid-glass treatment. */
+internal data class LiquidGlassTokens(
+    val surfaceAlpha: Float = 0.78f,
+    val emphasizedSurfaceAlpha: Float = 0.88f,
+    val borderAlpha: Float = 0.62f,
+    val emphasizedBorderAlpha: Float = 0.90f,
+    val highlightAlpha: Float = 0.10f,
+    val emphasizedHighlightAlpha: Float = 0.16f,
+    val tertiaryHighlightAlpha: Float = 0.08f,
+    val sheenAlpha: Float = 0.08f,
+    val dockSurfaceAlpha: Float = 0.84f,
+    val dockBorderAlpha: Float = 0.78f,
+)
+
+internal val LocalLiquidGlassTokens = staticCompositionLocalOf { LiquidGlassTokens() }
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF0B6257),
@@ -74,12 +95,18 @@ internal val AppShapes = Shapes(
 @Composable
 internal fun UnarchiveTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    liquidGlassEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = AppTypography,
-        shapes = AppShapes,
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalLiquidGlassEnabled provides liquidGlassEnabled,
+        LocalLiquidGlassTokens provides LiquidGlassTokens(),
+    ) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = AppTypography,
+            shapes = AppShapes,
+            content = content,
+        )
+    }
 }

@@ -171,6 +171,7 @@ internal data class SettingsUiState(
     val selectedEnableVad: Boolean = false,
     val selectedVadMaxSeconds: Int = 10,
     val thinkingEnabled: Boolean = false,
+    val liquidGlassEnabled: Boolean = true,
     val isBusy: Boolean = false,
     val storageLoading: Boolean = false,
     val storageSnapshot: AppStorageSnapshot? = null,
@@ -312,6 +313,7 @@ internal sealed interface SettingsEvent {
     data class SetEnableVad(val enabled: Boolean) : SettingsEvent
     data class SetVadMaxSeconds(val seconds: Int) : SettingsEvent
     data class SetThinkingEnabled(val enabled: Boolean) : SettingsEvent
+    data class SetLiquidGlassEnabled(val enabled: Boolean) : SettingsEvent
     data object RefreshStorage : SettingsEvent
     data object OpenSystemStorageSettings : SettingsEvent
     data object ClearRebuildableCache : SettingsEvent
@@ -561,6 +563,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             selectedEnableVad = selectedEnableVad,
             selectedVadMaxSeconds = selectedVadMaxSeconds,
             thinkingEnabled = thinkingEnabled,
+            liquidGlassEnabled = liquidGlassEnabled,
             isBusy = runningJob != null || generateJob != null || exportJob != null || imaSyncing,
             storageLoading = storageLoading,
             storageSnapshot = storageSnapshot,

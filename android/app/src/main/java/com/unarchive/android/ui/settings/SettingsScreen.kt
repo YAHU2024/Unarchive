@@ -122,9 +122,52 @@ internal fun SettingsScreen(
         }
 
         HorizontalDivider()
+        LiquidGlassSettingsSection(
+            enabled = state.liquidGlassEnabled,
+            onEnabledChange = { onEvent(SettingsEvent.SetLiquidGlassEnabled(it)) },
+            isBusy = state.isBusy,
+        )
+
+        HorizontalDivider()
         StorageManagementSection(state, onEvent)
         HorizontalDivider()
         ModelManagementSection(modelsDirectory = modelsDirectory, enabled = !state.isBusy)
+    }
+}
+
+@Composable
+internal fun LiquidGlassSettingsSection(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    isBusy: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("liquid-glass-section"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("界面效果", style = MaterialTheme.typography.titleMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("液态玻璃", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    if (enabled) "用于顶栏、导航和重点卡片；正文保持稳定阅读面。"
+                    else "已关闭，玻璃元素降级为不透明背景，适合性能较低的设备。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                modifier = Modifier.testTag("liquid-glass-switch"),
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                enabled = !isBusy,
+            )
+        }
     }
 }
 

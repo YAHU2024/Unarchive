@@ -5,15 +5,27 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CornerBasedShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.unarchive.android.ui.theme.LocalLiquidGlassEnabled
+import com.unarchive.android.ui.theme.LocalLiquidGlassTokens
 
 /**
- * A predictable frosted-surface fallback. It intentionally has no blur
- * dependency; a future blur implementation can stay behind this component.
+ * A project-owned liquid-glass surface.
+ *
+ * The effect is deliberately bounded to decorative surfaces. It uses a
+ * translucent tonal layer, a pair of soft specular highlights and a fine
+ * outline instead of blurring the content behind the surface. This keeps
+ * scrolling text, Markdown and logs readable on every API level. When the
+ * user disables the effect, the same component becomes an opaque surface.
  */
 @Composable
 internal fun GlassSurface(
@@ -24,17 +36,66 @@ internal fun GlassSurface(
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = MaterialTheme.shapes.medium
+    val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val tokens = LocalLiquidGlassTokens.current
+    val fill = if (liquidGlassEnabled) {
+        colors.surface.copy(alpha = if (emphasized) tokens.emphasizedSurfaceAlpha else tokens.surfaceAlpha)
+    } else {
+        colors.surface
+    }
     Surface(
         modifier = modifier.border(
             BorderStroke(
                 width = 1.dp,
-                color = colors.outlineVariant.copy(alpha = if (emphasized) 0.9f else 0.62f),
+                color = colors.outlineVariant.copy(alpha = if (emphasized) tokens.emphasizedBorderAlpha else tokens.borderAlpha),
             ),
             shape,
         ),
         shape = shape,
-        color = if (emphasized) colors.surface else colors.surface.copy(alpha = 0.86f),
+        color = fill,
         tonalElevation = if (emphasized) 2.dp else 0.dp,
-        content = { Box(modifier = Modifier.padding(contentPadding)) { content() } },
+        content = {
+            LiquidGlassDecoration(
+                enabled = liquidGlassEnabled,
+                emphasized = emphasized,
+                shape = shape,
+            ) { Box(modifier = Modifier.padding(contentPadding)) { content() } }
+        },
     )
+}
+
+@Composable
+private fun LiquidGlassDecoration(
+    enabled: Boolean,
+    emphasized: Boolean,
+    shape: CornerBasedShape,
+    content: @Composable () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val tokens = LocalLiquidGlassTokens.current
+    val modifier = if (enabled) {
+        Modifier
+            .clip(shape)
+            .drawWithCache {
+                val highlight = Brush.linearGradient(
+                    colors = listOf(
+                        colors.primary.copy(alpha = if (emphasized) tokens.emphasizedHighlightAlpha else tokens.highlightAlpha),
+                        Color.Transparent,
+                        colors.tertiary.copy(alpha = tokens.tertiaryHighlightAlpha),
+                    ),
+                )
+                val sheen = Brush.radialGradient(
+                    colors = listOf(colors.onSurface.copy(alpha = tokens.sheenAlpha), Color.Transparent),
+                    radius = size.maxDimension * 0.72f,
+                )
+                onDrawWithContent {
+                    drawRect(highlight)
+                    drawRect(sheen)
+                    drawContent()
+                }
+            }
+    } else {
+        Modifier.clip(shape)
+    }
+    Box(modifier = modifier) { content() }
 }
