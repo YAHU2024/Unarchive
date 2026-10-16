@@ -34,8 +34,9 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.unarchive.android.ui.theme.LocalLiquidGlassEnabled
+import com.unarchive.android.ui.theme.LocalLiquidGlassPolicy
 import com.unarchive.android.ui.theme.LocalLiquidGlassTokens
+import com.unarchive.android.ui.theme.LocalMotionPolicy
 
 /** A floating, platform-inspired dock for the four primary destinations. */
 @Composable
@@ -44,7 +45,7 @@ internal fun GlassDock(
 ) {
     val colors = MaterialTheme.colorScheme
     val tokens = LocalLiquidGlassTokens.current
-    val enabled = LocalLiquidGlassEnabled.current
+    val enabled = LocalLiquidGlassPolicy.current.usesTransparency
     val shape = RoundedCornerShape(32.dp)
     Surface(
         modifier = Modifier
@@ -88,14 +89,15 @@ internal fun RowScope.GlassDockItem(
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val motion = LocalMotionPolicy.current
     val selectedContainer by animateColorAsState(
         targetValue = if (selected) colors.secondaryContainer else Color.Transparent,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = tween(durationMillis = motion.shortDurationMillis),
         label = "dock-selection",
     )
     val contentColor by animateColorAsState(
         targetValue = if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = tween(durationMillis = motion.shortDurationMillis),
         label = "dock-content",
     )
     val itemShape = RoundedCornerShape(26.dp)

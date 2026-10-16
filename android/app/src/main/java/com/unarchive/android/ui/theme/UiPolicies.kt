@@ -1,0 +1,69 @@
+package com.unarchive.android.ui.theme
+
+/** The implementation selected for bounded decorative surfaces. */
+internal enum class LiquidGlassMode {
+    Disabled,
+    Simulated,
+    Blur,
+    LiquidGlass,
+}
+
+internal enum class PerformanceTier { Normal, Constrained }
+
+internal data class LiquidGlassInputs(
+    val userEnabled: Boolean,
+    val apiLevel: Int,
+    val performanceTier: PerformanceTier = PerformanceTier.Normal,
+    val reducedTransparency: Boolean = false,
+    val highContrast: Boolean = false,
+)
+
+internal data class LiquidGlassPolicy(
+    val mode: LiquidGlassMode,
+    val usesTransparency: Boolean,
+) {
+    val isDecorativeEnabled: Boolean get() = mode != LiquidGlassMode.Disabled
+
+    companion object {
+        fun resolve(inputs: LiquidGlassInputs): LiquidGlassPolicy {
+            if (!inputs.userEnabled || inputs.reducedTransparency || inputs.highContrast) {
+                return LiquidGlassPolicy(LiquidGlassMode.Disabled, usesTransparency = false)
+            }
+            if (inputs.performanceTier == PerformanceTier.Constrained) {
+                return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = false)
+            }
+            if (inputs.apiLevel < 31) {
+                return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = false)
+            }
+            // D-C0 deliberately selects the project-owned simulation. Native blur and
+            // Android 13+ liquid glass remain D-C1/D-C2 adapter candidates.
+            return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = true)
+        }
+
+        fun fromUserSetting(enabled: Boolean, apiLevel: Int = 35): LiquidGlassPolicy = resolve(
+            LiquidGlassInputs(userEnabled = enabled, apiLevel = apiLevel),
+        )
+    }
+}
+
+internal enum class MotionMode { Full, Reduced }
+
+internal data class MotionPolicy(
+    val mode: MotionMode = MotionMode.Full,
+    val shortDurationMillis: Int = 180,
+    val standardDurationMillis: Int = 260,
+    val springStiffness: Float = 500f,
+    val springDampingRatio: Float = 0.82f,
+) {
+    val animateLayout: Boolean get() = mode == MotionMode.Full
+
+    companion object {
+        val Reduced = MotionPolicy(
+            mode = MotionMode.Reduced,
+            shortDurationMillis = 90,
+            standardDurationMillis = 120,
+            springStiffness = 1000f,
+            springDampingRatio = 1f,
+        )
+    }
+}

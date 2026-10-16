@@ -13,9 +13,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.os.Build
 
-/** Whether decorative liquid-glass layers may use translucent treatment. */
-internal val LocalLiquidGlassEnabled = staticCompositionLocalOf { true }
+internal val LocalLiquidGlassPolicy = staticCompositionLocalOf {
+    LiquidGlassPolicy.fromUserSetting(enabled = true)
+}
+internal val LocalMotionPolicy = staticCompositionLocalOf { MotionPolicy() }
+internal val LocalSemanticColors = staticCompositionLocalOf { LightSemanticColors }
 
 /** Project-owned values for the bounded liquid-glass treatment. */
 internal data class LiquidGlassTokens(
@@ -34,8 +38,8 @@ internal data class LiquidGlassTokens(
 internal val LocalLiquidGlassTokens = staticCompositionLocalOf { LiquidGlassTokens() }
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF0B6257),
-    onPrimary = Color.White,
+    primary = LightSemanticColors.brand,
+    onPrimary = LightSemanticColors.onBrand,
     primaryContainer = Color(0xFFB8EEE3),
     onPrimaryContainer = Color(0xFF00201B),
     secondary = Color(0xFF9B4F2F),
@@ -44,19 +48,19 @@ private val LightColors = lightColorScheme(
     onSecondaryContainer = Color(0xFF391305),
     tertiary = Color(0xFF406180),
     onTertiary = Color.White,
-    background = Color(0xFFF4F7F5),
-    onBackground = Color(0xFF171D1B),
-    surface = Color(0xFFFAFCFA),
-    onSurface = Color(0xFF171D1B),
+    background = LightSemanticColors.canvas,
+    onBackground = LightSemanticColors.ink,
+    surface = LightSemanticColors.surface,
+    onSurface = LightSemanticColors.ink,
     surfaceVariant = Color(0xFFDCE5E1),
     onSurfaceVariant = Color(0xFF3E4945),
-    outline = Color(0xFF6E7974),
-    outlineVariant = Color(0xFFBEC9C4),
+    outline = LightSemanticColors.outline,
+    outlineVariant = LightSemanticColors.outlineSubtle,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF8BD8CB),
-    onPrimary = Color(0xFF003731),
+    primary = DarkSemanticColors.brand,
+    onPrimary = DarkSemanticColors.onBrand,
     primaryContainer = Color(0xFF005047),
     onPrimaryContainer = Color(0xFFB8EEE3),
     secondary = Color(0xFFFFB59A),
@@ -65,14 +69,14 @@ private val DarkColors = darkColorScheme(
     onSecondaryContainer = Color(0xFFFFDBCC),
     tertiary = Color(0xFFA9C9EA),
     onTertiary = Color(0xFF12344F),
-    background = Color(0xFF101614),
-    onBackground = Color(0xFFE0E8E4),
-    surface = Color(0xFF151C19),
-    onSurface = Color(0xFFE0E8E4),
+    background = DarkSemanticColors.canvas,
+    onBackground = DarkSemanticColors.ink,
+    surface = DarkSemanticColors.surface,
+    onSurface = DarkSemanticColors.ink,
     surfaceVariant = Color(0xFF3E4945),
     onSurfaceVariant = Color(0xFFBEC9C4),
-    outline = Color(0xFF89958F),
-    outlineVariant = Color(0xFF3E4945),
+    outline = DarkSemanticColors.outline,
+    outlineVariant = DarkSemanticColors.outlineSubtle,
 )
 
 private val AppTypography = Typography().run {
@@ -85,21 +89,24 @@ private val AppTypography = Typography().run {
 }
 
 internal val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(28.dp),
+    extraSmall = RoundedCornerShape(UnarchiveShapes.small),
+    small = RoundedCornerShape(UnarchiveShapes.medium),
+    medium = RoundedCornerShape(UnarchiveShapes.large),
+    large = RoundedCornerShape(UnarchiveShapes.extraLarge),
+    extraLarge = RoundedCornerShape(UnarchiveShapes.extraLarge),
 )
 
 @Composable
 internal fun UnarchiveTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     liquidGlassEnabled: Boolean = true,
+    motionPolicy: MotionPolicy = MotionPolicy(),
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(
-        LocalLiquidGlassEnabled provides liquidGlassEnabled,
+        LocalLiquidGlassPolicy provides LiquidGlassPolicy.fromUserSetting(liquidGlassEnabled, Build.VERSION.SDK_INT),
+        LocalMotionPolicy provides motionPolicy,
+        LocalSemanticColors provides if (darkTheme) DarkSemanticColors else LightSemanticColors,
         LocalLiquidGlassTokens provides LiquidGlassTokens(),
     ) {
         MaterialTheme(

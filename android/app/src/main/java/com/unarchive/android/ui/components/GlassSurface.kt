@@ -15,7 +15,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.unarchive.android.ui.theme.LocalLiquidGlassEnabled
+import com.unarchive.android.ui.theme.LocalLiquidGlassPolicy
 import com.unarchive.android.ui.theme.LocalLiquidGlassTokens
 
 /**
@@ -36,9 +36,10 @@ internal fun GlassSurface(
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = MaterialTheme.shapes.medium
-    val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val glassPolicy = LocalLiquidGlassPolicy.current
+    val liquidGlassEnabled = glassPolicy.isDecorativeEnabled
     val tokens = LocalLiquidGlassTokens.current
-    val fill = if (liquidGlassEnabled) {
+    val fill = if (glassPolicy.usesTransparency) {
         colors.surface.copy(alpha = if (emphasized) tokens.emphasizedSurfaceAlpha else tokens.surfaceAlpha)
     } else {
         colors.surface
@@ -47,7 +48,9 @@ internal fun GlassSurface(
         modifier = modifier.border(
             BorderStroke(
                 width = 1.dp,
-                color = colors.outlineVariant.copy(alpha = if (emphasized) tokens.emphasizedBorderAlpha else tokens.borderAlpha),
+                color = colors.outlineVariant.copy(alpha = if (liquidGlassEnabled) {
+                    if (emphasized) tokens.emphasizedBorderAlpha else tokens.borderAlpha
+                } else 1f),
             ),
             shape,
         ),
@@ -56,7 +59,7 @@ internal fun GlassSurface(
         tonalElevation = if (emphasized) 2.dp else 0.dp,
         content = {
             LiquidGlassDecoration(
-                enabled = liquidGlassEnabled,
+                enabled = glassPolicy.usesTransparency,
                 emphasized = emphasized,
                 shape = shape,
             ) { Box(modifier = Modifier.padding(contentPadding)) { content() } }
