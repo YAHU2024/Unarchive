@@ -2,9 +2,7 @@ package com.unarchive.android.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,8 +31,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.unarchive.android.ui.theme.LocalLiquidGlassPolicy
-import com.unarchive.android.ui.theme.LocalLiquidGlassTokens
 import com.unarchive.android.ui.theme.LocalMotionPolicy
 
 /** A floating, platform-inspired dock for the four primary destinations. */
@@ -43,36 +38,21 @@ import com.unarchive.android.ui.theme.LocalMotionPolicy
 internal fun GlassDock(
     content: @Composable RowScope.() -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
-    val tokens = LocalLiquidGlassTokens.current
-    val enabled = LocalLiquidGlassPolicy.current.usesTransparency
     val shape = RoundedCornerShape(32.dp)
-    Surface(
+    GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .navigationBarsPadding()
-            .border(
-                BorderStroke(
-                    width = 1.dp,
-                    color = colors.outlineVariant.copy(
-                        alpha = if (enabled) tokens.dockBorderAlpha else tokens.borderAlpha,
-                    ),
-                ),
-                shape,
-            )
             .testTag("app-dock"),
+        emphasized = true,
         shape = shape,
-        color = colors.surface.copy(
-            alpha = if (enabled) tokens.dockSurfaceAlpha else 1f,
-        ),
-        tonalElevation = 2.dp,
         shadowElevation = 8.dp,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(6.dp),
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(6.dp),
+                .fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content,

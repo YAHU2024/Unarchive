@@ -14,12 +14,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import android.os.Build
+import com.unarchive.android.ui.components.GlassRenderer
+import com.unarchive.android.ui.components.glassRendererFor
 
 internal val LocalLiquidGlassPolicy = staticCompositionLocalOf {
     LiquidGlassPolicy.fromUserSetting(enabled = true)
 }
 internal val LocalMotionPolicy = staticCompositionLocalOf { MotionPolicy() }
 internal val LocalSemanticColors = staticCompositionLocalOf { LightSemanticColors }
+internal val LocalGlassRenderer = staticCompositionLocalOf<GlassRenderer> {
+    glassRendererFor(LiquidGlassMode.Disabled, usesTransparency = false)
+}
 
 /** Project-owned values for the bounded liquid-glass treatment. */
 internal data class LiquidGlassTokens(
@@ -108,6 +113,10 @@ internal fun UnarchiveTheme(
         LocalMotionPolicy provides motionPolicy,
         LocalSemanticColors provides if (darkTheme) DarkSemanticColors else LightSemanticColors,
         LocalLiquidGlassTokens provides LiquidGlassTokens(),
+        LocalGlassRenderer provides run {
+            val policy = LiquidGlassPolicy.fromUserSetting(liquidGlassEnabled, Build.VERSION.SDK_INT)
+            glassRendererFor(policy.mode, policy.usesTransparency)
+        },
     ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
