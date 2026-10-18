@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.theme.UnarchiveDimensions
@@ -161,4 +165,130 @@ internal fun SearchField(
         singleLine = true,
         placeholder = { Text(placeholder) },
     )
+}
+
+/** Semantic status tones shared by short-lived state and recovery messages. */
+internal enum class StatusBannerTone {
+    NEUTRAL,
+    INFO,
+    SUCCESS,
+    WARNING,
+    ERROR,
+}
+
+/** A presentation-only status block with text and an optional action. */
+@Composable
+internal fun StatusBanner(
+    title: String,
+    description: String? = null,
+    modifier: Modifier = Modifier,
+    tone: StatusBannerTone = StatusBannerTone.NEUTRAL,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+    liveRegion: LiveRegionMode? = null,
+) {
+    val statusColor = when (tone) {
+        StatusBannerTone.ERROR -> MaterialTheme.colorScheme.error
+        StatusBannerTone.SUCCESS -> MaterialTheme.colorScheme.primary
+        StatusBannerTone.WARNING -> MaterialTheme.colorScheme.tertiary
+        StatusBannerTone.INFO -> MaterialTheme.colorScheme.secondary
+        StatusBannerTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = statusColor,
+                modifier = if (liveRegion != null) {
+                    Modifier.semantics { this.liveRegion = liveRegion }
+                } else {
+                    Modifier
+                },
+            )
+            description?.takeIf(String::isNotBlank)?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (actionLabel != null && onAction != null) {
+                IosLikeButton(text = actionLabel, onClick = onAction)
+            }
+        }
+    }
+}
+
+/** A bounded progress card that keeps task state outside the component. */
+@Composable
+internal fun TaskProgressCard(
+    title: String,
+    stageLabel: String? = null,
+    statusMessage: String = "",
+    progress: Float? = null,
+    checkpointMessage: String? = null,
+    modifier: Modifier = Modifier,
+    emphasized: Boolean = false,
+    stageModifier: Modifier = Modifier,
+    progressModifier: Modifier = Modifier,
+    statusModifier: Modifier = Modifier,
+    checkpointModifier: Modifier = Modifier,
+    cancelModifier: Modifier = Modifier,
+    stageContentDescription: String? = null,
+    stageLiveRegion: LiveRegionMode? = null,
+    stageColor: androidx.compose.ui.graphics.Color? = null,
+    progressColor: androidx.compose.ui.graphics.Color? = null,
+    showCancel: Boolean = false,
+    cancelEnabled: Boolean = true,
+    cancelLabel: String = "取消处理",
+    onCancel: (() -> Unit)? = null,
+) {
+    GlassSurface(modifier = modifier, emphasized = emphasized) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            stageLabel?.takeIf(String::isNotBlank)?.let { label ->
+                Text(
+                    label,
+                    modifier = stageModifier.semantics {
+                        stageContentDescription?.let { contentDescription = it }
+                        stageLiveRegion?.let { liveRegion = it }
+                    },
+                    color = stageColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            progress?.let { value ->
+                LinearProgressIndicator(
+                    progress = { value.coerceIn(0f, 1f) },
+                    modifier = progressModifier.fillMaxWidth(),
+                    color = progressColor ?: MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                statusMessage,
+                modifier = statusModifier,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            checkpointMessage?.takeIf(String::isNotBlank)?.let {
+                Text(
+                    it,
+                    modifier = checkpointModifier,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (showCancel && onCancel != null) {
+                OutlinedButton(
+                    onClick = onCancel,
+                    enabled = cancelEnabled,
+                    modifier = cancelModifier.heightIn(min = UnarchiveDimensions.touchTarget),
+                ) {
+                    Text(cancelLabel)
+                }
+            }
+        }
+    }
 }

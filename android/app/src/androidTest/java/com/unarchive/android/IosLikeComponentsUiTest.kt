@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -23,7 +24,10 @@ import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.IosLikeButton
 import com.unarchive.android.ui.components.IosLikeIconButton
 import com.unarchive.android.ui.components.SearchField
+import com.unarchive.android.ui.components.StatusBanner
+import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.SettingsRow
+import com.unarchive.android.ui.components.TaskProgressCard
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -94,6 +98,61 @@ class IosLikeComponentsUiTest {
         composeRule.onNodeWithText("继续").assertIsDisplayed().performClick()
         composeRule.onNodeWithContentDescription("关闭").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertTrue(clicked) }
+    }
+
+    @Test
+    fun statusBannerKeepsTextAndActionSemantics() {
+        var clicked = false
+        composeRule.setContent {
+            UnarchiveTheme {
+                StatusBanner(
+                    title = "同步失败",
+                    description = "本地笔记仍然保留。",
+                    tone = StatusBannerTone.ERROR,
+                    actionLabel = "重试",
+                    onAction = { clicked = true },
+                    modifier = Modifier.testTag("status-banner"),
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("status-banner").assertIsDisplayed()
+        composeRule.onNodeWithText("同步失败").assertIsDisplayed()
+        composeRule.onNodeWithText("本地笔记仍然保留。").assertIsDisplayed()
+        composeRule.onNodeWithText("重试").performClick()
+        composeRule.runOnIdle { assertTrue(clicked) }
+    }
+
+    @Test
+    fun taskProgressCardKeepsStageProgressCheckpointAndCancel() {
+        var cancelled = false
+        composeRule.setContent {
+            UnarchiveTheme {
+                TaskProgressCard(
+                    title = "正在处理视频",
+                    stageLabel = "转写中",
+                    statusMessage = "正在识别音频...",
+                    progress = 0.42f,
+                    checkpointMessage = "检查点已保存：3 段文本，可安全中断。",
+                    stageModifier = Modifier.testTag("task-stage"),
+                    progressModifier = Modifier.testTag("task-progress"),
+                    statusModifier = Modifier.testTag("task-status"),
+                    checkpointModifier = Modifier.testTag("task-checkpoint"),
+                    cancelModifier = Modifier.testTag("task-cancel"),
+                    showCancel = true,
+                    cancelEnabled = true,
+                    onCancel = { cancelled = true },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("正在处理视频").assertIsDisplayed()
+        composeRule.onNodeWithTag("task-stage").assertTextEquals("转写中")
+        composeRule.onNodeWithTag("task-progress").assertIsDisplayed()
+        composeRule.onNodeWithTag("task-status").assertTextEquals("正在识别音频...")
+        composeRule.onNodeWithTag("task-checkpoint").assertIsDisplayed()
+        composeRule.onNodeWithText("取消处理").performClick()
+        composeRule.runOnIdle { assertTrue(cancelled) }
     }
 
     @Composable

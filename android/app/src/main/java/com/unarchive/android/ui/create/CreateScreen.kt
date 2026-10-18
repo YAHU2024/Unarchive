@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -29,15 +28,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.TaskProgressCard
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateUiState
@@ -117,59 +115,33 @@ internal fun CreateScreen(
             state.processing.stage != CreateProcessingStage.IDLE
         ) {
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            if (state.isProcessing) "正在处理视频" else "处理状态",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        if (state.processing.stage != CreateProcessingStage.IDLE) {
-                            Text(
-                                state.processing.stage.displayLabel,
-                                modifier = Modifier
-                                    .testTag("create-processing-stage")
-                                    .semantics {
-                                        contentDescription = "处理阶段：${state.processing.stage.displayLabel}"
-                                        liveRegion = LiveRegionMode.Polite
-                                    },
-                                color = if (state.processing.stage == CreateProcessingStage.FAILED) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                        if (state.isProcessing) {
-                            LinearProgressIndicator(
-                                progress = { state.processing.progress },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("create-progress"),
-                            )
-                        }
-                        Text(
-                            state.statusMessage,
-                            modifier = Modifier.testTag("create-status"),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (state.processing.checkpointSegmentCount > 0) {
-                            Text(
-                                "检查点已保存：${state.processing.checkpointSegmentCount} 段文本，可安全中断。",
-                                modifier = Modifier.testTag("create-checkpoint"),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (state.isProcessing) {
-                            OutlinedButton(
-                                onClick = { onEvent(CreateEvent.CancelProcessing) },
-                                enabled = state.processing.isCancellable,
-                                modifier = Modifier.testTag("create-cancel"),
-                            ) {
-                                Text("取消处理")
-                            }
-                        }
-                    }
-                }
+                TaskProgressCard(
+                    title = if (state.isProcessing) "正在处理视频" else "处理状态",
+                    stageLabel = state.processing.stage
+                        .takeUnless { it == CreateProcessingStage.IDLE }
+                        ?.displayLabel,
+                    statusMessage = state.statusMessage,
+                    progress = state.processing.progress.takeIf { state.isProcessing },
+                    checkpointMessage = state.processing.checkpointSegmentCount
+                        .takeIf { it > 0 }
+                        ?.let { "检查点已保存：${it} 段文本，可安全中断。" },
+                    modifier = Modifier.fillMaxWidth(),
+                    stageModifier = Modifier.testTag("create-processing-stage"),
+                    progressModifier = Modifier.testTag("create-progress"),
+                    statusModifier = Modifier.testTag("create-status"),
+                    checkpointModifier = Modifier.testTag("create-checkpoint"),
+                    cancelModifier = Modifier.testTag("create-cancel"),
+                    stageContentDescription = "处理阶段：${state.processing.stage.displayLabel}",
+                    stageLiveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite,
+                    stageColor = if (state.processing.stage == CreateProcessingStage.FAILED) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        null
+                    },
+                    showCancel = state.isProcessing,
+                    cancelEnabled = state.processing.isCancellable,
+                    onCancel = { onEvent(CreateEvent.CancelProcessing) },
+                )
             }
         }
         if (state.hasRecovery) {
