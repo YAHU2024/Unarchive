@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.IosLikeButton
 import com.unarchive.android.ui.components.IosLikeIconButton
+import com.unarchive.android.ui.components.RecoveryCard
 import com.unarchive.android.ui.components.SearchField
 import com.unarchive.android.ui.components.StatusBanner
 import com.unarchive.android.ui.components.StatusBannerTone
@@ -153,6 +154,29 @@ class IosLikeComponentsUiTest {
         composeRule.onNodeWithTag("task-checkpoint").assertIsDisplayed()
         composeRule.onNodeWithText("取消处理").performClick()
         composeRule.runOnIdle { assertTrue(cancelled) }
+    }
+
+    @Test
+    fun recoveryCardKeepsFailureReasonAndAction() {
+        var resumed = false
+        composeRule.setContent {
+            UnarchiveTheme {
+                RecoveryCard(
+                    title = "视频笔记",
+                    statusLabel = "上次失败 · AI 分析",
+                    errorMessage = "网络暂时不可用。",
+                    actionLabel = "继续生成",
+                    modifier = Modifier.testTag("recovery-card"),
+                    onAction = { resumed = true },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("recovery-card").assertIsDisplayed()
+        composeRule.onNodeWithText("上次失败 · AI 分析").assertIsDisplayed()
+        composeRule.onNodeWithText("网络暂时不可用。").assertIsDisplayed()
+        composeRule.onNodeWithText("继续生成").performClick()
+        composeRule.runOnIdle { assertTrue(resumed) }
     }
 
     @Composable

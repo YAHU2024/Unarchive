@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.RecoveryCard
+import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
@@ -146,25 +148,16 @@ internal fun CreateScreen(
         }
         if (state.hasRecovery) {
             item {
-                GlassSurface(
+                RecoveryCard(
+                    title = "发现未完成任务",
+                    statusLabel = "已保留可以继续使用的处理中成果。",
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("create-batch-recovery"),
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("发现未完成任务", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "已保留可以继续使用的处理中成果。",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Button(
-                            onClick = { onEvent(CreateEvent.ResumeBatch) },
-                            modifier = Modifier.testTag("create-resume-batch"),
-                        ) {
-                            Text("继续处理")
-                        }
-                    }
-                }
+                    actionLabel = "继续处理",
+                    actionModifier = Modifier.testTag("create-resume-batch"),
+                    onAction = { onEvent(CreateEvent.ResumeBatch) },
+                )
             }
         }
         if (state.recoveries.isNotEmpty()) {
@@ -177,38 +170,36 @@ internal fun CreateScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("未完成的笔记生成", style = MaterialTheme.typography.titleMedium)
                         state.recoveries.forEach { recovery ->
-                            Column(
+                            RecoveryCard(
+                                title = recovery.title,
+                                statusLabel = when {
+                                    recovery.state == SingleCardRecoveryState.RECOVERING ->
+                                        "恢复中 · ${recovery.stageLabel}"
+                                    recovery.errorMessage != null ->
+                                        "上次失败 · ${recovery.stageLabel}"
+                                    else -> "已中断 · ${recovery.stageLabel}"
+                                },
+                                statusTone = if (recovery.errorMessage != null) {
+                                    StatusBannerTone.ERROR
+                                } else {
+                                    StatusBannerTone.NEUTRAL
+                                },
+                                errorMessage = recovery.errorMessage,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("create-recovery-${recovery.operationId}"),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text(recovery.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    when {
-                                        recovery.state == SingleCardRecoveryState.RECOVERING ->
-                                            "恢复中 · ${recovery.stageLabel}"
-                                        recovery.errorMessage != null ->
-                                            "上次失败 · ${recovery.stageLabel}"
-                                        else -> "已中断 · ${recovery.stageLabel}"
-                                    },
-                                    color = if (recovery.errorMessage != null) {
-                                        MaterialTheme.colorScheme.error
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                )
-                                recovery.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                                Button(
-                                    onClick = { recoveryToConfirm = recovery.operationId },
-                                    enabled = recovery.canResume && !state.isProcessing,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("create-recovery-resume-${recovery.operationId}"),
-                                ) {
-                                    Text(if (recovery.state == SingleCardRecoveryState.RECOVERING) "恢复中..." else "继续生成")
-                                }
-                            }
+                                wrapSurface = false,
+                                actionLabel = if (recovery.state == SingleCardRecoveryState.RECOVERING) {
+                                    "恢复中..."
+                                } else {
+                                    "继续生成"
+                                },
+                                actionEnabled = recovery.canResume && !state.isProcessing,
+                                actionModifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("create-recovery-resume-${recovery.operationId}"),
+                                onAction = { recoveryToConfirm = recovery.operationId },
+                            )
                         }
                     }
                 }

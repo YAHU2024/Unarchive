@@ -292,3 +292,56 @@ internal fun TaskProgressCard(
         }
     }
 }
+
+/** A presentation-only recovery card; recovery decisions remain with the caller. */
+@Composable
+internal fun RecoveryCard(
+    title: String,
+    statusLabel: String,
+    description: String? = null,
+    errorMessage: String? = null,
+    modifier: Modifier = Modifier,
+    wrapSurface: Boolean = true,
+    statusTone: StatusBannerTone = StatusBannerTone.WARNING,
+    actionLabel: String? = null,
+    actionEnabled: Boolean = true,
+    actionModifier: Modifier = Modifier,
+    onAction: (() -> Unit)? = null,
+) {
+    val statusColor = when (statusTone) {
+        StatusBannerTone.ERROR -> MaterialTheme.colorScheme.error
+        StatusBannerTone.SUCCESS -> MaterialTheme.colorScheme.primary
+        StatusBannerTone.WARNING -> MaterialTheme.colorScheme.tertiary
+        StatusBannerTone.INFO -> MaterialTheme.colorScheme.secondary
+        StatusBannerTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val contentModifier = if (wrapSurface) Modifier else modifier.fillMaxWidth()
+    val content: @Composable () -> Unit = {
+        Column(
+            modifier = contentModifier,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            description?.takeIf(String::isNotBlank)?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(statusLabel, color = statusColor)
+            errorMessage?.takeIf(String::isNotBlank)?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+            if (actionLabel != null && onAction != null) {
+                IosLikeButton(
+                    text = actionLabel,
+                    onClick = onAction,
+                    enabled = actionEnabled,
+                    modifier = actionModifier,
+                )
+            }
+        }
+    }
+    if (wrapSurface) {
+        GlassSurface(modifier = modifier, content = content)
+    } else {
+        content()
+    }
+}
