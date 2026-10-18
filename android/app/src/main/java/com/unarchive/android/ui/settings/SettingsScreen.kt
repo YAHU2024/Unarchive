@@ -34,6 +34,8 @@ import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.ui.state.SettingsEvent
 import com.unarchive.android.ui.state.SettingsUiState
+import com.unarchive.android.ui.components.InsetGroupedList
+import com.unarchive.android.ui.components.SettingsRow
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -141,33 +143,24 @@ internal fun LiquidGlassSettingsSection(
     onEnabledChange: (Boolean) -> Unit,
     isBusy: Boolean,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("liquid-glass-section"),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    InsetGroupedList(
+        modifier = Modifier.testTag("liquid-glass-section"),
+        title = "界面效果",
     ) {
-        Text("界面效果", style = MaterialTheme.typography.titleMedium)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("液态玻璃", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    if (enabled) "用于顶栏、导航和重点卡片；正文保持稳定阅读面。"
-                    else "已关闭，玻璃元素降级为不透明背景，适合性能较低的设备。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SettingsRow(
+            title = "液态玻璃",
+            description = if (enabled) "用于顶栏、导航和重点卡片；正文保持稳定阅读面。"
+            else "已关闭，玻璃元素降级为不透明背景，适合性能较低的设备。",
+            enabled = !isBusy,
+            trailingContent = {
+                Switch(
+                    modifier = Modifier.testTag("liquid-glass-switch"),
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                    enabled = !isBusy,
                 )
-            }
-            Switch(
-                modifier = Modifier.testTag("liquid-glass-switch"),
-                checked = enabled,
-                onCheckedChange = onEnabledChange,
-                enabled = !isBusy,
-            )
-        }
+            },
+        )
     }
 }
 
