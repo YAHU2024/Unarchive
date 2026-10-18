@@ -3,17 +3,14 @@ package com.unarchive.android.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -28,14 +25,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.unarchive.android.asr.AsrEngineKind
 import com.unarchive.android.model.ModelManagementSection
 import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.storage.formatStorageBytes
+import com.unarchive.android.ui.components.AdaptiveActions
+import com.unarchive.android.ui.components.ChoiceSettingsRow
+import com.unarchive.android.ui.components.InsetGroupedList
+import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.SettingsRow
+import com.unarchive.android.ui.components.ToggleSettingsRow
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
 import com.unarchive.android.ui.state.SettingsEvent
 import com.unarchive.android.ui.state.SettingsUiState
-import com.unarchive.android.ui.components.InsetGroupedList
-import com.unarchive.android.ui.components.SettingsRow
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -52,88 +54,68 @@ internal fun SettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp)
+            .padding(horizontal = 16.dp, vertical = 24.dp)
             .testTag("settings-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("设置", style = MaterialTheme.typography.headlineMedium)
-            OutlinedButton(onClick = onBack) { Text("返回") }
+            PageHeader("设置", modifier = Modifier.weight(1f))
+            UnarchiveSecondaryButton(onClick = onBack) { Text("返回") }
         }
-        loginContent()
-        HorizontalDivider()
-
-        Text("识别引擎", style = MaterialTheme.typography.titleMedium)
-        state.availableEngines.forEach { engine ->
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(
-                    selected = engine == state.selectedEngine,
-                    onClick = { onEvent(SettingsEvent.SelectEngine(engine)) },
-                    enabled = !state.isBusy,
+        InsetGroupedList(title = "平台账号") {
+            Column(Modifier.padding(16.dp)) { loginContent() }
+        }
+        InsetGroupedList(title = "识别引擎", modifier = Modifier.testTag("settings-engine-group")) {
+            Column(Modifier.selectableGroup()) {
+                state.availableEngines.forEach { engine ->
+                    ChoiceSettingsRow(engine.displayName, engine == state.selectedEngine, !state.isBusy) {
+                        onEvent(SettingsEvent.SelectEngine(engine))
+                    }
+                }
+            }
+            Column(Modifier.padding(16.dp)) { SiliconFlowModelSettings(state, onEvent) }
+        }
+        InsetGroupedList(title = "处理选项") {
+            Column(Modifier.selectableGroup()) {
+                Text("推理线程数（性能对比用）", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall)
+                listOf(null to "自动（按大核数）", 1 to "1", 2 to "2", 4 to "4").forEach { (threads, label) ->
+                    ChoiceSettingsRow(label, state.selectedThreads == threads, !state.isBusy) {
+                        onEvent(SettingsEvent.SetThreads(threads))
+                    }
+                }
+            }
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+            ToggleSettingsRow("启用 VAD 静音检测（实验性，可能崩溃）", state.selectedEnableVad, !state.isBusy) {
+                onEvent(SettingsEvent.SetEnableVad(it))
+            }
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("VAD 最大段长：" + state.selectedVadMaxSeconds + " 秒（越小越精细，停顿更平滑）")
+                Slider(
+                    value = state.selectedVadMaxSeconds.toFloat(),
+                    onValueChange = { onEvent(SettingsEvent.SetVadMaxSeconds(it.roundToInt())) },
+                    enabled = !state.isBusy, valueRange = 1f..30f, steps = 28,
                 )
-                Text(engine.displayName)
+            }
+            ToggleSettingsRow("思考模式（更慢但更深入）", state.thinkingEnabled, !state.isBusy) {
+                onEvent(SettingsEvent.SetThinkingEnabled(it))
             }
         }
-        SiliconFlowModelSettings(state, onEvent)
-
-        HorizontalDivider()
-        Text("推理线程数（性能对比用）", style = MaterialTheme.typography.titleMedium)
-        listOf(null to "自动（按大核数）", 1 to "1", 2 to "2", 4 to "4").forEach { (threads, label) ->
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(
-                    selected = state.selectedThreads == threads,
-                    onClick = { onEvent(SettingsEvent.SetThreads(threads)) },
-                    enabled = !state.isBusy,
-                )
-                Text(label)
-            }
+        InsetGroupedList(title = "服务凭据") {
+            SettingsRow("安全设置", "凭据编辑、连接检查和清除确认已集中到“安全设置”。此页不显示或修改密钥。")
         }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("启用 VAD 静音检测（实验性，可能崩溃）")
-            Spacer(Modifier.weight(1f))
-            Switch(
-                checked = state.selectedEnableVad,
-                onCheckedChange = { onEvent(SettingsEvent.SetEnableVad(it)) },
-                enabled = !state.isBusy,
-            )
-        }
-        Text("VAD 最大段长：${state.selectedVadMaxSeconds} 秒（越小越精细，停顿更平滑）")
-        Slider(
-            value = state.selectedVadMaxSeconds.toFloat(),
-            onValueChange = { onEvent(SettingsEvent.SetVadMaxSeconds(it.roundToInt())) },
-            enabled = !state.isBusy,
-            valueRange = 1f..30f,
-            steps = 28,
-        )
-
-        HorizontalDivider()
-        Text("服务凭据", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "凭据编辑、连接检查和清除确认已集中到“安全设置”。此页不显示或修改密钥。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("思考模式（更慢但更深入）")
-            Spacer(Modifier.weight(1f))
-            Switch(
-                checked = state.thinkingEnabled,
-                onCheckedChange = { onEvent(SettingsEvent.SetThinkingEnabled(it)) },
-                enabled = !state.isBusy,
-            )
-        }
-
-        HorizontalDivider()
         LiquidGlassSettingsSection(
             enabled = state.liquidGlassEnabled,
             onEnabledChange = { onEvent(SettingsEvent.SetLiquidGlassEnabled(it)) },
             isBusy = state.isBusy,
         )
-
-        HorizontalDivider()
-        StorageManagementSection(state, onEvent)
-        HorizontalDivider()
-        ModelManagementSection(modelsDirectory = modelsDirectory, enabled = !state.isBusy)
+        InsetGroupedList(title = "本地存储") {
+            Column(Modifier.padding(16.dp)) { StorageManagementSection(state, onEvent) }
+        }
+        InsetGroupedList(title = "本地模型") {
+            Column(Modifier.padding(16.dp)) {
+                ModelManagementSection(modelsDirectory = modelsDirectory, enabled = !state.isBusy)
+            }
+        }
     }
 }
 
@@ -199,7 +181,7 @@ private fun SiliconFlowModelSettings(state: SettingsUiState, onEvent: (SettingsE
                 singleLine = true,
                 label = { Text("添加模型名称") },
             )
-            Button(
+            UnarchiveButton(
                 modifier = Modifier.testTag("siliconflow-model-add"),
                 onClick = {
                     onEvent(SettingsEvent.AddSiliconFlowModel(modelInput))
@@ -220,11 +202,11 @@ private fun StorageManagementSection(state: SettingsUiState, onEvent: (SettingsE
         state.storageSnapshot != null -> StorageSnapshotText(state.storageSnapshot!!)
         state.storageError.isNotBlank() -> Text(state.storageError, color = MaterialTheme.colorScheme.error)
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = { onEvent(SettingsEvent.RefreshStorage) }, enabled = !state.storageLoading) { Text(if (state.storageLoading) "正在刷新" else "刷新存储信息") }
-        OutlinedButton(onClick = { onEvent(SettingsEvent.OpenSystemStorageSettings) }) { Text("系统存储设置") }
+    AdaptiveActions {
+        UnarchiveSecondaryButton(onClick = { onEvent(SettingsEvent.RefreshStorage) }, modifier = actionModifier, enabled = !state.storageLoading) { Text(if (state.storageLoading) "正在刷新" else "刷新存储信息") }
+        UnarchiveSecondaryButton(onClick = { onEvent(SettingsEvent.OpenSystemStorageSettings) }, modifier = actionModifier) { Text("系统存储设置") }
     }
-    OutlinedButton(onClick = { onEvent(SettingsEvent.ClearRebuildableCache) }, enabled = !state.cacheClearing && !state.isBusy) { Text(if (state.cacheClearing) "正在清理" else "清理可重建缓存") }
+    UnarchiveSecondaryButton(onClick = { onEvent(SettingsEvent.ClearRebuildableCache) }, enabled = !state.cacheClearing && !state.isBusy) { Text(if (state.cacheClearing) "正在清理" else "清理可重建缓存") }
     Text("仅清理导出临时文件、解码缓存、音频缓存和视频缓存；不会删除模型、知识卡片、转录结果或凭据。", style = MaterialTheme.typography.bodySmall)
     if (state.cacheClearStatus.isNotBlank()) Text(state.cacheClearStatus, style = MaterialTheme.typography.bodySmall)
     Text("缓存预算：${formatStorageBytes(state.effectiveCacheBudgetBytes)}", style = MaterialTheme.typography.titleSmall)
@@ -248,7 +230,7 @@ private fun StorageManagementSection(state: SettingsUiState, onEvent: (SettingsE
         singleLine = true,
         enabled = !state.isBusy,
     )
-    OutlinedButton(onClick = { onEvent(SettingsEvent.SaveCustomCacheBudget) }, enabled = !state.isBusy) { Text("保存自定义预算") }
+    UnarchiveSecondaryButton(onClick = { onEvent(SettingsEvent.SaveCustomCacheBudget) }, enabled = !state.isBusy) { Text("保存自定义预算") }
     if (state.cacheBudgetStatus.isNotBlank()) Text(state.cacheBudgetStatus, style = MaterialTheme.typography.bodySmall)
 }
 

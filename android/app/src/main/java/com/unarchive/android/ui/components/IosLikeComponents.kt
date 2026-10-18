@@ -7,28 +7,33 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.theme.UnarchiveDimensions
@@ -47,7 +52,7 @@ internal fun InsetGroupedList(
         title?.let {
             Text(
                 text = it,
-                modifier = Modifier.padding(horizontal = 4.dp),
+                modifier = Modifier.padding(horizontal = 4.dp).semantics { heading() },
                 style = MaterialTheme.typography.titleMedium,
             )
         }
@@ -114,15 +119,42 @@ internal fun IosLikeButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
-    Button(
+    UnarchiveButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier.heightIn(min = UnarchiveDimensions.touchTarget),
-        shape = RoundedCornerShape(16.dp),
-        contentPadding = ButtonDefaults.ContentPadding,
     ) {
+        leadingContent?.invoke()
+        if (leadingContent != null) Spacer(Modifier.width(8.dp))
         Text(text)
+    }
+}
+
+/** A text-first segment; caller owns selection and scrolling. */
+@Composable
+internal fun IosLikeFilterSegment(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        modifier = modifier.clip(shape)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
+            .heightIn(min = UnarchiveDimensions.touchTarget),
+        shape = shape,
+        color = if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant,
+        shadowElevation = if (selected) 2.dp else 0.dp,
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelLarge,
+        )
     }
 }
 
@@ -135,7 +167,7 @@ internal fun IosLikeIconButton(
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    IconButton(
+    UnarchiveIconButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
@@ -285,7 +317,7 @@ internal fun TaskProgressCard(
                 Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (showCancel && onCancel != null) {
-                OutlinedButton(
+                UnarchiveSecondaryButton(
                     onClick = onCancel,
                     enabled = cancelEnabled,
                     modifier = cancelModifier.heightIn(min = UnarchiveDimensions.touchTarget),

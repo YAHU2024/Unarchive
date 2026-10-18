@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -27,26 +26,22 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,9 +55,15 @@ import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.NoteSourceRef
 import com.unarchive.android.ui.components.GlassSurface
 import com.unarchive.android.ui.components.IosLikeButton
+import com.unarchive.android.ui.components.ProvenanceKind
+import com.unarchive.android.ui.components.ProvenanceRail
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveIconButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTopAppBar
 
 @Composable
 internal fun NoteEditorRoute(
@@ -104,7 +105,7 @@ internal fun NoteEditorScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
+            UnarchiveTopAppBar(
                 title = {
                     Text(
                         "编辑笔记",
@@ -113,12 +114,12 @@ internal fun NoteEditorScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    UnarchiveIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回笔记库")
                     }
                 },
                 actions = {
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = onRequestAiProposal,
                         enabled = state.aiProposalState != NoteAiProposalState.RUNNING &&
                             state.saveState != NoteEditorSaveState.SAVING,
@@ -128,7 +129,7 @@ internal fun NoteEditorScreen(
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                     }
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = { onEvent(NoteEditorEvent.Save) },
                         enabled = state.saveState != NoteEditorSaveState.SAVING,
                         modifier = Modifier
@@ -138,9 +139,6 @@ internal fun NoteEditorScreen(
                         Icon(Icons.Filled.Done, contentDescription = null)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
             )
         },
     ) { padding ->
@@ -200,7 +198,7 @@ internal fun NoteEditorScreen(
                 AddBlockControls(onEvent = onEvent)
             }
             item {
-                OutlinedButton(
+                UnarchiveSecondaryButton(
                     onClick = { onEvent(NoteEditorEvent.RestoreLastSaved) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -235,19 +233,19 @@ private fun AiProposalCard(
             } else if (state.aiProposalError != null) {
                 Text("AI 整理未完成", style = MaterialTheme.typography.titleMedium)
                 Text(state.aiProposalError, color = MaterialTheme.colorScheme.error)
-                OutlinedButton(onClick = { onEvent(NoteEditorEvent.RequestAiProposal) }) {
+                UnarchiveSecondaryButton(onClick = { onEvent(NoteEditorEvent.RequestAiProposal) }) {
                     Text("重新生成建议")
                 }
             } else if (state.aiProposal?.status == NoteProposalStatus.PENDING) {
                 val proposal = requireNotNull(state.aiProposal)
-                Text("有一份 AI 整理建议", style = MaterialTheme.typography.titleMedium)
+                ProvenanceRail("有一份 AI 整理建议", ProvenanceKind.Ai)
                 Text(
                     "${proposal.changes.size} 处内容变化。应用前会保留你的用户内容。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
+                    UnarchiveButton(
                         onClick = { onEvent(NoteEditorEvent.ApplyAiProposal) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -255,7 +253,7 @@ private fun AiProposalCard(
                     ) {
                         Text("应用建议")
                     }
-                    OutlinedButton(
+                    UnarchiveSecondaryButton(
                         onClick = { onEvent(NoteEditorEvent.RejectAiProposal) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -350,26 +348,29 @@ private fun NoteBlockEditorCard(
                         modifier = Modifier.semantics { heading() },
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    Text(
-                        originLabel(block.origin),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ProvenanceRail(
+                        label = originLabel(block.origin),
+                        kind = when (block.origin) {
+                            NoteBlockOrigin.AI -> ProvenanceKind.Ai
+                            NoteBlockOrigin.USER -> ProvenanceKind.User
+                            NoteBlockOrigin.SOURCE -> ProvenanceKind.Source
+                        },
                     )
                 }
                 Row {
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = { onEvent(NoteEditorEvent.MoveBlock(block.id, NoteEditorEvent.Direction.UP)) },
                         modifier = Modifier.semantics { contentDescription = "上移${blockLabel(block.type)}" },
                     ) {
                         Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null)
                     }
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = { onEvent(NoteEditorEvent.MoveBlock(block.id, NoteEditorEvent.Direction.DOWN)) },
                         modifier = Modifier.semantics { contentDescription = "下移${blockLabel(block.type)}" },
                     ) {
                         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
                     }
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = { onEvent(NoteEditorEvent.RemoveBlock(block.id)) },
                         modifier = Modifier.semantics { contentDescription = "删除${blockLabel(block.type)}" },
                     ) {
@@ -481,7 +482,7 @@ private fun AddBlockButton(
     type: NoteBlockType,
     onEvent: (NoteEditorEvent) -> Unit,
 ) {
-    OutlinedButton(
+    UnarchiveSecondaryButton(
         onClick = { onEvent(NoteEditorEvent.AddBlock(type)) },
         modifier = Modifier
             .fillMaxWidth()

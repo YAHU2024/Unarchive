@@ -9,13 +9,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,10 +30,13 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.security.ClearResult
 import com.unarchive.android.security.ConnectionStatus
 import com.unarchive.android.security.CredentialMutationResult
+import com.unarchive.android.security.SecureCredential
 import com.unarchive.android.security.SecurityNotice
 import com.unarchive.android.security.SecurityProfile
-import com.unarchive.android.security.SecureCredential
 import com.unarchive.android.security.SecuritySettingsState
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 
 /**
  * Presentational security settings surface. State contains presence-only facts;
@@ -69,7 +69,7 @@ internal fun SecuritySettingsContent(
             title = { Text("确认清除${profile.displayLabel()}凭据？") },
             text = { Text("这会移除本机保存的该服务凭据；本地笔记和转写结果不会删除。") },
             confirmButton = {
-                Button(
+                UnarchiveButton(
                     onClick = {
                         localNotice = null
                         if (onConfirmClear() is ClearResult.Cleared) {
@@ -87,7 +87,7 @@ internal fun SecuritySettingsContent(
                 ) { Text("确认清除") }
             },
             dismissButton = {
-                TextButton(
+                UnarchiveTextButton(
                     onClick = {
                         localNotice = null
                         onCancelClear()
@@ -115,7 +115,7 @@ internal fun SecuritySettingsContent(
                     .testTag("security-title")
                     .semantics { heading() },
             )
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
         Text(
             "凭据使用 Android Keystore 加密保存。页面只显示是否已配置，不回显密钥或内部服务编号。",
@@ -275,8 +275,8 @@ private fun SecureCredentialField(
             singleLine = true,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onSave, enabled = value.isNotBlank()) { Text("保存") }
-            OutlinedButton(onClick = onClear) { Text("清除") }
+            UnarchiveButton(onClick = onSave, enabled = value.isNotBlank()) { Text("保存") }
+            UnarchiveSecondaryButton(onClick = onClear) { Text("清除") }
         }
     }
 }
@@ -297,7 +297,7 @@ private fun ConnectionRow(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text("连接状态：$statusText", style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = { onCheck(profile) }, enabled = canCheck && status != ConnectionStatus.CHECKING) {
+        UnarchiveTextButton(onClick = { onCheck(profile) }, enabled = canCheck && status != ConnectionStatus.CHECKING) {
             Text(if (status == ConnectionStatus.CHECKING) "检查中" else "检查连接")
         }
     }

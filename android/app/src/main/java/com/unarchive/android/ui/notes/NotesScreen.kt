@@ -2,6 +2,7 @@ package com.unarchive.android.ui.notes
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -18,19 +19,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,20 +35,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
+import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.EmptyStateCard
-import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.IosLikeFilterSegment
+import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveIconButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.NoteVersionKey
 import com.unarchive.android.ui.state.NotesEvent
 import com.unarchive.android.ui.state.NotesFilter
@@ -80,7 +84,7 @@ internal fun NotesScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
             .testTag("notes-scroll"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
@@ -96,7 +100,10 @@ internal fun NotesScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
+                    .padding(4.dp)
                     .horizontalScroll(rememberScrollState())
+                    .selectableGroup()
                     .testTag("notes-filter-row"),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -148,7 +155,7 @@ internal fun NotesScreen(
             }
         }
         item {
-            OutlinedButton(
+            UnarchiveSecondaryButton(
                 onClick = {
                     onEvent(NotesEvent.Refresh)
                     onOpenLegacyNotes()
@@ -174,14 +181,14 @@ private fun NotesHeader(
         verticalAlignment = Alignment.Top,
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("笔记", style = MaterialTheme.typography.headlineLarge)
+            Text("笔记", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.semantics { heading() })
             Text(
                 "$noteCount 篇已保存 · $materialCount 项待整理",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(
+        UnarchiveIconButton(
             onClick = onRefresh,
             modifier = Modifier
                 .testTag("notes-refresh")
@@ -212,23 +219,8 @@ private fun NotesEmptyState(filter: NotesFilter) {
 }
 
 @Composable
-private fun FilterPill(
-    label: String,
-    selected: Boolean,
-    testTag: String,
-    onClick: () -> Unit,
-) {
-    FilterChip(
-        modifier = Modifier.testTag(testTag),
-        onClick = onClick,
-        selected = selected,
-        label = { Text(label) },
-        leadingIcon = if (selected) {
-            { Icon(Icons.Filled.Edit, contentDescription = null) }
-        } else {
-            null
-        },
-    )
+private fun FilterPill(label: String, selected: Boolean, testTag: String, onClick: () -> Unit) {
+    IosLikeFilterSegment(text = label, selected = selected, onClick = onClick, modifier = Modifier.testTag(testTag))
 }
 
 @Composable
@@ -246,7 +238,7 @@ private fun NotesLibraryCard(
         .fillMaxWidth()
         .then(if (document != null) Modifier.clickable { onOpenEditor(document) } else Modifier)
         .testTag("notes-item-${item.stableKey}")
-    GlassSurface(modifier = cardModifier, emphasized = document != null) {
+    ReadingSurface(modifier = cardModifier) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 NotesThumbnail(item)
@@ -309,25 +301,22 @@ private fun NotesLibraryCard(
                 )
             }
             if (document != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Button(
+                AdaptiveActions {
+                    UnarchiveButton(
                         onClick = { onOpenEditor(document) },
-                        modifier = Modifier.weight(1f),
+                        modifier = actionModifier,
                     ) { Text("编辑") }
-                    OutlinedButton(
+                    UnarchiveSecondaryButton(
                         onClick = { onOpenDestinations(document) },
-                        modifier = Modifier.weight(1f),
+                        modifier = actionModifier,
                     ) {
                         Icon(Icons.Filled.Share, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("分享与去向", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("分享与去向")
                     }
                 }
                 if (item.canRetryCover) {
-                    TextButton(
+                    UnarchiveTextButton(
                         enabled = !coverRetrying,
                         onClick = { onRetryCover(document) },
                         modifier = Modifier.testTag("notes-cover-retry-${item.stableKey}"),
@@ -337,7 +326,7 @@ private fun NotesLibraryCard(
                 }
             } else {
                 val material = requireNotNull(item.material)
-                Button(
+                UnarchiveButton(
                     enabled = canGenerateDraft,
                     onClick = { onGenerateDraft(material) },
                     modifier = Modifier
@@ -404,7 +393,8 @@ private fun NotesThumbnail(item: NotesLibraryItem) {
         Surface(
             modifier = Modifier
                 .width(96.dp)
-                .height(76.dp),
+                .height(76.dp)
+                .testTag("notes-thumbnail-placeholder-${item.stableKey}"),
             shape = MaterialTheme.shapes.small,
             color = if (item.kind == NotesLibraryItemKind.SAVED_NOTE) {
                 MaterialTheme.colorScheme.primaryContainer

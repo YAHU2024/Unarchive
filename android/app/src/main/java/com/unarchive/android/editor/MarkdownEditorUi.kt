@@ -9,24 +9,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +48,15 @@ import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.NoteProjectionStatus
 import com.unarchive.android.shareMarkdownFile
 import com.unarchive.android.ui.components.IosLikeButton
+import com.unarchive.android.ui.components.ProvenanceKind
+import com.unarchive.android.ui.components.ProvenanceRail
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveIconButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
+import com.unarchive.android.ui.components.UnarchiveTopAppBar
 import com.unarchive.android.ui.markdown.MarkdownAssetResolver
 import com.unarchive.android.ui.markdown.MarkdownProjectionRenderer
 import com.unarchive.android.ui.markdown.NoOpMarkdownAssetResolver
@@ -148,10 +150,10 @@ internal fun MarkdownEditorRoute(
 private fun MarkdownEditorMigrationLoading(onBack: () -> Unit) {
     Scaffold(
         topBar = {
-            TopAppBar(
+            UnarchiveTopAppBar(
                 title = { Text("准备 Markdown 笔记") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    UnarchiveIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回笔记库")
                     }
                 },
@@ -179,10 +181,10 @@ private fun MarkdownEditorMigrationConflict(
     val previewMarkdown = if (showLegacyMarkdown) state.legacyMarkdown else state.structuredMarkdown
     Scaffold(
         topBar = {
-            TopAppBar(
+            UnarchiveTopAppBar(
                 title = { Text("选择 Markdown 正文") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    UnarchiveIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回笔记库")
                     }
                 },
@@ -195,11 +197,11 @@ private fun MarkdownEditorMigrationConflict(
         ) {
             Text("检测到旧 Markdown 与结构化笔记不一致。两份内容均已保留，必须选择一份作为新编辑器的正文。")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(
+                UnarchiveTextButton(
                     onClick = { showLegacyMarkdown = true },
                     modifier = Modifier.testTag("markdown-editor-conflict-legacy-preview"),
                 ) { Text("查看旧 Markdown") }
-                TextButton(
+                UnarchiveTextButton(
                     onClick = { showLegacyMarkdown = false },
                     modifier = Modifier.testTag("markdown-editor-conflict-structured-preview"),
                 ) { Text("查看结构化投影") }
@@ -221,11 +223,11 @@ private fun MarkdownEditorMigrationConflict(
                     Text(chunk, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            TextButton(
+            UnarchiveTextButton(
                 onClick = { onResolve(NoteContentMigrationChoice.KEEP_LEGACY_MARKDOWN) },
                 modifier = Modifier.testTag("markdown-editor-keep-legacy"),
             ) { Text("保留旧 Markdown") }
-            TextButton(
+            UnarchiveTextButton(
                 onClick = { onResolve(NoteContentMigrationChoice.USE_STRUCTURED_PROJECTION) },
                 modifier = Modifier.testTag("markdown-editor-use-structured"),
             ) { Text("使用结构化投影") }
@@ -244,10 +246,10 @@ private fun MarkdownEditorMigrationFailed(
     val context = LocalContext.current
     Scaffold(
         topBar = {
-            TopAppBar(
+            UnarchiveTopAppBar(
                 title = { Text("旧笔记只读预览") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    UnarchiveIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回笔记库")
                     }
                 },
@@ -263,11 +265,11 @@ private fun MarkdownEditorMigrationFailed(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("迁移未完成：${state.message}", color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = onRetry, modifier = Modifier.testTag("markdown-editor-migration-retry")) {
+            UnarchiveTextButton(onClick = onRetry, modifier = Modifier.testTag("markdown-editor-migration-retry")) {
                 Text("重试迁移")
             }
             state.legacyMarkdown?.let { markdown ->
-                TextButton(
+                UnarchiveTextButton(
                     onClick = { context.shareMarkdownFile("unarchive-legacy-note.md", markdown, "导出旧 Markdown") },
                     modifier = Modifier.testTag("markdown-editor-migration-export"),
                 ) { Text("导出旧 Markdown") }
@@ -288,7 +290,7 @@ internal fun MarkdownEditorScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
+            UnarchiveTopAppBar(
                 title = {
                     Text(
                         "编辑笔记",
@@ -297,12 +299,12 @@ internal fun MarkdownEditorScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    UnarchiveIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回笔记库")
                     }
                 },
                 actions = {
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = { onEvent(MarkdownEditorEvent.RequestAiProposal) },
                         enabled = state.aiProposalState != MarkdownAiProposalState.RUNNING &&
                             state.saveState != MarkdownEditorSaveState.SAVING,
@@ -312,7 +314,7 @@ internal fun MarkdownEditorScreen(
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                     }
-                    IconButton(
+                    UnarchiveIconButton(
                         onClick = { onEvent(MarkdownEditorEvent.Save) },
                         enabled = state.saveState != MarkdownEditorSaveState.SAVING,
                         modifier = Modifier
@@ -407,7 +409,7 @@ private fun MarkdownAiProposalCard(
             .testTag("markdown-ai-proposal"),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("AI Markdown 候选", style = MaterialTheme.typography.titleMedium)
+            ProvenanceRail("AI Markdown 候选", ProvenanceKind.Ai)
             when {
                 state.aiProposalState == MarkdownAiProposalState.RUNNING -> {
                     Text(
@@ -450,12 +452,12 @@ private fun MarkdownAiProposalCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
+                        UnarchiveButton(
                             onClick = { onEvent(MarkdownEditorEvent.ApplyAiProposal) },
                             enabled = !state.aiProposalApplied,
                             modifier = Modifier.fillMaxWidth().testTag("markdown-ai-proposal-apply"),
                         ) { Text(if (state.aiProposalApplied) "已应用" else "应用候选") }
-                        TextButton(
+                        UnarchiveTextButton(
                             onClick = { onEvent(MarkdownEditorEvent.RejectAiProposal) },
                             modifier = Modifier.fillMaxWidth().testTag("markdown-ai-proposal-reject"),
                         ) { Text("拒绝") }
@@ -555,12 +557,12 @@ private fun RecoveryDraftCard(
             )
         },
         confirmButton = {
-            TextButton(onClick = onApply, modifier = Modifier.testTag("markdown-editor-recover-draft")) {
+            UnarchiveTextButton(onClick = onApply, modifier = Modifier.testTag("markdown-editor-recover-draft")) {
                 Text("恢复草稿")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDiscard, modifier = Modifier.testTag("markdown-editor-discard-draft")) {
+            UnarchiveTextButton(onClick = onDiscard, modifier = Modifier.testTag("markdown-editor-discard-draft")) {
                 Text("放弃草稿")
             }
         },

@@ -220,3 +220,25 @@ a fresh local revision, records the device's Wi-Fi and mobile-data state,
 temporarily disables both transports, asserts a durable retryable failure,
 force-stops the app, restores the original network state in `finally`, and then
 requires the real append retry to succeed.
+
+## D-C6 page migration regression
+
+Use a Gradle 8.7 compatible JDK (17 or 21) through `JAVA_HOME`.
+
+```powershell
+.\android\scripts\d_c6_focus_regression.ps1 -Slice All
+.\android\scripts\d_c6_focus_regression.ps1 -Slice Library -SkipBuild
+.\android\scripts\d_c6_focus_regression.ps1 -Slice Editor -SkipBuild
+.\android\scripts\d_c6_focus_regression.ps1 -Slice Settings -SkipBuild
+.\android\scripts\d_c6_focus_regression.ps1 -Slice Delivery -SkipBuild
+```
+
+The default builds Debug/AndroidTest APKs and runs the app JVM suite, then reuses
+the incremental-install device runner. Slices cover Create/Notes/components,
+editors/back/recovery, grouped Settings/Me/compatibility/log controls, and exact
+destination/graph/security/cover behavior. `PageMigrationUiTest` uses synthetic
+data, the device's native density, and four light/dark/glass/normal-or-2x-text
+fixtures. It writes fixture screenshots under the target app's external files
+directory `d-c6-fixtures/`. This is bounded automated evidence; final visual
+appearance, actual TalkBack speech and real provider workflows require separate
+acceptance. The runner never uninstalls or clears package data.

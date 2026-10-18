@@ -11,12 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -25,7 +22,10 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.pipeline.BatchItemState
 import com.unarchive.android.pipeline.ImaBatchStageState
-import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.BatchCreateEvent
 import com.unarchive.android.ui.state.BatchCreateUiState
 
@@ -38,7 +38,7 @@ internal fun BatchCreateScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
             .testTag("batch-create-screen"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp),
@@ -55,14 +55,14 @@ internal fun BatchCreateScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = onBack, modifier = Modifier.testTag("batch-create-back")) {
+                UnarchiveTextButton(onClick = onBack, modifier = Modifier.testTag("batch-create-back")) {
                     Text("返回")
                 }
             }
         }
 
         item {
-            GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+            ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("选择收藏夹", style = MaterialTheme.typography.titleMedium)
                     if (!state.isLoggedIn) {
@@ -71,7 +71,7 @@ internal fun BatchCreateScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    OutlinedButton(
+                    UnarchiveSecondaryButton(
                         enabled = state.isLoggedIn && !state.favoritesLoading && !state.isBusy,
                         onClick = { onEvent(BatchCreateEvent.LoadFavoriteFolders) },
                         modifier = Modifier.testTag("batch-load-folders"),
@@ -82,7 +82,7 @@ internal fun BatchCreateScreen(
                         Text("正在获取收藏夹...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     state.favoriteFolders.forEach { folder ->
-                        OutlinedButton(
+                        UnarchiveSecondaryButton(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("batch-folder-${folder.id}"),
@@ -105,7 +105,7 @@ internal fun BatchCreateScreen(
 
         if (state.favoriteVideos.isNotEmpty()) {
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("选择视频", style = MaterialTheme.typography.titleMedium)
                         Text(
@@ -164,18 +164,18 @@ internal fun BatchCreateScreen(
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(
+                            UnarchiveSecondaryButton(
                                 enabled = !state.isBusy && state.favoriteVideos.any { it.isAvailable },
                                 onClick = { onEvent(BatchCreateEvent.SelectAllAvailable) },
                                 modifier = Modifier.testTag("batch-select-all"),
                             ) { Text("全选可用视频") }
-                            OutlinedButton(
+                            UnarchiveSecondaryButton(
                                 enabled = !state.isBusy && state.selectedVideoIds.isNotEmpty(),
                                 onClick = { onEvent(BatchCreateEvent.ClearSelection) },
                                 modifier = Modifier.testTag("batch-clear-selection"),
                             ) { Text("清除选择") }
                         }
-                        Button(
+                        UnarchiveButton(
                             enabled = !state.isBusy && state.selectedVideoIds.isNotEmpty(),
                             onClick = { onEvent(BatchCreateEvent.StartBatch) },
                             modifier = Modifier
@@ -191,7 +191,7 @@ internal fun BatchCreateScreen(
 
         if (state.batchRecoveryAvailable) {
             item {
-                GlassSurface(
+                ReadingSurface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("batch-recovery"),
@@ -204,19 +204,19 @@ internal fun BatchCreateScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
+                            UnarchiveButton(
                                 enabled = !state.isBusy,
                                 onClick = { onEvent(BatchCreateEvent.ResumeBatch) },
                                 modifier = Modifier.testTag("batch-resume"),
                             ) { Text("恢复排队项") }
                             if (state.batchManifestItems.any { it.state == BatchItemState.FAILED }) {
-                                OutlinedButton(
+                                UnarchiveSecondaryButton(
                                     enabled = !state.isBusy,
                                     onClick = { onEvent(BatchCreateEvent.RetryFailedBatch) },
                                     modifier = Modifier.testTag("batch-retry-failed"),
                                 ) { Text("重试失败项") }
                             }
-                            OutlinedButton(
+                            UnarchiveSecondaryButton(
                                 enabled = !state.isBusy,
                                 onClick = { onEvent(BatchCreateEvent.AbandonBatchRecovery) },
                                 modifier = Modifier.testTag("batch-abandon"),
@@ -239,7 +239,7 @@ internal fun BatchCreateScreen(
 
         state.batchSummary?.let { summary ->
             item {
-                GlassSurface(
+                ReadingSurface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("batch-summary"),
@@ -261,7 +261,7 @@ internal fun BatchCreateScreen(
 
         if (state.imaSyncAvailable) {
             item {
-                Button(
+                UnarchiveButton(
                     enabled = !state.isBusy,
                     onClick = {
                         onEvent(

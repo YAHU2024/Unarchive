@@ -1,20 +1,22 @@
 package com.unarchive.android.ui.diagnostics
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,6 +33,12 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.log.CrashSummary
 import com.unarchive.android.log.LogEntry
 import com.unarchive.android.log.LogLevel
+import com.unarchive.android.ui.components.AdaptiveActions
+import com.unarchive.android.ui.components.IosLikeFilterSegment
+import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.ToggleSettingsRow
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.theme.LocalMotionPolicy
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -57,9 +65,13 @@ internal fun DiagnosticsScreen(
                 .any { it.contains(search, ignoreCase = true) })
     }
     val listState = rememberLazyListState()
+    val motion = LocalMotionPolicy.current
 
-    LaunchedEffect(visible.size, autoScroll, minLevel, search) {
-        if (autoScroll && visible.isNotEmpty()) listState.animateScrollToItem(visible.lastIndex)
+    LaunchedEffect(visible.size, autoScroll, minLevel, search, motion) {
+        if (autoScroll && visible.isNotEmpty()) {
+            if (motion.animateLayout) listState.animateScrollToItem(visible.lastIndex)
+            else listState.scrollToItem(visible.lastIndex)
+        }
     }
 
     val textExport = entries.joinToString("\n") { entry ->
@@ -68,80 +80,90 @@ internal fun DiagnosticsScreen(
             entry.operationId?.let { " operationId=$it" }.orEmpty()
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("diagnostics-screen"),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val controlsMaxHeight = maxHeight * 0.65f
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .fillMaxSize()
+                .testTag("diagnostics-screen"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedButton(onClick = onBack) { Text("返回") }
-            Text("诊断日志", style = MaterialTheme.typography.titleMedium)
-            OutlinedButton(onClick = onClear) { Text("清空") }
-            OutlinedButton(onClick = { onCopy(textExport) }) { Text("复制") }
-            OutlinedButton(onClick = { onExport(textExport) }) { Text("导出") }
-        }
-        if (lastCrash != null) {
-            Text(
-                "上次异常退出：${lastCrash.errorType} · ${lastCrash.message.ifBlank { "无摘要" }}",
-                modifier = Modifier.padding(horizontal = 16.dp).testTag("diagnostics-last-crash"),
-                color = MaterialTheme.colorScheme.error,
-                maxLines = 2,
-            )
-        }
-        if (droppedWriteCount > 0) {
-            Text(
-                "有 $droppedWriteCount 条日志未能写入本地文件。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        OutlinedTextField(
-            value = search,
-            onValueChange = { search = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .testTag("diagnostics-search"),
-            label = { Text("搜索日志或任务 ID") },
-            singleLine = true,
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LogLevel.entries.forEach { level ->
-                FilterChip(
-                    selected = minLevel == level,
-                    onClick = { minLevel = level },
-                    label = { Text(if (level == LogLevel.DEBUG) "全部" else "${level.name}+") },
-                )
-            }
-            Text("自动滚动")
-            Switch(checked = autoScroll, onCheckedChange = { autoScroll = it })
-        }
-        if (visible.isEmpty()) {
-            Text(
-                "暂无匹配日志。",
-                modifier = Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.outline,
-            )
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = controlsMaxHeight).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(visible) { entry -> DiagnosticsRow(entry, formatter) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    UnarchiveSecondaryButton(onClick = onBack) { Text("返回") }
+                    PageHeader("诊断日志", modifier = Modifier.weight(1f))
+                }
+                AdaptiveActions(Modifier.padding(horizontal = 16.dp)) {
+                    UnarchiveSecondaryButton(onClick = { onCopy(textExport) }, modifier = actionModifier) { Text("复制") }
+                    UnarchiveSecondaryButton(onClick = { onExport(textExport) }, modifier = actionModifier) { Text("导出") }
+                    UnarchiveSecondaryButton(onClick = onClear, modifier = actionModifier) { Text("清空") }
+                }
+                if (lastCrash != null) {
+                    Text(
+                        "上次异常退出：${lastCrash.errorType} · ${lastCrash.message.ifBlank { "无摘要" }}",
+                        modifier = Modifier.padding(horizontal = 16.dp).testTag("diagnostics-last-crash"),
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                    )
+                }
+                if (droppedWriteCount > 0) {
+                    Text(
+                        "有 $droppedWriteCount 条日志未能写入本地文件。",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .testTag("diagnostics-search"),
+                    label = { Text("搜索日志或任务 ID") },
+                    singleLine = true,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LogLevel.entries.forEach { level ->
+                        IosLikeFilterSegment(
+                            selected = minLevel == level,
+                            onClick = { minLevel = level },
+                            text = if (level == LogLevel.DEBUG) "全部" else "${level.name}+",
+                        )
+                    }
+                }
+                ToggleSettingsRow("自动滚动", autoScroll, enabled = true, onCheckedChange = { autoScroll = it })
+            }
+            if (visible.isEmpty()) {
+                Text(
+                    "暂无匹配日志。",
+                    modifier = Modifier.padding(16.dp),
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                ) {
+                    items(visible) { entry -> DiagnosticsRow(entry, formatter) }
+                }
             }
         }
     }

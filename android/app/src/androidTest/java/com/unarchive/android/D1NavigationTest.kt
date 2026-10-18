@@ -197,7 +197,7 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithTag("create-batch-create").performClick()
+        composeRule.onNodeWithTag("create-batch-create").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("batch-create-screen").assertIsDisplayed()
         composeRule.onNodeWithText("批量创作").assertIsDisplayed()
     }

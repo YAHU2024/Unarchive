@@ -11,9 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,6 +29,8 @@ import com.unarchive.android.auth.BilibiliLoginClient
 import com.unarchive.android.auth.BilibiliSession
 import com.unarchive.android.auth.QrCodeRenderer
 import com.unarchive.android.auth.QrLoginState
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 import kotlinx.coroutines.delay
 
 /**
@@ -52,7 +52,7 @@ fun BilibiliLoginSection(
     if (loggedIn) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("B站已登录")
-            TextButton(onClick = {
+            UnarchiveTextButton(onClick = {
                 authStore.clear()
                 onLoggedOut()
             }) {
@@ -60,7 +60,7 @@ fun BilibiliLoginSection(
             }
         }
     } else {
-        OutlinedButton(onClick = { showDialog = true }) {
+        UnarchiveSecondaryButton(onClick = { showDialog = true }) {
             Text("登录 B 站（获取 AI 字幕）")
         }
     }
@@ -127,10 +127,10 @@ private fun QrLoginDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = { attempt++ }) { Text("刷新") }
+            UnarchiveTextButton(onClick = { attempt++ }) { Text("刷新") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            UnarchiveTextButton(onClick = onDismiss) { Text("取消") }
         },
         title = { Text("登录 B 站") },
         text = {

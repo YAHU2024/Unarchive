@@ -1,55 +1,43 @@
 package com.unarchive.android
 
 import android.net.Uri
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.ui.Alignment
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,43 +46,42 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.unarchive.android.ui.components.GlassSurface
-import com.unarchive.android.ui.components.GlassDock
-import com.unarchive.android.ui.components.GlassDockItem
+import com.unarchive.android.card.CardRelationType
+import com.unarchive.android.card.FileNoteContentRepository
+import com.unarchive.android.card.GraphRelationItem
+import com.unarchive.android.card.KnowledgeCardRepository
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
-import com.unarchive.android.card.FileNoteContentRepository
-import com.unarchive.android.card.KnowledgeCardRepository
-import com.unarchive.android.card.CardRelationType
-import com.unarchive.android.card.GraphRelationItem
-import com.unarchive.android.card.KnowledgeCard
-import com.unarchive.android.card.toNoteDocument
-import com.unarchive.android.editor.NoteEditorRoute
-import com.unarchive.android.editor.MarkdownEditorMigrationRoute
-import com.unarchive.android.editor.markdownImageOptions
-import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
-import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
-import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.editor.MarkdownAiProposalGenerator
 import com.unarchive.android.editor.MarkdownAiProposalRepository
-import com.unarchive.android.ui.create.CreateScreen
+import com.unarchive.android.editor.MarkdownEditorMigrationRoute
+import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
+import com.unarchive.android.editor.NoteDocumentProposalRepository
+import com.unarchive.android.editor.NoteEditorRoute
+import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.batch.BatchCreateScreen
-import com.unarchive.android.ui.state.BatchCreateEvent
-import com.unarchive.android.ui.state.CreateEvent
-import com.unarchive.android.ui.state.DestinationEvent
-import com.unarchive.android.ui.state.DestinationUiState
-import com.unarchive.android.ui.state.GraphUiState
-import com.unarchive.android.ui.state.GraphEvent
-import com.unarchive.android.ui.state.GraphRelationOperationState
-import com.unarchive.android.ui.state.MeEvent
-import com.unarchive.android.ui.state.MeUiState
-import com.unarchive.android.ui.state.NotesEvent
-import com.unarchive.android.ui.state.NotesUiState
-import com.unarchive.android.ui.state.UnarchiveUiState
+import com.unarchive.android.ui.components.GlassDock
+import com.unarchive.android.ui.components.GlassDockItem
+import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveIconButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
+import com.unarchive.android.ui.create.CreateScreen
 import com.unarchive.android.ui.destination.DestinationScreen
+import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.ui.me.MeScreen
 import com.unarchive.android.ui.me.MoreToolsScreen
 import com.unarchive.android.ui.notes.NotesScreen
+import com.unarchive.android.ui.state.BatchCreateEvent
+import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.DestinationEvent
+import com.unarchive.android.ui.state.GraphEvent
+import com.unarchive.android.ui.state.GraphRelationOperationState
+import com.unarchive.android.ui.state.GraphUiState
+import com.unarchive.android.ui.state.MeEvent
+import com.unarchive.android.ui.state.NotesEvent
+import com.unarchive.android.ui.state.UnarchiveUiState
 import com.unarchive.android.ui.theme.LocalMotionPolicy
 import com.unarchive.android.ui.theme.pageEnter
 import com.unarchive.android.ui.theme.pageExit
@@ -154,20 +141,20 @@ internal fun UnarchiveNavigationHost(
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("历史结果暂不可用")
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
     legacySettingsContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("设置暂不可用")
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
     securityContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("安全设置暂不可用")
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
     noteDocumentRepository: NoteDocumentRepository? = null,
@@ -268,7 +255,7 @@ internal fun UnarchiveNavigationHost(
                 if (document == null || noteDocumentRepository == null) {
                     Column(modifier = Modifier.padding(20.dp)) {
                         Text("找不到这篇笔记")
-                        TextButton(onClick = { navController.popBackStack() }) { Text("返回") }
+                        UnarchiveTextButton(onClick = { navController.popBackStack() }) { Text("返回") }
                     }
                 } else if (noteContentRepository != null) {
                     val card = state.notes.noteCards.firstOrNull { candidate ->
@@ -401,21 +388,17 @@ private fun GraphScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
             .testTag("graph-scroll"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
     ) {
         item {
-            Text("图谱", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "从一篇笔记出发，查看可解释、可编辑的一跳连接。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            PageHeader("图谱", "从一篇笔记出发，查看可解释、可编辑的一跳连接。")
         }
         if (state.noteDocuments.isEmpty()) {
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+                ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("局部关系", style = MaterialTheme.typography.titleLarge)
                         Text("还没有可显示的关系", style = MaterialTheme.typography.titleLarge)
@@ -468,7 +451,7 @@ private fun GraphScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Button(
+                    UnarchiveButton(
                         onClick = { onEvent(GraphEvent.StartAddRelation) },
                         enabled = !state.isAddingRelation && state.noteDocuments.size > 1,
                         modifier = Modifier.testTag("graph-add-relation"),
@@ -482,7 +465,7 @@ private fun GraphScreen(
             }
             if (state.errorMessage != null) {
                 item {
-                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                    ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             state.errorMessage,
                             color = MaterialTheme.colorScheme.error,
@@ -506,7 +489,7 @@ private fun GraphScreen(
             }
             if (state.outgoing.isEmpty() && state.incoming.isEmpty()) {
                 item {
-                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                    ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             "还没有可显示的关系。可以先添加一个用户关联。",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -530,7 +513,7 @@ private fun GraphPreview(state: GraphUiState) {
     val nodes = (state.outgoing.map { it.targetTitle } + state.incoming.map { it.sourceTitle })
         .distinct()
     val relationLineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .height(188.dp)
@@ -542,7 +525,6 @@ private fun GraphPreview(state: GraphUiState) {
                     else append("连接到：${nodes.joinToString("、") }。")
                 }
             },
-        emphasized = true,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Canvas(modifier = Modifier.matchParentSize()) {
@@ -601,7 +583,7 @@ private fun RelationEditor(
     state: GraphUiState,
     onEvent: (GraphEvent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth().testTag("graph-relation-editor")) {
+    ReadingSurface(modifier = Modifier.fillMaxWidth().testTag("graph-relation-editor")) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("添加用户关联", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -643,13 +625,13 @@ private fun RelationEditor(
                 minLines = 2,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
+                UnarchiveButton(
                     onClick = { onEvent(GraphEvent.CreateUserLink) },
                     enabled = state.targetCardIdInput.isNotBlank() &&
                         state.operationState != GraphRelationOperationState.SAVING,
                     modifier = Modifier.testTag("graph-save-relation"),
                 ) { Text(if (state.operationState == GraphRelationOperationState.SAVING) "保存中..." else "保存关联") }
-                TextButton(onClick = { onEvent(GraphEvent.CancelAddRelation) }) { Text("取消") }
+                UnarchiveTextButton(onClick = { onEvent(GraphEvent.CancelAddRelation) }) { Text("取消") }
             }
         }
     }
@@ -660,7 +642,7 @@ private fun RelationListItem(
     item: GraphRelationItem,
     onEvent: (GraphEvent) -> Unit,
 ) {
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("graph-relation-${item.relation.relationId}")
@@ -692,7 +674,7 @@ private fun RelationListItem(
                     )
                 }
                 if (item.canDelete && item.direction.name == "OUTGOING") {
-                    TextButton(
+                    UnarchiveTextButton(
                         onClick = { onEvent(GraphEvent.RemoveRelation(item.relation.relationId)) },
                         modifier = Modifier.testTag("graph-remove-${item.relation.relationId}"),
                     ) { Text("移除") }
@@ -727,7 +709,7 @@ internal fun LegacyRouteFrame(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            IconButton(onClick = onBack) {
+            UnarchiveIconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",

@@ -3,23 +3,13 @@ package com.unarchive.android.ui.create
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,13 +24,21 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteGenerationState
 import com.unarchive.android.card.SingleCardRecoveryState
-import com.unarchive.android.ui.components.GlassSurface
 import com.unarchive.android.ui.components.GlassBottomSheet
-import com.unarchive.android.ui.components.RecoveryCard
+import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.InsetGroupedList
+import com.unarchive.android.ui.components.NavigationSettingsRow
+import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.ProvenanceKind
+import com.unarchive.android.ui.components.ProvenanceRail
 import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.RecoveryCard
 import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateUiState
@@ -60,17 +58,14 @@ internal fun CreateScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
             .testTag("create-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
     ) {
         item {
-            Text("创作", style = MaterialTheme.typography.headlineLarge)
-            Text(
+            PageHeader(title = "创作", description =
                 "把一个 B 站视频，整理成真正能复习和连接的知识笔记。",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         item {
@@ -79,6 +74,7 @@ internal fun CreateScreen(
                 contentPadding = PaddingValues(20.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ProvenanceRail("来源 · B 站视频", ProvenanceKind.Source)
                     Text("添加 B 站视频", style = MaterialTheme.typography.titleLarge)
                     Text(
                         "支持 BV 号、av 号或完整链接。先保留本地基础笔记，再按配置使用 AI 整理；确认后在编辑器正式保存。",
@@ -94,10 +90,11 @@ internal fun CreateScreen(
                             .semantics { contentDescription = "B站视频链接或BV号" },
                         enabled = !state.isProcessing,
                         label = { Text("BV 号 / B站链接") },
+                        shape = MaterialTheme.shapes.small,
                         singleLine = false,
                         minLines = 2,
                     )
-                    Button(
+                    UnarchiveButton(
                         onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
                         enabled = state.videoReference.isNotBlank() && !state.isProcessing,
                         modifier = Modifier
@@ -150,7 +147,7 @@ internal fun CreateScreen(
         }
         if (!state.isProcessing && state.storedResultCount > 0) {
             item {
-                OutlinedButton(
+                UnarchiveSecondaryButton(
                     onClick = onOpenNotes,
                     modifier = Modifier.fillMaxWidth().testTag("create-review-results"),
                 ) { Text("查看笔记与保留素材") }
@@ -241,7 +238,7 @@ internal fun CreateScreen(
                                 else -> "基础内容可继续编辑；AI 整理或外部同步未完成也不影响本地阅读。"
                             },
                         )
-                        OutlinedButton(
+                        UnarchiveSecondaryButton(
                             onClick = { onOpenLatestNote(document) },
                             enabled = !state.isProcessing,
                             modifier = Modifier
@@ -255,23 +252,15 @@ internal fun CreateScreen(
             }
         }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onOpenNotes, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("查看笔记")
-                }
-                OutlinedButton(
-                    onClick = onOpenBatchCreate,
-                    modifier = Modifier.fillMaxWidth().testTag("create-batch-create"),
-                ) {
-                    Text("批量创作")
-                }
-                TextButton(onClick = onOpenDeveloperTest) {
-                    Icon(Icons.Filled.Settings, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("开发者测试")
-                }
+            InsetGroupedList(title = "继续创作", modifier = Modifier.testTag("create-navigation-group")) {
+                NavigationSettingsRow("查看笔记", "已保存笔记与待整理素材", onOpenNotes)
+                androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                NavigationSettingsRow(
+                    "批量创作", "从 B 站收藏夹选择多个视频", onOpenBatchCreate,
+                    modifier = Modifier.testTag("create-batch-create"),
+                )
+                androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                NavigationSettingsRow("开发者测试", "本地音频、处理测试与诊断", onOpenDeveloperTest)
             }
         }
     }
@@ -282,8 +271,8 @@ internal fun CreateScreen(
             title = "继续生成这篇笔记？",
         ) {
             Text("将复用已保存的本地转写，从“${selectedRecovery.stageLabel}”阶段重新执行。不会重新下载音频或转写。")
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                UnarchiveButton(
                     onClick = {
                         onEvent(CreateEvent.ResumeSingleCard(selectedRecovery.operationId))
                         recoveryToConfirm = null
@@ -291,7 +280,7 @@ internal fun CreateScreen(
                     enabled = selectedRecovery.canResume && !state.isProcessing,
                     modifier = Modifier.testTag("create-recovery-confirm"),
                 ) { Text("继续生成") }
-                TextButton(
+                UnarchiveTextButton(
                     onClick = { recoveryToConfirm = null },
                     modifier = Modifier.testTag("create-recovery-dismiss"),
                 ) { Text("取消") }

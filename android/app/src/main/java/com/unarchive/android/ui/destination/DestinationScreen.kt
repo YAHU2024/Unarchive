@@ -2,9 +2,9 @@ package com.unarchive.android.ui.destination
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,19 +14,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,15 +37,15 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeSyncState
-import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveIconButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.DestinationEvent
-import com.unarchive.android.ui.state.DestinationFolderOption
-import com.unarchive.android.ui.state.DestinationKnowledgeBaseOption
 import com.unarchive.android.ui.state.DestinationOperationState
 import com.unarchive.android.ui.state.DestinationTargetLoadState
-import com.unarchive.android.ui.state.DestinationTargetRef
 import com.unarchive.android.ui.state.DestinationTargetUiState
 import com.unarchive.android.ui.state.DestinationUiState
 
@@ -79,7 +75,7 @@ internal fun DestinationScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
             .testTag("destination-scroll"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp),
@@ -90,7 +86,7 @@ internal fun DestinationScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconButton(
+                UnarchiveIconButton(
                     onClick = onBack,
                     modifier = Modifier.testTag("destination-back"),
                 ) {
@@ -103,7 +99,7 @@ internal fun DestinationScreen(
             }
         }
         item {
-            GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+            ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("本地笔记", style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -111,7 +107,7 @@ internal fun DestinationScreen(
                         else "本地笔记尚未保存。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(
+                    UnarchiveButton(
                         onClick = { onEvent(DestinationEvent.ExportMarkdown) },
                         enabled = state.localSaved && state.exportState != DestinationOperationState.RUNNING,
                         modifier = Modifier
@@ -146,7 +142,7 @@ internal fun DestinationScreen(
             }
         }
         item {
-            GlassSurface(modifier = Modifier.fillMaxWidth()) {
+            ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -155,7 +151,7 @@ internal fun DestinationScreen(
                     ) {
                         Text("ima", style = MaterialTheme.typography.titleMedium)
                         if (state.imaConfigured) {
-                            IconButton(
+                            UnarchiveIconButton(
                                 onClick = { onEvent(DestinationEvent.RefreshTargets) },
                                 enabled = state.targetRefreshEnabled,
                                 modifier = Modifier.testTag("destination-refresh-targets"),
@@ -166,7 +162,7 @@ internal fun DestinationScreen(
                     }
                     if (!state.imaConfigured) {
                         Text("尚未配置 ima 凭据。本地笔记不受影响。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedButton(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
+                        UnarchiveSecondaryButton(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
                             Text("打开安全设置")
                         }
                     } else {
@@ -189,12 +185,12 @@ internal fun DestinationScreen(
                             )
                         }
                         DestinationTargetSelectors(state, onEvent)
-                        Button(
+                        UnarchiveButton(
                             onClick = { onEvent(DestinationEvent.SyncIma) },
                             enabled = state.imaSyncEnabled,
                             modifier = Modifier.fillMaxWidth().testTag("destination-sync-ima"),
                         ) { Text(if (state.imaSyncing) "同步中..." else "立即同步") }
-                        OutlinedButton(
+                        UnarchiveSecondaryButton(
                             onClick = onOpenSecuritySettings,
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("管理凭据") }
@@ -226,7 +222,7 @@ private fun DestinationMissingCardState(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(
+            UnarchiveIconButton(
                 onClick = onBack,
                 modifier = Modifier.testTag("destination-back"),
             ) {
@@ -374,7 +370,7 @@ private fun DestinationTargetRow(
     onEvent: (DestinationEvent) -> Unit,
     index: Int,
 ) {
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("destination-target-$index")
@@ -399,7 +395,7 @@ private fun DestinationTargetRow(
             }
             if (target.canRetry) {
                 target.retryRef?.let { ref ->
-                    TextButton(onClick = { onEvent(DestinationEvent.RetryIma(ref)) }) {
+                    UnarchiveTextButton(onClick = { onEvent(DestinationEvent.RetryIma(ref)) }) {
                         Text(if (target.state == KnowledgeSyncState.BLOCKED) "修复后重试" else "重试")
                     }
                 }
