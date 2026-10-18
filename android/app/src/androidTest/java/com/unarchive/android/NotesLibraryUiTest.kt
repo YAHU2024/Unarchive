@@ -99,7 +99,9 @@ class NotesLibraryUiTest {
         composeRule.onNodeWithText("跑步训练笔记").assertIsDisplayed()
         composeRule.onNodeWithText("待整理的视频素材").assertIsDisplayed()
         composeRule.onNodeWithText("#跑步 #训练 · 1 个关联").assertIsDisplayed()
-        composeRule.onNodeWithText("本地已保存 · ima · 学习资料 · 根目录 · 已同步").assertIsDisplayed()
+        composeRule.onNodeWithText("本地已保存").assertIsDisplayed()
+        composeRule.onNodeWithText("ima · 学习资料 · 根目录 · 已同步；分享与去向中可查看详情，本地笔记仍可编辑。")
+            .performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("kb-secret").assertDoesNotExist()
 
         composeRule.onNodeWithTag("notes-filter-saved").performClick()

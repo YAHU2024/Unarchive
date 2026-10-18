@@ -32,10 +32,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
+import com.unarchive.android.card.NoteGenerationState
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.components.GlassSurface
 import com.unarchive.android.ui.components.GlassBottomSheet
 import com.unarchive.android.ui.components.RecoveryCard
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
 import com.unarchive.android.ui.state.CreateEvent
@@ -53,6 +56,7 @@ internal fun CreateScreen(
     onOpenDeveloperTest: () -> Unit,
 ) {
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
+    val presentation = state.presentation()
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -70,15 +74,14 @@ internal fun CreateScreen(
             )
         }
         item {
-            GlassSurface(
-                modifier = Modifier.fillMaxWidth(),
-                emphasized = true,
+            ReadingSurface(
+                modifier = Modifier.fillMaxWidth().testTag("create-input-surface"),
                 contentPadding = PaddingValues(20.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("添加 B 站视频", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "支持 BV 号、av 号或完整链接。处理完成后，你可以继续编辑 AI 草稿。",
+                        "支持 BV 号、av 号或完整链接。先保留本地基础笔记，再按配置使用 AI 整理；确认后在编辑器正式保存。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -118,15 +121,14 @@ internal fun CreateScreen(
         ) {
             item {
                 TaskProgressCard(
-                    title = if (state.isProcessing) "正在处理视频" else "处理状态",
+                    title = presentation.title,
                     stageLabel = state.processing.stage
                         .takeUnless { it == CreateProcessingStage.IDLE }
                         ?.displayLabel,
                     statusMessage = state.statusMessage,
                     progress = state.processing.progress.takeIf { state.isProcessing },
-                    checkpointMessage = state.processing.checkpointSegmentCount
-                        .takeIf { it > 0 }
-                        ?.let { "检查点已保存：${it} 段文本，可安全中断。" },
+                    checkpointMessage = presentation.checkpointMessage,
+                    description = presentation.guidance,
                     modifier = Modifier.fillMaxWidth(),
                     stageModifier = Modifier.testTag("create-processing-stage"),
                     progressModifier = Modifier.testTag("create-progress"),
@@ -144,6 +146,14 @@ internal fun CreateScreen(
                     cancelEnabled = state.processing.isCancellable,
                     onCancel = { onEvent(CreateEvent.CancelProcessing) },
                 )
+            }
+        }
+        if (!state.isProcessing && state.storedResultCount > 0) {
+            item {
+                OutlinedButton(
+                    onClick = onOpenNotes,
+                    modifier = Modifier.fillMaxWidth().testTag("create-review-results"),
+                ) { Text("查看笔记与保留素材") }
             }
         }
         if (state.hasRecovery) {
@@ -207,13 +217,29 @@ internal fun CreateScreen(
         }
         state.latestNoteDocument?.let { document ->
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                ReadingSurface(modifier = Modifier.fillMaxWidth().testTag("create-latest-local-note")) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("最近的知识笔记", style = MaterialTheme.typography.titleMedium)
                         Text(
                             document.title,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
+                        )
+                        SaveStateIndicator(
+                            label = when {
+                                document.editing.lastSaveError != null -> "最近笔记有保存错误"
+                                document.editing.dirty -> "最近笔记有未保存修改"
+                                else -> "最近笔记已在本地保存"
+                            },
+                            tone = if (document.editing.lastSaveError != null) {
+                                StatusBannerTone.ERROR
+                            } else {
+                                StatusBannerTone.NEUTRAL
+                            },
+                            detail = when (document.generation.state) {
+                                NoteGenerationState.COMPLETE -> "AI 整理内容可继续编辑；外部同步状态请在笔记库查看。"
+                                else -> "基础内容可继续编辑；AI 整理或外部同步未完成也不影响本地阅读。"
+                            },
                         )
                         OutlinedButton(
                             onClick = { onOpenLatestNote(document) },
@@ -229,15 +255,15 @@ internal fun CreateScreen(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onOpenNotes) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onOpenNotes, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("查看笔记")
                 }
                 OutlinedButton(
                     onClick = onOpenBatchCreate,
-                    modifier = Modifier.testTag("create-batch-create"),
+                    modifier = Modifier.fillMaxWidth().testTag("create-batch-create"),
                 ) {
                     Text("批量创作")
                 }

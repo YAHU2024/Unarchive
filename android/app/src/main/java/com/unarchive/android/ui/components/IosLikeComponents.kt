@@ -247,6 +247,7 @@ internal fun TaskProgressCard(
     cancelEnabled: Boolean = true,
     cancelLabel: String = "取消处理",
     onCancel: (() -> Unit)? = null,
+    description: String? = null,
 ) {
     GlassSurface(modifier = modifier, emphasized = emphasized) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -279,6 +280,9 @@ internal fun TaskProgressCard(
                     modifier = checkpointModifier,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            description?.takeIf(String::isNotBlank)?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (showCancel && onCancel != null) {
                 OutlinedButton(

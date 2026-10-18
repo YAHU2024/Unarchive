@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import com.unarchive.android.asr.TranscriptTimingAccuracy
@@ -127,10 +128,10 @@ class MarkdownEditorUiTest {
         }
 
         composeRule.onNodeWithTag("markdown-ai-proposal").assertIsDisplayed()
-        composeRule.onNodeWithTag("markdown-ai-proposal-diff-summary").assertIsDisplayed()
-        composeRule.onNodeWithTag("markdown-ai-proposal-apply").performClick()
+        composeRule.onNodeWithTag("markdown-ai-proposal-diff-summary").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-ai-proposal-apply").performScrollTo().performClick()
         assert(applied)
-        composeRule.onNodeWithTag("markdown-ai-proposal-reject").performClick()
+        composeRule.onNodeWithTag("markdown-ai-proposal-reject").performScrollTo().performClick()
         assert(rejected)
     }
 

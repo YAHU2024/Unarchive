@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -272,9 +273,9 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithTag("create-recovery-resume-recovery-1").performClick()
+        composeRule.onNodeWithTag("create-recovery-resume-recovery-1").performScrollTo().performClick()
         composeRule.onNodeWithText("继续生成这篇笔记？").assertIsDisplayed()
-        composeRule.onAllNodesWithText("继续生成").get(1).performClick()
+        composeRule.onNodeWithTag("create-recovery-confirm").performClick()
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.ResumeSingleCard("recovery-1")), events)
@@ -314,7 +315,7 @@ class D1NavigationTest {
         composeRule.onNodeWithText("转写中").assertIsDisplayed()
         composeRule.onNodeWithTag("create-progress").assertIsDisplayed()
         composeRule.onNodeWithTag("create-checkpoint").assertIsDisplayed()
-        composeRule.onNodeWithText("检查点已保存：3 段文本，可安全中断。").assertIsDisplayed()
+        composeRule.onNodeWithText("已保留转写检查点：3 段文本。").assertIsDisplayed()
     }
 
     @Test
@@ -402,8 +403,7 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithTag("create-batch-recovery").assertIsDisplayed()
-        composeRule.onNodeWithTag("create-resume-batch").performClick()
+        composeRule.onNodeWithTag("create-resume-batch").performScrollTo().assertIsDisplayed().performClick()
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.ResumeBatch), events)

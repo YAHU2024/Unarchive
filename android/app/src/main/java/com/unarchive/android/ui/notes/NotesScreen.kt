@@ -355,11 +355,17 @@ private fun NotesLibraryCard(
 
 @Composable
 private fun StatusSummary(item: NotesLibraryItem) {
-    val label = listOfNotNull(item.localStatusLabel, item.destinationSummary).joinToString(" · ")
-    val isError = label.contains("失败")
+    // Optional delivery failure must not imply that the local note was lost.
+    val isError = item.localStatusLabel.contains("失败")
     SaveStateIndicator(
-        label = label,
-        tone = if (isError) StatusBannerTone.ERROR else StatusBannerTone.SUCCESS,
+        label = item.localStatusLabel,
+        detail = item.destinationSummary?.let { "$it；分享与去向中可查看详情，本地笔记仍可编辑。" },
+        tone = when {
+            isError -> StatusBannerTone.ERROR
+            item.document?.editing?.dirty == true -> StatusBannerTone.WARNING
+            item.document != null -> StatusBannerTone.SUCCESS
+            else -> StatusBannerTone.NEUTRAL
+        },
         modifier = Modifier
             .fillMaxWidth()
             .testTag("notes-item-status-${item.stableKey}"),

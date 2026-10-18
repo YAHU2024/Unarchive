@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardStageState
@@ -25,6 +26,9 @@ import com.unarchive.android.card.NoteSource
 import com.unarchive.android.card.NoteSourceRef
 import com.unarchive.android.editor.NoteEditorScreen
 import com.unarchive.android.editor.NoteEditorUiState
+import com.unarchive.android.editor.NoteEditorEvent
+import com.unarchive.android.editor.NoteEditorSaveState
+import com.unarchive.android.ui.theme.MotionPolicy
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -33,6 +37,23 @@ import org.junit.Test
 class NoteEditorUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun reducedMotionSaveFailureKeepsLegacyDraftAndExplicitRetryReachable() {
+        val events = mutableListOf<NoteEditorEvent>()
+        composeRule.setContent {
+            UnarchiveTheme(motionPolicy = MotionPolicy.Reduced) {
+                NoteEditorScreen(
+                    NoteEditorUiState(document(), saveState = NoteEditorSaveState.FAILED, errorMessage = "测试保存失败"),
+                    events::add, {},
+                )
+            }
+        }
+        composeRule.runOnIdle { assertEquals(emptyList<NoteEditorEvent>(), events) }
+        composeRule.onNodeWithTag("note-editor-save-retry").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("note-block-text-summary-1").performScrollTo().assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(listOf(NoteEditorEvent.Save), events) }
+    }
 
     @Test
     fun rendersStructuredBlocksAndEditingActions() {

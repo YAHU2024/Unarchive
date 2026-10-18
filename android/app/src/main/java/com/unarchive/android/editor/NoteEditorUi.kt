@@ -59,6 +59,10 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.NoteSourceRef
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.IosLikeButton
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.SaveStateIndicator
+import com.unarchive.android.ui.components.StatusBannerTone
 
 @Composable
 internal fun NoteEditorRoute(
@@ -151,7 +155,7 @@ internal fun NoteEditorScreen(
             contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp),
         ) {
             item {
-                EditorStatus(state = state)
+                EditorStatus(state = state, onEvent = onEvent)
             }
             if (state.aiProposal != null ||
                 state.aiProposalState == NoteAiProposalState.RUNNING ||
@@ -162,7 +166,7 @@ internal fun NoteEditorScreen(
                 }
             }
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
+                ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
                             value = state.draftTitle,
@@ -216,11 +220,10 @@ private fun AiProposalCard(
     state: NoteEditorUiState,
     onEvent: (NoteEditorEvent) -> Unit,
 ) {
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("note-editor-ai-proposal-card"),
-        emphasized = true,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.aiProposalState == NoteAiProposalState.RUNNING) {
@@ -274,7 +277,7 @@ private fun AiProposalCard(
 }
 
 @Composable
-private fun EditorStatus(state: NoteEditorUiState) {
+private fun EditorStatus(state: NoteEditorUiState, onEvent: (NoteEditorEvent) -> Unit) {
     val text = when (state.saveState) {
         NoteEditorSaveState.CLEAN -> "尚未编辑"
         NoteEditorSaveState.DIRTY -> "有未保存修改"
@@ -293,12 +296,34 @@ private fun EditorStatus(state: NoteEditorUiState) {
             },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text, style = MaterialTheme.typography.labelLarge)
+            SaveStateIndicator(
+                label = text,
+                tone = when (state.saveState) {
+                    NoteEditorSaveState.FAILED -> StatusBannerTone.ERROR
+                    NoteEditorSaveState.SAVED -> StatusBannerTone.SUCCESS
+                    NoteEditorSaveState.DIRTY, NoteEditorSaveState.PROJECTION_PENDING -> StatusBannerTone.WARNING
+                    else -> StatusBannerTone.NEUTRAL
+                },
+                detail = if (state.saveState == NoteEditorSaveState.FAILED) {
+                    "当前编辑内容仍在此页，可重试保存；恢复上次保存会放弃当前修改。"
+                } else {
+                    "本地保存与外部同步分别处理。确认编辑内容后，再保存到本机。"
+                },
+            )
             state.errorMessage?.let { error ->
                 Text(
                     error,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (state.saveState == NoteEditorSaveState.FAILED ||
+                state.saveState == NoteEditorSaveState.PROJECTION_PENDING
+            ) {
+                IosLikeButton(
+                    text = "重试保存",
+                    onClick = { onEvent(NoteEditorEvent.Save) },
+                    modifier = Modifier.testTag("note-editor-save-retry"),
                 )
             }
         }
@@ -312,11 +337,10 @@ private fun NoteBlockEditorCard(
     onEvent: (NoteEditorEvent) -> Unit,
     onOpenSource: (NoteSourceRef) -> Unit,
 ) {
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("note-block-${block.id}"),
-        emphasized = block.origin == NoteBlockOrigin.AI,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

@@ -1,11 +1,16 @@
 package com.unarchive.android.editor
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
@@ -46,7 +51,10 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.card.NoteProjectionStatus
 import com.unarchive.android.shareMarkdownFile
-import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.IosLikeButton
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.SaveStateIndicator
+import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.markdown.MarkdownAssetResolver
 import com.unarchive.android.ui.markdown.MarkdownProjectionRenderer
 import com.unarchive.android.ui.markdown.NoOpMarkdownAssetResolver
@@ -317,37 +325,50 @@ internal fun MarkdownEditorScreen(
             )
         },
     ) { padding ->
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            MarkdownEditorHeader(state)
-            MarkdownEditorStatus(state)
-            if (state.aiProposal != null ||
-                state.aiProposalState == MarkdownAiProposalState.RUNNING ||
-                state.aiProposalError != null
-            ) {
-                MarkdownAiProposalCard(state = state, onEvent = onEvent)
+            // Candidate diffs/status may grow. Keep their controls scrollable while
+            // reserving a readable editor, rather than measuring its LazyColumn unbounded.
+            val noticeMaxHeight = maxHeight * 0.5f
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(max = noticeMaxHeight)
+                        .verticalScroll(rememberScrollState())
+                        .testTag("markdown-editor-notices"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MarkdownEditorHeader(state)
+                    MarkdownEditorStatus(state, onEvent)
+                    if (state.aiProposal != null ||
+                        state.aiProposalState == MarkdownAiProposalState.RUNNING ||
+                        state.aiProposalError != null
+                    ) {
+                        MarkdownAiProposalCard(state = state, onEvent = onEvent)
+                    }
+                }
+                state.recoveryDraft?.let {
+                    RecoveryDraftCard(
+                        onApply = { onEvent(MarkdownEditorEvent.ApplyRecoveredDraft) },
+                        onDiscard = { onEvent(MarkdownEditorEvent.DiscardRecoveredDraft) },
+                    )
+                }
+                ReadingSurface(
+                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("markdown-reading-surface"),
+                    contentPadding = PaddingValues(8.dp),
+                ) {
+                    MarkdownEditorSpike(
+                        markdown = state.draftMarkdown,
+                        onMarkdownChange = { onEvent(MarkdownEditorEvent.MarkdownChanged(it)) },
+                        assetResolver = assetResolver,
+                        imageOptions = imageOptions,
+                    )
+                }
             }
-            state.recoveryDraft?.let { draft ->
-                RecoveryDraftCard(
-                    markdown = draft.markdown,
-                    onApply = { onEvent(MarkdownEditorEvent.ApplyRecoveredDraft) },
-                    onDiscard = { onEvent(MarkdownEditorEvent.DiscardRecoveredDraft) },
-                )
-            }
-            MarkdownEditorSpike(
-                markdown = state.draftMarkdown,
-                onMarkdownChange = { onEvent(MarkdownEditorEvent.MarkdownChanged(it)) },
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                assetResolver = assetResolver,
-                imageOptions = imageOptions,
-            )
         }
     }
 }
@@ -361,7 +382,7 @@ private fun MarkdownEditorHeader(state: MarkdownEditorUiState) {
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
-            "Markdown 正文",
+            "Markdown 正文 · ${state.content.structuredMetadata.title}",
             style = MaterialTheme.typography.titleLarge,
         )
         Text(
@@ -380,11 +401,10 @@ private fun MarkdownAiProposalCard(
     state: MarkdownEditorUiState,
     onEvent: (MarkdownEditorEvent) -> Unit,
 ) {
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("markdown-ai-proposal"),
-        emphasized = state.aiProposal != null,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("AI Markdown 候选", style = MaterialTheme.typography.titleMedium)
@@ -429,15 +449,15 @@ private fun MarkdownAiProposalCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { onEvent(MarkdownEditorEvent.ApplyAiProposal) },
                             enabled = !state.aiProposalApplied,
-                            modifier = Modifier.testTag("markdown-ai-proposal-apply"),
+                            modifier = Modifier.fillMaxWidth().testTag("markdown-ai-proposal-apply"),
                         ) { Text(if (state.aiProposalApplied) "已应用" else "应用候选") }
                         TextButton(
                             onClick = { onEvent(MarkdownEditorEvent.RejectAiProposal) },
-                            modifier = Modifier.testTag("markdown-ai-proposal-reject"),
+                            modifier = Modifier.fillMaxWidth().testTag("markdown-ai-proposal-reject"),
                         ) { Text("拒绝") }
                     }
                 }
@@ -450,13 +470,20 @@ private fun MarkdownAiProposalCard(
                         .testTag("markdown-ai-proposal-error")
                         .semantics { liveRegion = LiveRegionMode.Polite },
                 )
+                IosLikeButton(
+                    text = "重新生成候选",
+                    onClick = { onEvent(MarkdownEditorEvent.RequestAiProposal) },
+                    enabled = state.aiProposalState != MarkdownAiProposalState.RUNNING &&
+                        state.saveState != MarkdownEditorSaveState.SAVING,
+                    modifier = Modifier.testTag("markdown-ai-proposal-retry"),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MarkdownEditorStatus(state: MarkdownEditorUiState) {
+private fun MarkdownEditorStatus(state: MarkdownEditorUiState, onEvent: (MarkdownEditorEvent) -> Unit) {
     val saveText = when (state.saveState) {
         MarkdownEditorSaveState.CLEAN -> "尚未编辑"
         MarkdownEditorSaveState.DIRTY -> "有未保存修改，正在保护草稿"
@@ -470,7 +497,7 @@ private fun MarkdownEditorStatus(state: MarkdownEditorUiState) {
         NoteProjectionStatus.PARTIAL -> "Markdown 已变更，结构化投影待更新"
         NoteProjectionStatus.FAILED -> "结构化投影失败，Markdown 正文仍可保存"
     }
-    GlassSurface(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("markdown-editor-status")
@@ -478,28 +505,43 @@ private fun MarkdownEditorStatus(state: MarkdownEditorUiState) {
                 liveRegion = LiveRegionMode.Polite
                 contentDescription = "保存状态：$saveText；投影状态：$projectionText"
             },
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(saveText, style = MaterialTheme.typography.labelLarge)
-            Text(
-                projectionText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SaveStateIndicator(
+            label = saveText,
+            detail = projectionText,
+            tone = when (state.saveState) {
+                MarkdownEditorSaveState.FAILED -> StatusBannerTone.ERROR
+                MarkdownEditorSaveState.SAVED -> StatusBannerTone.SUCCESS
+                MarkdownEditorSaveState.DIRTY -> StatusBannerTone.WARNING
+                else -> StatusBannerTone.NEUTRAL
+            },
+        )
+        Text(
+            when (state.saveState) {
+                MarkdownEditorSaveState.FAILED -> "当前编辑内容仍在此页，请检查错误后重试正式保存。"
+                MarkdownEditorSaveState.SAVED -> "本地正文已保存。分享和 ima 同步是独立操作，可返回笔记库查看去向。"
+                MarkdownEditorSaveState.SAVING -> "正在写入本地正式版本，请等待保存结果。"
+                else -> "草稿保护不等于正式保存。确认内容后，使用右上角正式保存。"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        state.errorMessage?.let { message ->
+            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        if (state.saveState == MarkdownEditorSaveState.FAILED) {
+            IosLikeButton(
+                text = "重试正式保存",
+                onClick = { onEvent(MarkdownEditorEvent.Save) },
+                modifier = Modifier.testTag("markdown-editor-save-retry"),
             )
-            state.errorMessage?.let { message ->
-                Text(
-                    message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
         }
     }
 }
 
 @Composable
 private fun RecoveryDraftCard(
-    markdown: String,
     onApply: () -> Unit,
     onDiscard: () -> Unit,
 ) {
