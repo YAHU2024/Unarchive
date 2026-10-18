@@ -95,6 +95,9 @@ import com.unarchive.android.ui.destination.DestinationScreen
 import com.unarchive.android.ui.me.MeScreen
 import com.unarchive.android.ui.me.MoreToolsScreen
 import com.unarchive.android.ui.notes.NotesScreen
+import com.unarchive.android.ui.theme.LocalMotionPolicy
+import com.unarchive.android.ui.theme.pageEnter
+import com.unarchive.android.ui.theme.pageExit
 
 internal object AppRoutes {
     const val CREATE = "create"
@@ -130,6 +133,9 @@ private val mainDestinations = listOf(
     MainDestination(AppRoutes.GRAPH, "图谱", Icons.Filled.Share),
     MainDestination(AppRoutes.ME, "我的", Icons.Filled.AccountCircle),
 )
+
+private fun isMainDestinationChange(initialRoute: String?, targetRoute: String?): Boolean =
+    mainDestinations.any { it.route == initialRoute } && mainDestinations.any { it.route == targetRoute }
 
 @Composable
 internal fun UnarchiveNavigationHost(
@@ -169,6 +175,7 @@ internal fun UnarchiveNavigationHost(
     knowledgeCardRepository: KnowledgeCardRepository? = null,
 ) {
     val navController = rememberNavController()
+    val motion = LocalMotionPolicy.current
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val selectedMainRoute = mainDestinations
@@ -190,6 +197,30 @@ internal fun UnarchiveNavigationHost(
         NavHost(
             navController = navController,
             startDestination = AppRoutes.CREATE,
+            enterTransition = {
+                motion.pageEnter(
+                    forward = true,
+                    mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                )
+            },
+            exitTransition = {
+                motion.pageExit(
+                    forward = true,
+                    mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                )
+            },
+            popEnterTransition = {
+                motion.pageEnter(
+                    forward = false,
+                    mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                )
+            },
+            popExitTransition = {
+                motion.pageExit(
+                    forward = false,
+                    mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                )
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
@@ -338,7 +369,10 @@ private fun AppBottomNavigation(
     currentRoute: String,
     onSelect: (MainDestination) -> Unit,
 ) {
-    GlassDock {
+    GlassDock(
+        selectedIndex = mainDestinations.indexOfFirst { it.route == currentRoute },
+        itemCount = mainDestinations.size,
+    ) {
         mainDestinations.forEach { destination ->
             GlassDockItem(
                 label = destination.label,

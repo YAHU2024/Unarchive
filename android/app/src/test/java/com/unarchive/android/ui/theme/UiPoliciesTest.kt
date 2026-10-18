@@ -58,5 +58,15 @@ class UiPoliciesTest {
         assertTrue(MotionPolicy.Reduced.shortDurationMillis < MotionPolicy().shortDurationMillis)
         assertTrue(MotionPolicy.Reduced.standardDurationMillis < MotionPolicy().standardDurationMillis)
         assertFalse(MotionPolicy.Reduced.animateLayout)
+        assertEquals(0f, MotionPolicy.Reduced.pageTravelFraction)
+        assertEquals(0f, MotionPolicy.Reduced.stateTravelDp)
+        assertEquals(1f, MotionPolicy.Reduced.stateInitialAlpha)
+    }
+
+    @Test
+    fun systemRemoveAnimationsSelectsStaticSpatialPolicy() {
+        assertEquals(MotionPolicy.Reduced, MotionPolicy.fromAnimatorDurationScale(0f))
+        assertEquals(MotionMode.Full, MotionPolicy.fromAnimatorDurationScale(0.5f).mode)
+        assertEquals(MotionMode.Full, MotionPolicy.fromAnimatorDurationScale(2f).mode)
     }
 }

@@ -2,10 +2,15 @@ package com.unarchive.android.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -13,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +29,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -36,8 +42,21 @@ import com.unarchive.android.ui.theme.LocalMotionPolicy
 /** A floating, platform-inspired dock for the four primary destinations. */
 @Composable
 internal fun GlassDock(
+    selectedIndex: Int,
+    itemCount: Int,
     content: @Composable RowScope.() -> Unit,
 ) {
+    require(itemCount > 0 && selectedIndex in 0 until itemCount)
+    val motion = LocalMotionPolicy.current
+    val animatedPosition by animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = if (motion.animateLayout) {
+            spring(dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness)
+        } else { snap() },
+        label = "dock-capsule",
+    )
+    // Reduced motion is synchronous; even a snap animation waits for a frame.
+    val position = if (motion.animateLayout) animatedPosition else selectedIndex.toFloat()
     val shape = RoundedCornerShape(32.dp)
     GlassSurface(
         modifier = Modifier
@@ -50,13 +69,23 @@ internal fun GlassDock(
         shadowElevation = 8.dp,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(6.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
-        )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val gap = 4.dp
+            val itemWidth = (maxWidth - gap * (itemCount - 1)) / itemCount
+            Box(
+                Modifier.offset(x = (itemWidth + gap) * position)
+                    .width(itemWidth).height(56.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .testTag("dock-selection-capsule"),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(gap),
+                verticalAlignment = Alignment.CenterVertically,
+                content = content,
+            )
+        }
     }
 }
 
@@ -70,11 +99,6 @@ internal fun RowScope.GlassDockItem(
 ) {
     val colors = MaterialTheme.colorScheme
     val motion = LocalMotionPolicy.current
-    val selectedContainer by animateColorAsState(
-        targetValue = if (selected) colors.secondaryContainer else Color.Transparent,
-        animationSpec = tween(durationMillis = motion.shortDurationMillis),
-        label = "dock-selection",
-    )
     val contentColor by animateColorAsState(
         targetValue = if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant,
         animationSpec = tween(durationMillis = motion.shortDurationMillis),
@@ -86,8 +110,8 @@ internal fun RowScope.GlassDockItem(
             .weight(1f)
             .height(56.dp)
             .clip(itemShape)
-            .background(selectedContainer)
-            .clickable(
+            .selectable(
+                selected = selected,
                 role = Role.Tab,
                 onClick = onClick,
             )

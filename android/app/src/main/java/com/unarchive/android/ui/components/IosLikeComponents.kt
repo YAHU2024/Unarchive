@@ -254,7 +254,7 @@ internal fun TaskProgressCard(
             stageLabel?.takeIf(String::isNotBlank)?.let { label ->
                 Text(
                     label,
-                    modifier = stageModifier.semantics {
+                    modifier = stageModifier.then(rememberStateMotionModifier(label)).semantics {
                         stageContentDescription?.let { contentDescription = it }
                         stageLiveRegion?.let { liveRegion = it }
                     },
@@ -315,7 +315,8 @@ internal fun RecoveryCard(
         StatusBannerTone.INFO -> MaterialTheme.colorScheme.secondary
         StatusBannerTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val contentModifier = if (wrapSurface) Modifier else modifier.fillMaxWidth()
+    val motionModifier = modifier.then(rememberStateMotionModifier(statusLabel, animateOnEntry = true))
+    val contentModifier = if (wrapSurface) Modifier else motionModifier.fillMaxWidth()
     val content: @Composable () -> Unit = {
         Column(
             modifier = contentModifier,
@@ -340,7 +341,7 @@ internal fun RecoveryCard(
         }
     }
     if (wrapSurface) {
-        GlassSurface(modifier = modifier, content = content)
+        GlassSurface(modifier = motionModifier, content = content)
     } else {
         content()
     }
@@ -369,7 +370,7 @@ internal fun SaveStateIndicator(
         StatusBannerTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().then(rememberStateMotionModifier(label)),
         color = containerColor,
         shape = MaterialTheme.shapes.small,
     ) {
@@ -377,7 +378,10 @@ internal fun SaveStateIndicator(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = contentColor)
+            Text(
+                label, style = MaterialTheme.typography.labelSmall, color = contentColor,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
             detail?.takeIf(String::isNotBlank)?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = contentColor)
             }

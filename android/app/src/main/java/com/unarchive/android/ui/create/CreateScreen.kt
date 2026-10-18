@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.GlassBottomSheet
 import com.unarchive.android.ui.components.RecoveryCard
 import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
@@ -251,23 +251,25 @@ internal fun CreateScreen(
     }
     val selectedRecovery = state.recoveries.firstOrNull { it.operationId == recoveryToConfirm }
     if (selectedRecovery != null) {
-        AlertDialog(
+        GlassBottomSheet(
             onDismissRequest = { recoveryToConfirm = null },
-            title = { Text("继续生成这篇笔记？") },
-            text = {
-                Text("将复用已保存的本地转写，从“${selectedRecovery.stageLabel}”阶段重新执行。不会重新下载音频或转写。")
-            },
-            confirmButton = {
+            title = "继续生成这篇笔记？",
+        ) {
+            Text("将复用已保存的本地转写，从“${selectedRecovery.stageLabel}”阶段重新执行。不会重新下载音频或转写。")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(
                     onClick = {
                         onEvent(CreateEvent.ResumeSingleCard(selectedRecovery.operationId))
                         recoveryToConfirm = null
                     },
+                    enabled = selectedRecovery.canResume && !state.isProcessing,
+                    modifier = Modifier.testTag("create-recovery-confirm"),
                 ) { Text("继续生成") }
-            },
-            dismissButton = {
-                TextButton(onClick = { recoveryToConfirm = null }) { Text("取消") }
-            },
-        )
+                TextButton(
+                    onClick = { recoveryToConfirm = null },
+                    modifier = Modifier.testTag("create-recovery-dismiss"),
+                ) { Text("取消") }
+            }
+        }
     }
 }

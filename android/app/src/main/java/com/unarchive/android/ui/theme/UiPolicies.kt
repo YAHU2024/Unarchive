@@ -54,6 +54,10 @@ internal data class MotionPolicy(
     val standardDurationMillis: Int = 260,
     val springStiffness: Float = 500f,
     val springDampingRatio: Float = 0.82f,
+    val pageTravelFraction: Float = 0.18f,
+    val stateTravelDp: Float = 8f,
+    val stateInitialAlpha: Float = 0.92f,
+    val sheetTravelDp: Float = 32f,
 ) {
     val animateLayout: Boolean get() = mode == MotionMode.Full
 
@@ -64,6 +68,13 @@ internal data class MotionPolicy(
             standardDurationMillis = 120,
             springStiffness = 1000f,
             springDampingRatio = 1f,
+            pageTravelFraction = 0f,
+            stateTravelDp = 0f,
+            stateInitialAlpha = 1f,
+            sheetTravelDp = 0f,
         )
+
+        fun fromAnimatorDurationScale(scale: Float): MotionPolicy =
+            if (scale <= 0f) Reduced else MotionPolicy()
     }
 }

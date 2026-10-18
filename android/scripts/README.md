@@ -68,6 +68,32 @@ The accessibility cases are repeatable structural proxies. They do not prove
 the words TalkBack actually speaks or the exact on-screen appearance of masked
 characters; those two checks remain manual.
 
+## D-C4 motion and navigation regression
+
+Run the relevant small slice after changing motion or navigation:
+
+```powershell
+.\android\scripts\d_c4_focus_regression.ps1 -Slice Navigation
+.\android\scripts\d_c4_focus_regression.ps1 -Slice State
+```
+
+The runner builds Debug/test APKs, runs only `UiPoliciesTest` and
+`GlassRendererTest` on the JVM, then reuses the incremental-install focused
+runner. `Navigation` covers Dock interruption, reduced motion, predictive-back
+cancel/commit, saveable navigation restoration, and existing D1/settings/Notes
+regressions. `State` covers stage/save feedback interruption, recovery-sheet
+focus/dismiss/confirm, reduced motion, and existing component/Create/Notes
+regressions. `-Slice All` combines these classes without duplicates;
+`-SkipBuild` uses the current APKs.
+
+The system-motion case only reads the current animator duration scale; the
+PHQ110 denies `WRITE_SECURE_SETTINGS` even to the shell. Scale-to-policy mapping
+is covered on the JVM, and reduced-motion behavior uses injected policy and
+synthetic state. These tests do not change system settings or start live business
+operations. This is development regression coverage. Full Light/Dark, 2x-font,
+TalkBack speech/order, visual consistency, performance, background recovery,
+and real business-flow acceptance belongs after the main UI restructuring.
+
 ## A5-2 device security gate
 
 To verify the Android Keystore migration/clear boundary and private log

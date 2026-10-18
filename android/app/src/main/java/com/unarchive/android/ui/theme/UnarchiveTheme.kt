@@ -105,7 +105,7 @@ internal val AppShapes = Shapes(
 internal fun UnarchiveTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     liquidGlassEnabled: Boolean = true,
-    motionPolicy: MotionPolicy = MotionPolicy(),
+    motionPolicy: MotionPolicy = rememberSystemMotionPolicy(),
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(
