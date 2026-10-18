@@ -48,7 +48,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
+import com.unarchive.android.ui.components.EmptyStateCard
 import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.SaveStateIndicator
+import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.state.NoteVersionKey
 import com.unarchive.android.ui.state.NotesEvent
 import com.unarchive.android.ui.state.NotesFilter
@@ -191,31 +194,21 @@ private fun NotesHeader(
 
 @Composable
 private fun NotesEmptyState(filter: NotesFilter) {
-    GlassSurface(
+    EmptyStateCard(
+        title = when (filter) {
+            NotesFilter.RECENT -> "还没有知识笔记"
+            NotesFilter.NEEDS_ORGANIZING -> "没有待整理素材"
+            NotesFilter.SAVED -> "还没有已保存笔记"
+        },
+        description = when (filter) {
+            NotesFilter.RECENT -> "从创作页添加一个 B 站视频，生成第一篇可编辑草稿。"
+            NotesFilter.NEEDS_ORGANIZING -> "已有转写在生成笔记后会从这里移入已保存。"
+            NotesFilter.SAVED -> "先从最近或待整理素材生成一篇笔记草稿。"
+        },
         modifier = Modifier
             .fillMaxWidth()
             .testTag("notes-empty-state"),
-        emphasized = true,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                when (filter) {
-                    NotesFilter.RECENT -> "还没有知识笔记"
-                    NotesFilter.NEEDS_ORGANIZING -> "没有待整理素材"
-                    NotesFilter.SAVED -> "还没有已保存笔记"
-                },
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                when (filter) {
-                    NotesFilter.RECENT -> "从创作页添加一个 B 站视频，生成第一篇可编辑草稿。"
-                    NotesFilter.NEEDS_ORGANIZING -> "已有转写在生成笔记后会从这里移入已保存。"
-                    NotesFilter.SAVED -> "先从最近或待整理素材生成一篇笔记草稿。"
-                },
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
+    )
 }
 
 @Composable
@@ -364,28 +357,13 @@ private fun NotesLibraryCard(
 private fun StatusSummary(item: NotesLibraryItem) {
     val label = listOfNotNull(item.localStatusLabel, item.destinationSummary).joinToString(" · ")
     val isError = label.contains("失败")
-    Surface(
+    SaveStateIndicator(
+        label = label,
+        tone = if (isError) StatusBannerTone.ERROR else StatusBannerTone.SUCCESS,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("notes-item-status-${item.stableKey}"),
-        color = if (isError) {
-            MaterialTheme.colorScheme.errorContainer
-        } else {
-            MaterialTheme.colorScheme.secondaryContainer
-        },
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isError) {
-                MaterialTheme.colorScheme.onErrorContainer
-            } else {
-                MaterialTheme.colorScheme.onSecondaryContainer
-            },
-        )
-    }
+    )
 }
 
 @Composable

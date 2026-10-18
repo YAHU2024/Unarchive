@@ -6,11 +6,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -20,13 +22,16 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import com.unarchive.android.ui.components.EmptyStateCard
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.IosLikeButton
 import com.unarchive.android.ui.components.IosLikeIconButton
 import com.unarchive.android.ui.components.RecoveryCard
 import com.unarchive.android.ui.components.SearchField
-import com.unarchive.android.ui.components.StatusBanner
+import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
+import com.unarchive.android.ui.components.StatusBanner
 import com.unarchive.android.ui.components.SettingsRow
 import com.unarchive.android.ui.components.TaskProgressCard
 import com.unarchive.android.ui.theme.UnarchiveTheme
@@ -177,6 +182,36 @@ class IosLikeComponentsUiTest {
         composeRule.onNodeWithText("网络暂时不可用。").assertIsDisplayed()
         composeRule.onNodeWithText("继续生成").performClick()
         composeRule.runOnIdle { assertTrue(resumed) }
+    }
+
+    @Test
+    fun saveAndEmptyStatesRemainReadableInDarkTwoXFont() {
+        composeRule.setContent {
+            UnarchiveTheme(darkTheme = true) {
+                CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                    Column {
+                        SaveStateIndicator(
+                            label = "本地已保存",
+                            detail = "外部同步失败不会影响草稿。",
+                            tone = StatusBannerTone.SUCCESS,
+                            modifier = Modifier.testTag("save-state"),
+                        )
+                        EmptyStateCard(
+                            title = "还没有知识笔记",
+                            description = "从创作页添加一个视频。",
+                            modifier = Modifier.testTag("empty-state"),
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("save-state").assertIsDisplayed()
+        composeRule.onNodeWithText("本地已保存").assertIsDisplayed()
+        composeRule.onNodeWithText("外部同步失败不会影响草稿。").assertIsDisplayed()
+        composeRule.onNodeWithTag("empty-state").assertIsDisplayed()
+        composeRule.onNodeWithText("还没有知识笔记").assertIsDisplayed()
+        composeRule.onNodeWithText("从创作页添加一个视频。").assertIsDisplayed()
     }
 
     @Composable

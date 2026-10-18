@@ -345,3 +345,62 @@ internal fun RecoveryCard(
         content()
     }
 }
+
+/** A compact text-first indicator for local save or sync state. */
+@Composable
+internal fun SaveStateIndicator(
+    label: String,
+    modifier: Modifier = Modifier,
+    tone: StatusBannerTone = StatusBannerTone.NEUTRAL,
+    detail: String? = null,
+) {
+    val containerColor = when (tone) {
+        StatusBannerTone.ERROR -> MaterialTheme.colorScheme.errorContainer
+        StatusBannerTone.SUCCESS -> MaterialTheme.colorScheme.secondaryContainer
+        StatusBannerTone.WARNING -> MaterialTheme.colorScheme.tertiaryContainer
+        StatusBannerTone.INFO -> MaterialTheme.colorScheme.primaryContainer
+        StatusBannerTone.NEUTRAL -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val contentColor = when (tone) {
+        StatusBannerTone.ERROR -> MaterialTheme.colorScheme.onErrorContainer
+        StatusBannerTone.SUCCESS -> MaterialTheme.colorScheme.onSecondaryContainer
+        StatusBannerTone.WARNING -> MaterialTheme.colorScheme.onTertiaryContainer
+        StatusBannerTone.INFO -> MaterialTheme.colorScheme.onPrimaryContainer
+        StatusBannerTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = containerColor,
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = contentColor)
+            detail?.takeIf(String::isNotBlank)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = contentColor)
+            }
+        }
+    }
+}
+
+/** A reusable empty state with an optional caller-owned next action. */
+@Composable
+internal fun EmptyStateCard(
+    title: String,
+    description: String,
+    modifier: Modifier = Modifier,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    GlassSurface(modifier = modifier, emphasized = true) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (actionLabel != null && onAction != null) {
+                IosLikeButton(text = actionLabel, onClick = onAction)
+            }
+        }
+    }
+}
