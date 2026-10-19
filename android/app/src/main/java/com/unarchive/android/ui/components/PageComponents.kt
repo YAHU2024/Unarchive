@@ -21,14 +21,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -71,11 +67,9 @@ internal fun UnarchiveButton(
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
-    Button(
+    CupertinoButton(
         onClick = onClick, enabled = enabled,
         modifier = modifier.heightIn(min = UnarchiveDimensions.touchTarget),
-        shape = MaterialTheme.shapes.medium,
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
         content = content,
     )
 }
@@ -87,13 +81,9 @@ internal fun UnarchiveSecondaryButton(
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
-    OutlinedButton(
+    CupertinoSecondaryButton(
         onClick = onClick, enabled = enabled,
         modifier = modifier.heightIn(min = UnarchiveDimensions.touchTarget),
-        shape = MaterialTheme.shapes.medium,
-        colors = ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         content = content,
     )
 }
@@ -105,10 +95,9 @@ internal fun UnarchiveTextButton(
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
-    androidx.compose.material3.TextButton(
+    CupertinoPlainButton(
         onClick = onClick, enabled = enabled,
         modifier = modifier.heightIn(min = UnarchiveDimensions.touchTarget),
-        shape = MaterialTheme.shapes.small,
         content = content,
     )
 }
@@ -120,16 +109,7 @@ internal fun UnarchiveIconButton(
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    androidx.compose.material3.FilledTonalIconButton(
-        onClick = onClick, enabled = enabled,
-        modifier = modifier.size(UnarchiveDimensions.touchTarget),
-        shape = MaterialTheme.shapes.small,
-        colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-        content = content,
-    )
+    CupertinoIconAction(onClick = onClick, enabled = enabled, modifier = modifier, icon = content)
 }
 
 @Composable
@@ -149,7 +129,7 @@ internal fun NavigationSettingsRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    SettingsRow(
+    CupertinoSettingsRow(
         title = title, description = description, onClick = onClick,
         modifier = modifier, enabled = enabled,
         trailingContent = {
@@ -178,7 +158,7 @@ internal fun ToggleSettingsRow(title: String, checked: Boolean, enabled: Boolean
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
+        CupertinoSwitchControl(checked = checked, enabled = enabled, onCheckedChange = null)
     }
 }
 

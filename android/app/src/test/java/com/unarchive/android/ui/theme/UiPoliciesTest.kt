@@ -46,10 +46,22 @@ class UiPoliciesTest {
     }
 
     @Test
-    fun normalDeviceUsesSimulatedModeUntilAdapterIsAccepted() {
+    fun api33DeviceUsesAndroidLiquidGlassAdapter() {
         val policy = LiquidGlassPolicy.resolve(LiquidGlassInputs(userEnabled = true, apiLevel = 35))
-        assertEquals(LiquidGlassMode.Simulated, policy.mode)
+        assertEquals(LiquidGlassMode.LiquidGlass, policy.mode)
         assertTrue(policy.usesTransparency)
+    }
+
+    @Test
+    fun api31And32DevicesUseBlurAdapter() {
+        assertEquals(
+            LiquidGlassMode.Blur,
+            LiquidGlassPolicy.resolve(LiquidGlassInputs(userEnabled = true, apiLevel = 31)).mode,
+        )
+        assertEquals(
+            LiquidGlassMode.Blur,
+            LiquidGlassPolicy.resolve(LiquidGlassInputs(userEnabled = true, apiLevel = 32)).mode,
+        )
     }
 
     @Test

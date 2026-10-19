@@ -1,0 +1,197 @@
+package com.unarchive.android.ui.components
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import io.github.alexzhirkevich.cupertino.CupertinoButton as LibraryCupertinoButton
+import io.github.alexzhirkevich.cupertino.CupertinoButtonDefaults
+import io.github.alexzhirkevich.cupertino.CupertinoIconButton
+import io.github.alexzhirkevich.cupertino.CupertinoSegmentedControl as LibraryCupertinoSegmentedControl
+import io.github.alexzhirkevich.cupertino.CupertinoSegmentedControlTab
+import io.github.alexzhirkevich.cupertino.CupertinoSwitch
+import io.github.alexzhirkevich.cupertino.CupertinoTextField as LibraryCupertinoTextField
+import io.github.alexzhirkevich.cupertino.ExperimentalCupertinoApi
+
+/** Product-owned button boundary backed by compose-cupertino. */
+@OptIn(ExperimentalCupertinoApi::class)
+@Composable
+internal fun CupertinoButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    LibraryCupertinoButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        enabled = enabled,
+        colors = CupertinoButtonDefaults.filledButtonColors(),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        content = content,
+    )
+}
+
+@OptIn(ExperimentalCupertinoApi::class)
+@Composable
+internal fun CupertinoSecondaryButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    LibraryCupertinoButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        enabled = enabled,
+        colors = CupertinoButtonDefaults.tintedButtonColors(),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        content = content,
+    )
+}
+
+@Composable
+internal fun CupertinoPlainButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    LibraryCupertinoButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        enabled = enabled,
+        colors = CupertinoButtonDefaults.plainButtonColors(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        content = content,
+    )
+}
+
+@Composable
+internal fun CupertinoIconAction(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentDescription: String? = null,
+    icon: @Composable () -> Unit,
+) {
+    CupertinoIconButton(
+        onClick = onClick,
+        modifier = modifier.size(48.dp).semantics {
+            if (contentDescription != null) this.contentDescription = contentDescription
+        },
+        enabled = enabled,
+        content = icon,
+    )
+}
+
+@Composable
+internal fun CupertinoTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    placeholder: String? = null,
+    enabled: Boolean = true,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        label?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+        LibraryCupertinoTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            enabled = enabled,
+            singleLine = singleLine,
+            minLines = minLines,
+            placeholder = placeholder?.let { { Text(it) } },
+        )
+    }
+}
+
+@OptIn(ExperimentalCupertinoApi::class)
+@Composable
+internal fun CupertinoSegmentedControl(
+    selectedIndex: Int,
+    modifier: Modifier = Modifier,
+    items: List<String>,
+    onSelected: (Int) -> Unit,
+    itemModifier: (Int) -> Modifier = { Modifier },
+) {
+    LibraryCupertinoSegmentedControl(selectedTabIndex = selectedIndex, modifier = modifier) {
+        items.forEachIndexed { index, label ->
+            CupertinoSegmentedControlTab(
+                onClick = { onSelected(index) },
+                isSelected = selectedIndex == index,
+                modifier = itemModifier(index).heightIn(min = 48.dp),
+            ) { Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) }
+        }
+    }
+}
+
+@Composable
+internal fun CupertinoSettingsRow(
+    title: String,
+    description: String? = null,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    leadingContent: (@Composable () -> Unit)? = null,
+    trailingContent: @Composable RowScope.() -> Unit = {},
+) {
+    SettingsRow(
+        title = title,
+        description = description,
+        modifier = modifier,
+        enabled = enabled,
+        onClick = onClick,
+        leadingContent = leadingContent,
+        trailingContent = trailingContent,
+    )
+}
+
+@Composable
+internal fun CupertinoSwitchControl(
+    checked: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onCheckedChange: ((Boolean) -> Unit)?,
+) {
+    CupertinoSwitch(
+        checked = checked,
+        onCheckedChange = onCheckedChange ?: {},
+        enabled = enabled,
+        modifier = modifier,
+    )
+}
+
+/** Project-owned icon boundary; icon packs never leak into page APIs. */
+@Composable
+internal fun AppIcon(
+    imageVector: ImageVector,
+    contentDescription: String? = null,
+    modifier: Modifier = Modifier,
+    tint: Color = androidx.compose.material3.LocalContentColor.current,
+) {
+    androidx.compose.material3.Icon(
+        imageVector = imageVector,
+        contentDescription = contentDescription,
+        modifier = modifier,
+        tint = tint,
+    )
+}

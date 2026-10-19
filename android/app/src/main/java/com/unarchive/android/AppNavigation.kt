@@ -318,6 +318,7 @@ internal fun UnarchiveNavigationHost(
                     onEvent = onMeEvent,
                     onOpenSecurity = { navController.navigate(AppRoutes.SECURITY) },
                     onOpenMoreTools = { navController.navigate(AppRoutes.MORE_TOOLS) },
+                    onOpenAppearance = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
                 )
             }
             composable(AppRoutes.MORE_TOOLS) {

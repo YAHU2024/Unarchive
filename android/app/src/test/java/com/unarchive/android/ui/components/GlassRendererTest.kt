@@ -19,13 +19,13 @@ class GlassRendererTest {
     }
 
     @Test
-    fun unsupportedFutureModesKeepStableSimulatedFallback() {
+    fun adapterModesSelectBackdropRenderer() {
         assertEquals(
-            SimulatedGlassRenderer(usesTransparency = true),
+            BackdropGlassRenderer(liquid = false),
             glassRendererFor(LiquidGlassMode.Blur, usesTransparency = true),
         )
         assertEquals(
-            SimulatedGlassRenderer(usesTransparency = false),
+            BackdropGlassRenderer(liquid = true),
             glassRendererFor(LiquidGlassMode.LiquidGlass, usesTransparency = false),
         )
     }

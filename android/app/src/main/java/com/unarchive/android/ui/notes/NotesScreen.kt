@@ -24,7 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,14 +39,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.ui.components.AdaptiveActions
-import com.unarchive.android.ui.components.EmptyStateCard
+import com.unarchive.android.ui.components.AppIcon
+import com.unarchive.android.ui.components.CupertinoSegmentedControl
+import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.IosLikeFilterSegment
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.SaveStateIndicator
@@ -87,7 +87,7 @@ internal fun NotesScreen(
             .padding(horizontal = 16.dp)
             .testTag("notes-scroll"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
     ) {
         item {
             NotesHeader(
@@ -97,39 +97,42 @@ internal fun NotesScreen(
             )
         }
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
-                    .padding(4.dp)
-                    .horizontalScroll(rememberScrollState())
-                    .selectableGroup()
-                    .testTag("notes-filter-row"),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterPill(
-                    label = "最近",
-                    selected = selectedFilter == NotesFilter.RECENT,
-                    testTag = "notes-filter-recent",
-                    onClick = { selectedFilter = NotesFilter.RECENT },
-                )
-                FilterPill(
-                    label = "待整理",
-                    selected = selectedFilter == NotesFilter.NEEDS_ORGANIZING,
-                    testTag = "notes-filter-materials",
-                    onClick = { selectedFilter = NotesFilter.NEEDS_ORGANIZING },
-                )
-                FilterPill(
-                    label = "已保存",
-                    selected = selectedFilter == NotesFilter.SAVED,
-                    testTag = "notes-filter-saved",
-                    onClick = { selectedFilter = NotesFilter.SAVED },
-                )
-            }
+            CupertinoSegmentedControl(
+                selectedIndex = when (selectedFilter) {
+                    NotesFilter.RECENT -> 0
+                    NotesFilter.NEEDS_ORGANIZING -> 1
+                    NotesFilter.SAVED -> 2
+                },
+                items = listOf("最近", "待整理", "已保存"),
+                modifier = Modifier.fillMaxWidth().testTag("notes-filter-row"),
+                itemModifier = { index ->
+                    Modifier.testTag(
+                        when (index) {
+                            0 -> "notes-filter-recent"
+                            1 -> "notes-filter-materials"
+                            else -> "notes-filter-saved"
+                        },
+                    )
+                },
+                onSelected = { index ->
+                    selectedFilter = when (index) {
+                        0 -> NotesFilter.RECENT
+                        1 -> NotesFilter.NEEDS_ORGANIZING
+                        else -> NotesFilter.SAVED
+                    }
+                },
+            )
         }
         if (visibleItems.isEmpty()) {
             item {
-                NotesEmptyState(filter = selectedFilter)
+                NotesEmptyState(filter = selectedFilter, onAction = {
+                    if (selectedFilter == NotesFilter.RECENT) {
+                        onEvent(NotesEvent.Refresh)
+                        onOpenLegacyNotes()
+                    } else {
+                        selectedFilter = NotesFilter.RECENT
+                    }
+                })
             }
         } else {
             items(visibleItems, key = NotesLibraryItem::stableKey) { item ->
@@ -180,42 +183,37 @@ private fun NotesHeader(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("笔记", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.semantics { heading() })
-            Text(
-                "$noteCount 篇已保存 · $materialCount 项待整理",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        LibraryPageHeader("笔记", "$noteCount 篇已保存 · $materialCount 项待整理", Modifier.weight(1f))
         UnarchiveIconButton(
             onClick = onRefresh,
             modifier = Modifier
                 .testTag("notes-refresh")
                 .semantics { contentDescription = "刷新笔记" },
         ) {
-            Icon(Icons.Filled.Refresh, contentDescription = null)
+            AppIcon(Icons.Filled.Refresh)
         }
     }
 }
 
 @Composable
-private fun NotesEmptyState(filter: NotesFilter) {
-    EmptyStateCard(
-        title = when (filter) {
-            NotesFilter.RECENT -> "还没有知识笔记"
-            NotesFilter.NEEDS_ORGANIZING -> "没有待整理素材"
-            NotesFilter.SAVED -> "还没有已保存笔记"
-        },
-        description = when (filter) {
-            NotesFilter.RECENT -> "从创作页添加一个 B 站视频，生成第一篇可编辑草稿。"
-            NotesFilter.NEEDS_ORGANIZING -> "已有转写在生成笔记后会从这里移入已保存。"
-            NotesFilter.SAVED -> "先从最近或待整理素材生成一篇笔记草稿。"
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("notes-empty-state"),
-    )
+private fun NotesEmptyState(filter: NotesFilter, onAction: () -> Unit) {
+    ReadingSurface(modifier = Modifier.fillMaxWidth().testTag("notes-empty-state")) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(when (filter) {
+                NotesFilter.RECENT -> "还没有知识笔记"
+                NotesFilter.NEEDS_ORGANIZING -> "没有待整理素材"
+                NotesFilter.SAVED -> "还没有已保存笔记"
+            }, style = MaterialTheme.typography.titleMedium)
+            Text(when (filter) {
+                NotesFilter.RECENT -> "从创作页添加一个 B 站视频，生成第一篇可编辑草稿。"
+                NotesFilter.NEEDS_ORGANIZING -> "已有转写在生成笔记后会从这里移入已保存。"
+                NotesFilter.SAVED -> "先从最近或待整理素材生成一篇笔记草稿。"
+            }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            UnarchiveSecondaryButton(onAction, Modifier.fillMaxWidth().testTag("notes-empty-action")) {
+                Text(if (filter == NotesFilter.RECENT) "查看笔记与素材" else "查看最近")
+            }
+        }
+    }
 }
 
 @Composable
@@ -310,7 +308,7 @@ private fun NotesLibraryCard(
                         onClick = { onOpenDestinations(document) },
                         modifier = actionModifier,
                     ) {
-                        Icon(Icons.Filled.Share, contentDescription = null)
+                        AppIcon(Icons.Filled.Share)
                         Spacer(Modifier.width(6.dp))
                         Text("分享与去向")
                     }
@@ -333,7 +331,7 @@ private fun NotesLibraryCard(
                         .fillMaxWidth()
                         .testTag("notes-generate-${item.stableKey}"),
                 ) {
-                    Icon(Icons.Filled.Edit, contentDescription = null)
+                    AppIcon(Icons.Filled.Edit)
                     Spacer(Modifier.width(8.dp))
                     Text("生成笔记草稿")
                 }

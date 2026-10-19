@@ -410,6 +410,32 @@ class D1NavigationTest {
         }
     }
 
+    @Test
+    fun meAppearanceOpensExistingSettingsRouteWithoutDeveloperEvent() {
+        val events = mutableListOf<com.unarchive.android.ui.state.MeEvent>()
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = sampleState(), onCreateEvent = {}, onNotesEvent = {}, onMeEvent = events::add,
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    legacySettingsContent = { onBack ->
+                        LegacyRouteFrame(title = "legacy settings", onBack = onBack) {
+                            Text("界面效果设置样板", Modifier.testTag("appearance-settings"))
+                        }
+                    },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("bottom-nav-me").performClick()
+        composeRule.onNodeWithTag("me-appearance").performScrollTo().performClick()
+        composeRule.onNodeWithTag("appearance-settings").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("返回").performClick()
+        composeRule.onNodeWithTag("me-appearance").performScrollTo().assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(emptyList<com.unarchive.android.ui.state.MeEvent>(), events) }
+    }
+
     private fun sampleState() = UnarchiveUiState(
         create = CreateUiState(
             videoReference = "",

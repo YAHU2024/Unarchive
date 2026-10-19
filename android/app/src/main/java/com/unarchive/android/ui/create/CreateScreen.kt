@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,10 +24,10 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteGenerationState
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.components.GlassBottomSheet
-import com.unarchive.android.ui.components.GlassSurface
+import com.unarchive.android.ui.components.CupertinoTextField
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.NavigationSettingsRow
-import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.ProvenanceKind
 import com.unarchive.android.ui.components.ProvenanceRail
 import com.unarchive.android.ui.components.ReadingSurface
@@ -64,8 +63,8 @@ internal fun CreateScreen(
         contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
     ) {
         item {
-            PageHeader(title = "创作", description =
-                "把一个 B 站视频，整理成真正能复习和连接的知识笔记。",
+            LibraryPageHeader(title = "创作", description =
+                "从一段视频开始，留下可以复习的知识。",
             )
         }
         item {
@@ -81,16 +80,16 @@ internal fun CreateScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedTextField(
+                    CupertinoTextField(
                         value = state.videoReference,
                         onValueChange = { onEvent(CreateEvent.VideoReferenceChanged(it)) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("create-video-reference")
                             .semantics { contentDescription = "B站视频链接或BV号" },
+                        label = "BV 号 / B站链接",
+                        placeholder = "输入 BV 号或完整链接",
                         enabled = !state.isProcessing,
-                        label = { Text("BV 号 / B站链接") },
-                        shape = MaterialTheme.shapes.small,
                         singleLine = false,
                         minLines = 2,
                     )
@@ -162,6 +161,7 @@ internal fun CreateScreen(
                         .fillMaxWidth()
                         .testTag("create-batch-recovery"),
                     actionLabel = "继续处理",
+                    primaryAction = false,
                     actionModifier = Modifier.testTag("create-resume-batch"),
                     onAction = { onEvent(CreateEvent.ResumeBatch) },
                 )
@@ -169,7 +169,7 @@ internal fun CreateScreen(
         }
         if (state.recoveries.isNotEmpty()) {
             item {
-                GlassSurface(
+                ReadingSurface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("create-single-card-recoveries"),
@@ -196,6 +196,7 @@ internal fun CreateScreen(
                                     .fillMaxWidth()
                                     .testTag("create-recovery-${recovery.operationId}"),
                                 wrapSurface = false,
+                                primaryAction = false,
                                 actionLabel = if (recovery.state == SingleCardRecoveryState.RECOVERING) {
                                     "恢复中..."
                                 } else {

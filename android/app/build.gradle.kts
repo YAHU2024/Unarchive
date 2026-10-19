@@ -1,8 +1,8 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.cyclonedx.bom")
 }
@@ -20,11 +20,11 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.unarchive.android"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.unarchive.android"
-        minSdk = 26
+        minSdk = 31
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -92,10 +92,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -116,8 +112,14 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
+}
+
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)
@@ -132,6 +134,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     // D1 navigation shell: nested routes, back stack, and state restoration.
     implementation("androidx.navigation:navigation-compose:2.8.3")
+    // iOS-style controls are consumed through the project-owned adapter layer.
+    implementation("io.github.alexzhirkevich:cupertino:0.1.0-alpha04")
+    // AndroidLiquidGlass is limited to project-owned Chrome surfaces.
+    implementation("io.github.kyant0:backdrop:2.0.1")
     // D1.5 isolated Markdown reading spike. Keep this behind MarkdownProjectionRenderer.
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.28.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

@@ -341,6 +341,7 @@ internal fun RecoveryCard(
     statusTone: StatusBannerTone = StatusBannerTone.WARNING,
     actionLabel: String? = null,
     actionEnabled: Boolean = true,
+    primaryAction: Boolean = true,
     actionModifier: Modifier = Modifier,
     onAction: (() -> Unit)? = null,
 ) {
@@ -367,12 +368,16 @@ internal fun RecoveryCard(
                 Text(it, color = MaterialTheme.colorScheme.error)
             }
             if (actionLabel != null && onAction != null) {
-                IosLikeButton(
-                    text = actionLabel,
-                    onClick = onAction,
-                    enabled = actionEnabled,
-                    modifier = actionModifier,
-                )
+                if (primaryAction) {
+                    IosLikeButton(
+                        text = actionLabel, onClick = onAction,
+                        enabled = actionEnabled, modifier = actionModifier,
+                    )
+                } else {
+                    UnarchiveSecondaryButton(onClick = onAction, enabled = actionEnabled, modifier = actionModifier) {
+                        Text(actionLabel)
+                    }
+                }
             }
         }
     }

@@ -16,6 +16,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import android.os.Build
+import com.kyant.backdrop.backdrops.emptyBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
 import com.unarchive.android.ui.theme.LiquidGlassMode
 import com.unarchive.android.ui.theme.LocalLiquidGlassTokens
 
@@ -44,6 +49,33 @@ internal object DisabledGlassRenderer : GlassRenderer {
             tonalElevation = if (spec.emphasized) 2.dp else 0.dp,
             shadowElevation = spec.shadowElevation,
         ) { Box(Modifier.clip(spec.shape).padding(spec.contentPadding)) { content() } }
+    }
+}
+
+/** Backdrop-backed renderer for API 31+ decorative Chrome surfaces. */
+internal data class BackdropGlassRenderer(val liquid: Boolean) : GlassRenderer {
+    @Composable
+    override fun render(spec: GlassSurfaceSpec, content: @Composable () -> Unit) {
+        val colors = MaterialTheme.colorScheme
+        val tokens = LocalLiquidGlassTokens.current
+        val fillAlpha = if (spec.emphasized) tokens.emphasizedSurfaceAlpha else tokens.surfaceAlpha
+        val borderAlpha = if (spec.emphasized) tokens.emphasizedBorderAlpha else tokens.borderAlpha
+        val backdropModifier = spec.modifier
+            .border(BorderStroke(1.dp, colors.outlineVariant.copy(alpha = borderAlpha)), spec.shape)
+            .drawBackdrop(
+                backdrop = emptyBackdrop(),
+                shape = { spec.shape },
+                effects = {
+                    blur(radius = if (spec.emphasized) 22f else 16f)
+                    if (liquid && Build.VERSION.SDK_INT >= 33) {
+                        lens(refractionHeight = 18f, refractionAmount = 0.12f)
+                    }
+                },
+                onDrawSurface = {
+                    drawRect(colors.surface.copy(alpha = fillAlpha))
+                },
+            )
+        Box(backdropModifier.clip(spec.shape).padding(spec.contentPadding)) { content() }
     }
 }
 
@@ -91,4 +123,9 @@ internal data class SimulatedGlassRenderer(val usesTransparency: Boolean) : Glas
 }
 
 internal fun glassRendererFor(mode: LiquidGlassMode, usesTransparency: Boolean): GlassRenderer =
-    if (mode == LiquidGlassMode.Disabled) DisabledGlassRenderer else SimulatedGlassRenderer(usesTransparency)
+    when (mode) {
+        LiquidGlassMode.Disabled -> DisabledGlassRenderer
+        LiquidGlassMode.Simulated -> SimulatedGlassRenderer(usesTransparency)
+        LiquidGlassMode.Blur -> BackdropGlassRenderer(liquid = false)
+        LiquidGlassMode.LiquidGlass -> BackdropGlassRenderer(liquid = true)
+    }

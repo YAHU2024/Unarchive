@@ -10,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,9 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.components.InsetGroupedList
+import com.unarchive.android.ui.components.AppIcon
 import com.unarchive.android.ui.components.NavigationSettingsRow
+import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.PageHeader
-import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.UnarchiveIconButton
 import com.unarchive.android.ui.state.MeEvent
 import com.unarchive.android.ui.state.MeUiState
@@ -33,21 +33,16 @@ internal fun MeScreen(
     onEvent: (MeEvent) -> Unit,
     onOpenSecurity: () -> Unit,
     onOpenMoreTools: () -> Unit,
+    onOpenAppearance: () -> Unit = onOpenMoreTools,
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        PageHeader("我的", "管理同步去向、本地能力和开发者工具。")
-        ReadingSurface(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("本地优先", style = MaterialTheme.typography.titleMedium)
-                Text("笔记先保存在本机；同步和导出由你明确触发。")
-            }
-        }
+        LibraryPageHeader("我的", "本地优先。笔记先保存在本机，同步和导出由你明确触发。")
         InsetGroupedList(title = "管理", modifier = Modifier.testTag("me-management-group")) {
             NavigationSettingsRow("安全设置", "管理服务凭据与连接状态", onOpenSecurity)
             androidx.compose.material3.HorizontalDivider(Modifier.padding(horizontal = 16.dp))
@@ -56,6 +51,12 @@ internal fun MeScreen(
                 onClick = { onEvent(MeEvent.OpenDeveloperOptions); onOpenMoreTools() },
                 enabled = state.developerToolsAvailable,
                 modifier = Modifier.testTag("me-more-tools"),
+            )
+        }
+        InsetGroupedList(title = "界面", modifier = Modifier.testTag("me-appearance-group")) {
+            NavigationSettingsRow(
+                title = "界面效果", description = "管理玻璃效果，关闭后保持清晰的不透明界面",
+                onClick = onOpenAppearance, modifier = Modifier.testTag("me-appearance"),
             )
         }
     }
@@ -79,7 +80,7 @@ internal fun MoreToolsScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             UnarchiveIconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                AppIcon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
             Text("更多工具", style = MaterialTheme.typography.titleLarge)
         }

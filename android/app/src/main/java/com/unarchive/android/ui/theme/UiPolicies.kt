@@ -35,9 +35,11 @@ internal data class LiquidGlassPolicy(
             if (inputs.apiLevel < 31) {
                 return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = false)
             }
-            // D-C0 deliberately selects the project-owned simulation. Native blur and
-            // Android 13+ liquid glass remain D-C1/D-C2 adapter candidates.
-            return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = true)
+            return if (inputs.apiLevel >= 33) {
+                LiquidGlassPolicy(LiquidGlassMode.LiquidGlass, usesTransparency = true)
+            } else {
+                LiquidGlassPolicy(LiquidGlassMode.Blur, usesTransparency = true)
+            }
         }
 
         fun fromUserSetting(enabled: Boolean, apiLevel: Int = 35): LiquidGlassPolicy = resolve(

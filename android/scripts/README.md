@@ -242,3 +242,22 @@ fixtures. It writes fixture screenshots under the target app's external files
 directory `d-c6-fixtures/`. This is bounded automated evidence; final visual
 appearance, actual TalkBack speech and real provider workflows require separate
 acceptance. The runner never uninstalls or clears package data.
+
+## LG-A compatibility and LG-B layout samples
+
+`spikes/lg-a-backdrop` is an isolated standalone build. See its README for the
+opaque control and explicitly enabled Backdrop candidate commands. It does not
+add a dependency or module to the main app.
+
+```powershell
+.\android\scripts\lg_ab_focus_regression.ps1 -DeviceSerial 5b14556a
+.\android\scripts\lg_ab_focus_regression.ps1 -DeviceSerial 5b14556a -SkipBuild
+```
+
+This fixture gate covers Create/Notes/Me in four light/dark/glass/font
+configurations, recovery confirmation, filters, empty-state actions and existing
+navigation. `LiquidGlassLayoutUiTest` writes synthetic captures to the app's
+external-files `lg-b-fixtures/` directory, including material-switch pairs.
+Glass-on captures use the current simulated renderer until the separate real
+candidate passes its adoption gate. The runner does not close manual visual,
+TalkBack, performance, real integration, or low-API device acceptance.

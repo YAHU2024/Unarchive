@@ -127,7 +127,7 @@ internal fun RowScope.GlassDockItem(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Icon(
+            AppIcon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = contentColor,

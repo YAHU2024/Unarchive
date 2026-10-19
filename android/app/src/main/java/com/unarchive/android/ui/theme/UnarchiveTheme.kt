@@ -119,11 +119,13 @@ internal fun UnarchiveTheme(
             glassRendererFor(policy.mode, policy.usesTransparency)
         },
     ) {
-        MaterialTheme(
-            colorScheme = if (darkTheme) DarkColors else LightColors,
-            typography = AppTypography,
-            shapes = AppShapes,
-            content = content,
-        )
+        UnarchiveCupertinoTheme {
+            MaterialTheme(
+                colorScheme = if (darkTheme) DarkColors else LightColors,
+                typography = AppTypography,
+                shapes = AppShapes,
+                content = content,
+            )
+        }
     }
 }

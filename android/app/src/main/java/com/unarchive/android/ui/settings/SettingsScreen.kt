@@ -11,10 +11,8 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,6 +28,8 @@ import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.ChoiceSettingsRow
+import com.unarchive.android.ui.components.CupertinoSwitchControl
+import com.unarchive.android.ui.components.CupertinoTextField
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.PageHeader
 import com.unarchive.android.ui.components.SettingsRow
@@ -135,11 +135,11 @@ internal fun LiquidGlassSettingsSection(
             else "已关闭，玻璃元素降级为不透明背景，适合性能较低的设备。",
             enabled = !isBusy,
             trailingContent = {
-                Switch(
+                CupertinoSwitchControl(
                     modifier = Modifier.testTag("liquid-glass-switch"),
                     checked = enabled,
-                    onCheckedChange = onEnabledChange,
                     enabled = !isBusy,
+                    onCheckedChange = onEnabledChange,
                 )
             },
         )
@@ -173,13 +173,13 @@ private fun SiliconFlowModelSettings(state: SettingsUiState, onEvent: (SettingsE
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
+            CupertinoTextField(
                 value = modelInput,
                 onValueChange = { modelInput = it },
                 modifier = Modifier.weight(1f).testTag("siliconflow-model-input"),
                 enabled = !state.isBusy,
                 singleLine = true,
-                label = { Text("添加模型名称") },
+                label = "添加模型名称",
             )
             UnarchiveButton(
                 modifier = Modifier.testTag("siliconflow-model-add"),
@@ -221,12 +221,12 @@ private fun StorageManagementSection(state: SettingsUiState, onEvent: (SettingsE
             Text(label)
         }
     }
-    OutlinedTextField(
+    CupertinoTextField(
         value = state.customCacheBudgetInput,
         onValueChange = { onEvent(SettingsEvent.CustomCacheBudgetChanged(it)) },
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("自定义缓存预算（GiB）") },
-        supportingText = { Text("允许范围 0.5～16 GiB") },
+        label = "自定义缓存预算（GiB）",
+        placeholder = "允许范围 0.5～16 GiB",
         singleLine = true,
         enabled = !state.isBusy,
     )
