@@ -6,6 +6,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,6 +48,7 @@ import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.state.displayLabel
+import com.unarchive.android.ui.theme.LocalMotionPolicy
 
 @Composable
 internal fun CreateScreen(
@@ -54,6 +61,9 @@ internal fun CreateScreen(
 ) {
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     val presentation = state.presentation()
+    val motion = LocalMotionPolicy.current
+    val showTaskState = state.isProcessing || state.statusMessage.isNotBlank() ||
+        state.processing.stage != CreateProcessingStage.IDLE
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -68,80 +78,82 @@ internal fun CreateScreen(
             )
         }
         item {
-            ReadingSurface(
+            AnimatedContent(
+                targetState = showTaskState,
                 modifier = Modifier.fillMaxWidth().testTag("create-input-surface"),
-                contentPadding = PaddingValues(20.dp),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ProvenanceRail("来源 · B 站视频", ProvenanceKind.Source)
-                    Text("添加 B 站视频", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "支持 BV 号、av 号或完整链接。先保留本地基础笔记，再按配置使用 AI 整理；确认后在编辑器正式保存。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                transitionSpec = {
+                    if (!motion.animateLayout) EnterTransition.None togetherWith ExitTransition.None
+                    else fadeIn() togetherWith fadeOut()
+                },
+                label = "create-input-task-transition",
+            ) { taskState ->
+                if (taskState) {
+                    TaskProgressCard(
+                        title = presentation.title,
+                        stageLabel = state.processing.stage
+                            .takeUnless { it == CreateProcessingStage.IDLE }
+                            ?.displayLabel,
+                        statusMessage = state.statusMessage,
+                        progress = state.processing.progress.takeIf { state.isProcessing },
+                        checkpointMessage = presentation.checkpointMessage,
+                        description = presentation.guidance,
+                        modifier = Modifier.fillMaxWidth(),
+                        stageModifier = Modifier.testTag("create-processing-stage"),
+                        progressModifier = Modifier.testTag("create-progress"),
+                        statusModifier = Modifier.testTag("create-status"),
+                        checkpointModifier = Modifier.testTag("create-checkpoint"),
+                        cancelModifier = Modifier.testTag("create-cancel"),
+                        stageContentDescription = "处理阶段：${state.processing.stage.displayLabel}",
+                        stageLiveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite,
+                        stageColor = if (state.processing.stage == CreateProcessingStage.FAILED) {
+                            MaterialTheme.colorScheme.error
+                        } else null,
+                        showCancel = state.isProcessing,
+                        cancelEnabled = state.processing.isCancellable,
+                        onCancel = { onEvent(CreateEvent.CancelProcessing) },
                     )
-                    CupertinoTextField(
-                        value = state.videoReference,
-                        onValueChange = { onEvent(CreateEvent.VideoReferenceChanged(it)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("create-video-reference")
-                            .semantics { contentDescription = "B站视频链接或BV号" },
-                        label = "BV 号 / B站链接",
-                        placeholder = "输入 BV 号或完整链接",
-                        enabled = !state.isProcessing,
-                        singleLine = false,
-                        minLines = 2,
-                    )
-                    UnarchiveButton(
-                        onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
-                        enabled = state.videoReference.isNotBlank() && !state.isProcessing,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("create-generate-note"),
+                } else {
+                    ReadingSurface(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(20.dp),
                     ) {
-                        Text(
-                            when {
-                                state.isProcessing -> "处理中..."
-                                state.processing.stage == CreateProcessingStage.RECOVERABLE &&
-                                    state.processing.checkpointSegmentCount > 0 -> "继续生成笔记草稿"
-                                else -> "开始生成笔记草稿"
-                            },
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ProvenanceRail("来源 · B 站视频", ProvenanceKind.Source)
+                            Text("添加 B 站视频", style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                "支持 BV 号、av 号或完整链接。先保留本地基础笔记，再按配置使用 AI 整理；确认后在编辑器正式保存。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            CupertinoTextField(
+                                value = state.videoReference,
+                                onValueChange = { onEvent(CreateEvent.VideoReferenceChanged(it)) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("create-video-reference")
+                                    .semantics { contentDescription = "B站视频链接或BV号" },
+                                label = "BV 号 / B站链接",
+                                placeholder = "输入 BV 号或完整链接",
+                                enabled = !state.isProcessing,
+                                singleLine = false,
+                                minLines = 2,
+                            )
+                            UnarchiveButton(
+                                onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
+                                enabled = state.videoReference.isNotBlank() && !state.isProcessing,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("create-generate-note"),
+                            ) {
+                                Text(
+                                    if (state.processing.stage == CreateProcessingStage.RECOVERABLE &&
+                                        state.processing.checkpointSegmentCount > 0
+                                    ) "继续生成笔记草稿" else "开始生成笔记草稿",
+                                )
+                            }
+                        }
                     }
                 }
-            }
-        }
-        if (state.isProcessing || state.statusMessage.isNotBlank() ||
-            state.processing.stage != CreateProcessingStage.IDLE
-        ) {
-            item {
-                TaskProgressCard(
-                    title = presentation.title,
-                    stageLabel = state.processing.stage
-                        .takeUnless { it == CreateProcessingStage.IDLE }
-                        ?.displayLabel,
-                    statusMessage = state.statusMessage,
-                    progress = state.processing.progress.takeIf { state.isProcessing },
-                    checkpointMessage = presentation.checkpointMessage,
-                    description = presentation.guidance,
-                    modifier = Modifier.fillMaxWidth(),
-                    stageModifier = Modifier.testTag("create-processing-stage"),
-                    progressModifier = Modifier.testTag("create-progress"),
-                    statusModifier = Modifier.testTag("create-status"),
-                    checkpointModifier = Modifier.testTag("create-checkpoint"),
-                    cancelModifier = Modifier.testTag("create-cancel"),
-                    stageContentDescription = "处理阶段：${state.processing.stage.displayLabel}",
-                    stageLiveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite,
-                    stageColor = if (state.processing.stage == CreateProcessingStage.FAILED) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        null
-                    },
-                    showCancel = state.isProcessing,
-                    cancelEnabled = state.processing.isCancellable,
-                    onCancel = { onEvent(CreateEvent.CancelProcessing) },
-                )
             }
         }
         if (!state.isProcessing && state.storedResultCount > 0) {
