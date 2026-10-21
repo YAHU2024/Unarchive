@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.theme.LocalSemanticColors
 import com.unarchive.android.ui.theme.UnarchiveDimensions
@@ -133,32 +134,39 @@ internal fun NavigationSettingsRow(
         title = title, description = description, onClick = onClick,
         modifier = modifier, enabled = enabled,
         trailingContent = {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            AppIcon(AppIcons.Chevron, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         },
     )
 }
 
 @Composable
-internal fun ChoiceSettingsRow(title: String, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
+internal fun ChoiceSettingsRow(title: String, selected: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onSelect: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)
+        modifier.fillMaxWidth().selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)
             .heightIn(min = UnarchiveDimensions.touchTarget).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        RadioButton(selected = selected, onClick = null, enabled = enabled)
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+        Box(Modifier.size(24.dp)) {
+            if (selected) AppIcon(AppIcons.Check, tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
 @Composable
-internal fun ToggleSettingsRow(title: String, checked: Boolean, enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
+internal fun ToggleSettingsRow(title: String, checked: Boolean, enabled: Boolean, modifier: Modifier = Modifier, description: String? = null, onCheckedChange: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+        modifier.fillMaxWidth().toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
             .heightIn(min = UnarchiveDimensions.touchTarget).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        CupertinoSwitchControl(checked = checked, enabled = enabled, onCheckedChange = null)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            description?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        CupertinoSwitchControl(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange,
+            modifier = Modifier.clearAndSetSemantics {})
     }
 }
 
@@ -187,8 +195,8 @@ internal fun ProvenanceRail(label: String, kind: ProvenanceKind, modifier: Modif
     val color = when (kind) { ProvenanceKind.Ai -> colors.ai; ProvenanceKind.User -> colors.user; ProvenanceKind.Source -> colors.source }
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.width(3.dp).heightIn(min = 24.dp).background(color, MaterialTheme.shapes.small))
-        Icon(
-            if (kind == ProvenanceKind.User) Icons.Filled.Edit else Icons.Filled.Info,
+        AppIcon(
+            if (kind == ProvenanceKind.User) AppIcons.Create else AppIcons.Info,
             contentDescription = null, tint = color, modifier = Modifier.size(18.dp),
         )
         Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge)

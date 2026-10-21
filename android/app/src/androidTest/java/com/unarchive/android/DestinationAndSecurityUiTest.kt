@@ -14,6 +14,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasTestTag
 import com.unarchive.android.asr.TranscriptSegment
 import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardStageState
@@ -328,6 +330,7 @@ class DestinationAndSecurityUiTest {
     @Test
     fun destinationActionsRemainReachableAtDoubleFontScale() {
         val card = card()
+        val events = mutableListOf<DestinationEvent>()
         val state = UnarchiveUiState(
             create = CreateUiState("", false, "", false, 0),
             notes = NotesUiState(1, 0, listOf(document().title), listOf(card), listOf(document())),
@@ -355,7 +358,7 @@ class DestinationAndSecurityUiTest {
                         state = state,
                         onCreateEvent = {},
                         onNotesEvent = {},
-                        onDestinationEvent = {},
+                        onDestinationEvent = events::add,
                         onMeEvent = {},
                         legacyTestContent = { _, _ -> Text("legacy test") },
                         legacyResultsContent = { _ -> Text("legacy results") },
@@ -368,7 +371,12 @@ class DestinationAndSecurityUiTest {
         }
 
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
-        composeRule.onNodeWithText("分享与去向").performClick()
+        composeRule.onNodeWithText("分享与去向").performScrollTo().performClick()
+        composeRule.runOnIdle {
+            assertEquals(listOf(DestinationEvent.OpenCard(card.cardId.value, card.cardVersion)), events)
+        }
+        // The larger Cupertino controls can put this lazy item outside composition.
+        composeRule.onNodeWithTag("destination-scroll").performScrollToNode(hasTestTag("destination-sync-ima"))
         composeRule.onNodeWithTag("destination-sync-ima").performScrollTo().assertIsDisplayed().assertIsEnabled()
         composeRule.onNodeWithText("管理凭据").performScrollTo().assertIsDisplayed()
     }

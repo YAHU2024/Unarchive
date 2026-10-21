@@ -11,8 +11,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,6 +27,7 @@ import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.ChoiceSettingsRow
 import com.unarchive.android.ui.components.CupertinoSwitchControl
+import com.unarchive.android.ui.components.CupertinoSlider
 import com.unarchive.android.ui.components.CupertinoTextField
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.PageHeader
@@ -90,7 +89,7 @@ internal fun SettingsScreen(
             }
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("VAD 最大段长：" + state.selectedVadMaxSeconds + " 秒（越小越精细，停顿更平滑）")
-                Slider(
+                CupertinoSlider(
                     value = state.selectedVadMaxSeconds.toFloat(),
                     onValueChange = { onEvent(SettingsEvent.SetVadMaxSeconds(it.roundToInt())) },
                     enabled = !state.isBusy, valueRange = 1f..30f, steps = 28,
@@ -129,19 +128,14 @@ internal fun LiquidGlassSettingsSection(
         modifier = Modifier.testTag("liquid-glass-section"),
         title = "界面效果",
     ) {
-        SettingsRow(
+        ToggleSettingsRow(
             title = "液态玻璃",
-            description = if (enabled) "用于顶栏、导航和重点卡片；正文保持稳定阅读面。"
+            description = if (enabled) "用于导航和短状态层；正文保持稳定阅读面。"
             else "已关闭，玻璃元素降级为不透明背景，适合性能较低的设备。",
+            checked = enabled,
             enabled = !isBusy,
-            trailingContent = {
-                CupertinoSwitchControl(
-                    modifier = Modifier.testTag("liquid-glass-switch"),
-                    checked = enabled,
-                    enabled = !isBusy,
-                    onCheckedChange = onEnabledChange,
-                )
-            },
+            modifier = Modifier.testTag("liquid-glass-switch"),
+            onCheckedChange = onEnabledChange,
         )
     }
 }
@@ -162,21 +156,19 @@ private fun SiliconFlowModelSettings(state: SettingsUiState, onEvent: (SettingsE
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         state.siliconFlowModels.forEachIndexed { index, model ->
-            Row(modifier = Modifier.fillMaxWidth().testTag("siliconflow-model-option-$index"), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(
-                    modifier = Modifier.testTag("siliconflow-model-radio-$index"),
-                    selected = model == state.selectedSiliconFlowModel,
-                    onClick = { onEvent(SettingsEvent.SelectSiliconFlowModel(model)) },
-                    enabled = !state.isBusy,
-                )
-                Text(model)
+            Column(Modifier.fillMaxWidth().testTag("siliconflow-model-option-$index")) {
+                ChoiceSettingsRow(model, model == state.selectedSiliconFlowModel, !state.isBusy,
+                    modifier = Modifier.testTag("siliconflow-model-radio-$index")) {
+                    onEvent(SettingsEvent.SelectSiliconFlowModel(model))
+                }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        AdaptiveActions {
             CupertinoTextField(
                 value = modelInput,
                 onValueChange = { modelInput = it },
-                modifier = Modifier.weight(1f).testTag("siliconflow-model-input"),
+                containerModifier = actionModifier,
+                modifier = Modifier.testTag("siliconflow-model-input"),
                 enabled = !state.isBusy,
                 singleLine = true,
                 label = "添加模型名称",
@@ -212,13 +204,10 @@ private fun StorageManagementSection(state: SettingsUiState, onEvent: (SettingsE
     Text("缓存预算：${formatStorageBytes(state.effectiveCacheBudgetBytes)}", style = MaterialTheme.typography.titleSmall)
     Text("预算只管理可重建缓存，不会自动删除模型、知识卡片或转录结果。", style = MaterialTheme.typography.bodySmall)
     listOf(0L to "自动（容量的 2%，1～4 GiB）", 1L to "1 GiB", 2L to "2 GiB", 4L to "4 GiB", 8L to "8 GiB").forEach { (gibibytes, label) ->
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(
-                selected = if (gibibytes == 0L) state.configuredCacheBudgetBytes == 0L else state.configuredCacheBudgetBytes == gibibytes * 1024L * 1024L * 1024L,
-                onClick = { if (gibibytes == 0L) onEvent(SettingsEvent.UseAutomaticCacheBudget) else onEvent(SettingsEvent.UsePresetCacheBudget(gibibytes)) },
-                enabled = !state.isBusy,
-            )
-            Text(label)
+        ChoiceSettingsRow(label,
+            selected = if (gibibytes == 0L) state.configuredCacheBudgetBytes == 0L else state.configuredCacheBudgetBytes == gibibytes * 1024L * 1024L * 1024L,
+            enabled = !state.isBusy) {
+            if (gibibytes == 0L) onEvent(SettingsEvent.UseAutomaticCacheBudget) else onEvent(SettingsEvent.UsePresetCacheBudget(gibibytes))
         }
     }
     CupertinoTextField(

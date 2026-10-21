@@ -107,7 +107,7 @@ android {
 
     sourceSets {
         if (sherpaEnabled) {
-            getByName("main").java.srcDir("src/sherpa/java")
+            getByName("main").kotlin.directories.add("src/sherpa/java")
         }
     }
 }

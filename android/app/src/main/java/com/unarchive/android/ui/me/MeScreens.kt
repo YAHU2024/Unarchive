@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.AppIcon
+import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.NavigationSettingsRow
 import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.PageHeader
@@ -80,7 +81,7 @@ internal fun MoreToolsScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             UnarchiveIconButton(onClick = onBack) {
-                AppIcon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                AppIcon(AppIcons.Back, contentDescription = "返回")
             }
             Text("更多工具", style = MaterialTheme.typography.titleLarge)
         }

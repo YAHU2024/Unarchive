@@ -17,7 +17,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import android.os.Build
-import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -56,6 +55,11 @@ internal object DisabledGlassRenderer : GlassRenderer {
 internal data class BackdropGlassRenderer(val liquid: Boolean) : GlassRenderer {
     @Composable
     override fun render(spec: GlassSurfaceSpec, content: @Composable () -> Unit) {
+        val backdrop = LocalChromeBackdrop.current
+        if (backdrop == null) {
+            DisabledGlassRenderer.render(spec, content)
+            return
+        }
         val colors = MaterialTheme.colorScheme
         val tokens = LocalLiquidGlassTokens.current
         val fillAlpha = if (spec.emphasized) tokens.emphasizedSurfaceAlpha else tokens.surfaceAlpha
@@ -63,7 +67,7 @@ internal data class BackdropGlassRenderer(val liquid: Boolean) : GlassRenderer {
         val backdropModifier = spec.modifier
             .border(BorderStroke(1.dp, colors.outlineVariant.copy(alpha = borderAlpha)), spec.shape)
             .drawBackdrop(
-                backdrop = emptyBackdrop(),
+                backdrop = backdrop,
                 shape = { spec.shape },
                 effects = {
                     blur(radius = if (spec.emphasized) 22f else 16f)
@@ -123,7 +127,7 @@ internal data class SimulatedGlassRenderer(val usesTransparency: Boolean) : Glas
 }
 
 internal fun glassRendererFor(mode: LiquidGlassMode, usesTransparency: Boolean): GlassRenderer =
-    when (mode) {
+    if (!usesTransparency && mode != LiquidGlassMode.Simulated) DisabledGlassRenderer else when (mode) {
         LiquidGlassMode.Disabled -> DisabledGlassRenderer
         LiquidGlassMode.Simulated -> SimulatedGlassRenderer(usesTransparency)
         LiquidGlassMode.Blur -> BackdropGlassRenderer(liquid = false)

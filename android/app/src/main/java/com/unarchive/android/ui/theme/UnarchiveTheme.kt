@@ -107,19 +107,18 @@ internal fun UnarchiveTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     liquidGlassEnabled: Boolean = true,
     motionPolicy: MotionPolicy = rememberSystemMotionPolicy(),
+    glassInputs: LiquidGlassInputs = rememberSystemGlassInputs(liquidGlassEnabled),
     content: @Composable () -> Unit,
 ) {
+    val policy = LiquidGlassPolicy.resolve(glassInputs.copy(userEnabled = liquidGlassEnabled))
     CompositionLocalProvider(
-        LocalLiquidGlassPolicy provides LiquidGlassPolicy.fromUserSetting(liquidGlassEnabled, Build.VERSION.SDK_INT),
+        LocalLiquidGlassPolicy provides policy,
         LocalMotionPolicy provides motionPolicy,
         LocalSemanticColors provides if (darkTheme) DarkSemanticColors else LightSemanticColors,
         LocalLiquidGlassTokens provides LiquidGlassTokens(),
-        LocalGlassRenderer provides run {
-            val policy = LiquidGlassPolicy.fromUserSetting(liquidGlassEnabled, Build.VERSION.SDK_INT)
-            glassRendererFor(policy.mode, policy.usesTransparency)
-        },
+        LocalGlassRenderer provides glassRendererFor(policy.mode, policy.usesTransparency),
     ) {
-        UnarchiveCupertinoTheme {
+        UnarchiveCupertinoTheme(darkTheme, if (darkTheme) DarkColors else LightColors) {
             MaterialTheme(
                 colorScheme = if (darkTheme) DarkColors else LightColors,
                 typography = AppTypography,

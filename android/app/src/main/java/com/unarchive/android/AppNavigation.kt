@@ -61,6 +61,8 @@ import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.batch.BatchCreateScreen
 import com.unarchive.android.ui.components.GlassDock
+import com.unarchive.android.ui.components.AppIcons
+import com.unarchive.android.ui.components.GlassScaffold
 import com.unarchive.android.ui.components.GlassDockItem
 import com.unarchive.android.ui.components.PageHeader
 import com.unarchive.android.ui.components.ReadingSurface
@@ -115,10 +117,10 @@ private data class MainDestination(
 )
 
 private val mainDestinations = listOf(
-    MainDestination(AppRoutes.CREATE, "创作", Icons.Filled.Edit),
-    MainDestination(AppRoutes.NOTES, "笔记", Icons.AutoMirrored.Filled.List),
-    MainDestination(AppRoutes.GRAPH, "图谱", Icons.Filled.Share),
-    MainDestination(AppRoutes.ME, "我的", Icons.Filled.AccountCircle),
+    MainDestination(AppRoutes.CREATE, "创作", AppIcons.Create),
+    MainDestination(AppRoutes.NOTES, "笔记", AppIcons.Notes),
+    MainDestination(AppRoutes.GRAPH, "图谱", AppIcons.Graph),
+    MainDestination(AppRoutes.ME, "我的", AppIcons.Me),
 )
 
 private fun isMainDestinationChange(initialRoute: String?, targetRoute: String?): Boolean =
@@ -169,7 +171,7 @@ internal fun UnarchiveNavigationHost(
         .firstOrNull { it.route == currentRoute }
         ?.route
 
-    Scaffold(
+    GlassScaffold(
         bottomBar = {
             if (selectedMainRoute != null) {
                 AppBottomNavigation(
@@ -180,7 +182,7 @@ internal fun UnarchiveNavigationHost(
                 )
             }
         },
-    ) { innerPadding ->
+    ) {
         NavHost(
             navController = navController,
             startDestination = AppRoutes.CREATE,
@@ -208,9 +210,7 @@ internal fun UnarchiveNavigationHost(
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
                 )
             },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
+            modifier = Modifier.fillMaxSize(),
         ) {
             composable(AppRoutes.CREATE) {
                 CreateScreen(

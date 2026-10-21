@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -58,6 +59,7 @@ internal fun GlassDock(
     // Reduced motion is synchronous; even a snap animation waits for a frame.
     val position = if (motion.animateLayout) animatedPosition else selectedIndex.toFloat()
     val shape = RoundedCornerShape(32.dp)
+    val itemHeight = dockItemHeight()
     GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
@@ -74,7 +76,7 @@ internal fun GlassDock(
             val itemWidth = (maxWidth - gap * (itemCount - 1)) / itemCount
             Box(
                 Modifier.offset(x = (itemWidth + gap) * position)
-                    .width(itemWidth).height(56.dp)
+                    .width(itemWidth).height(itemHeight)
                     .clip(RoundedCornerShape(26.dp))
                     .background(MaterialTheme.colorScheme.secondaryContainer)
                     .testTag("dock-selection-capsule"),
@@ -108,7 +110,7 @@ internal fun RowScope.GlassDockItem(
     Box(
         modifier = Modifier
             .weight(1f)
-            .height(56.dp)
+            .height(dockItemHeight())
             .clip(itemShape)
             .selectable(
                 selected = selected,
@@ -140,3 +142,6 @@ internal fun RowScope.GlassDockItem(
         }
     }
 }
+
+@Composable
+private fun dockItemHeight() = if (LocalDensity.current.fontScale >= 1.5f) 88.dp else 56.dp

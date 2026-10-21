@@ -37,8 +37,13 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.ui.theme.UnarchiveDimensions
+import io.github.alexzhirkevich.cupertino.ExperimentalCupertinoApi
+import io.github.alexzhirkevich.cupertino.section.CupertinoSection
+import io.github.alexzhirkevich.cupertino.section.SectionStyle
+import io.github.alexzhirkevich.cupertino.section.rememberSectionState
 
 /** A restrained grouped container with an optional section title. */
+@OptIn(ExperimentalCupertinoApi::class)
 @Composable
 internal fun InsetGroupedList(
     modifier: Modifier = Modifier,
@@ -56,11 +61,13 @@ internal fun InsetGroupedList(
                 style = MaterialTheme.typography.titleMedium,
             )
         }
-        Surface(
+        CupertinoSection(
             modifier = Modifier.fillMaxWidth(),
+            style = SectionStyle.InsetGrouped,
+            state = rememberSectionState(canCollapse = false),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Column(content = content)
         }
@@ -382,7 +389,7 @@ internal fun RecoveryCard(
         }
     }
     if (wrapSurface) {
-        GlassSurface(modifier = motionModifier, content = content)
+        ReadingSurface(modifier = motionModifier, content = content)
     } else {
         content()
     }
@@ -439,7 +446,7 @@ internal fun EmptyStateCard(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
-    GlassSurface(modifier = modifier, emphasized = true) {
+    ReadingSurface(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)

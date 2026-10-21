@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +48,7 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.AppIcon
+import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.CupertinoSegmentedControl
 import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.IosLikeFilterSegment
@@ -94,6 +97,7 @@ internal fun NotesScreen(
                 noteCount = state.noteCount,
                 materialCount = state.materialCount,
                 onRefresh = { onEvent(NotesEvent.Refresh) },
+                onOpenLibrary = onOpenLegacyNotes,
             )
         }
         item {
@@ -178,7 +182,9 @@ private fun NotesHeader(
     noteCount: Int,
     materialCount: Int,
     onRefresh: () -> Unit,
+    onOpenLibrary: () -> Unit,
 ) {
+    var moreExpanded by rememberSaveable { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
@@ -190,7 +196,23 @@ private fun NotesHeader(
                 .testTag("notes-refresh")
                 .semantics { contentDescription = "刷新笔记" },
         ) {
-            AppIcon(Icons.Filled.Refresh)
+            AppIcon(AppIcons.Refresh)
+        }
+        Box {
+            UnarchiveIconButton(
+                onClick = { moreExpanded = true },
+                modifier = Modifier.testTag("notes-more"),
+            ) { AppIcon(AppIcons.More, contentDescription = "更多") }
+            DropdownMenu(
+                expanded = moreExpanded,
+                onDismissRequest = { moreExpanded = false },
+                modifier = Modifier.testTag("notes-more-menu"),
+            ) {
+                DropdownMenuItem(
+                    text = { Text("打开完整笔记库") },
+                    onClick = { moreExpanded = false; onOpenLibrary() },
+                )
+            }
         }
     }
 }
@@ -308,7 +330,7 @@ private fun NotesLibraryCard(
                         onClick = { onOpenDestinations(document) },
                         modifier = actionModifier,
                     ) {
-                        AppIcon(Icons.Filled.Share)
+                        AppIcon(AppIcons.Share)
                         Spacer(Modifier.width(6.dp))
                         Text("分享与去向")
                     }
@@ -331,7 +353,7 @@ private fun NotesLibraryCard(
                         .fillMaxWidth()
                         .testTag("notes-generate-${item.stableKey}"),
                 ) {
-                    AppIcon(Icons.Filled.Edit)
+                    AppIcon(AppIcons.Create)
                     Spacer(Modifier.width(8.dp))
                     Text("生成笔记草稿")
                 }

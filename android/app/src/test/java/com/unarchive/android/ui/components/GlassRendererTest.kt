@@ -25,7 +25,7 @@ class GlassRendererTest {
             glassRendererFor(LiquidGlassMode.Blur, usesTransparency = true),
         )
         assertEquals(
-            BackdropGlassRenderer(liquid = true),
+            DisabledGlassRenderer,
             glassRendererFor(LiquidGlassMode.LiquidGlass, usesTransparency = false),
         )
     }
