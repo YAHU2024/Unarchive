@@ -114,7 +114,8 @@ class LiquidGlassLayoutUiTest(private val dark: Boolean, private val glass: Bool
         val events = mutableListOf<CreateEvent>()
         var opened = 0
         rule.setContent { Theme { CreateScreen(state, events::add, { opened++ }, {}, onOpenDeveloperTest = {}) } }
-        rule.onNodeWithTag("create-generate-note").assertIsNotEnabled()
+        rule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
+        rule.onNodeWithTag("create-generate-note").assertDoesNotExist()
         rule.onNodeWithTag("create-cancel").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
         screenshot("create-processing")
         rule.runOnIdle {

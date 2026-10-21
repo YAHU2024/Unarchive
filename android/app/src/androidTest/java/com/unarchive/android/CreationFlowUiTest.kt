@@ -4,7 +4,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
 import org.junit.Assert.assertEquals
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -41,9 +40,7 @@ class CreationFlowUiTest {
 
         rule.onNodeWithTag("create-input-surface").assertIsDisplayed()
         rule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
-        rule.runOnIdle {
-            assertEquals(0, rule.onAllNodesWithTag("create-video-reference").fetchSemanticsNodes().size)
-        }
+        assertEquals(0, rule.onAllNodesWithTag("create-video-reference").fetchSemanticsNodes().size)
     }
 
     @Test
@@ -67,7 +64,8 @@ class CreationFlowUiTest {
                 }, {}, {}, onOpenDeveloperTest = {})
             }
         }
-        rule.onNodeWithTag("create-generate-note").assertIsNotEnabled()
+        rule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
+        rule.onNodeWithTag("create-generate-note").assertDoesNotExist()
         rule.onNodeWithTag("create-cancel").performScrollTo().performClick()
         rule.onNodeWithTag("create-checkpoint").performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("create-cancel").assertDoesNotExist()

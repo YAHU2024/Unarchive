@@ -1,17 +1,13 @@
 package com.unarchive.android.ui.create
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -62,8 +58,7 @@ internal fun CreateScreen(
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     val presentation = state.presentation()
     val motion = LocalMotionPolicy.current
-    val showTaskState = state.isProcessing || state.statusMessage.isNotBlank() ||
-        state.processing.stage != CreateProcessingStage.IDLE
+    val showTaskState = state.isProcessing || state.processing.stage != CreateProcessingStage.IDLE
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -78,40 +73,46 @@ internal fun CreateScreen(
             )
         }
         item {
-            AnimatedContent(
-                targetState = showTaskState,
-                modifier = Modifier.fillMaxWidth().testTag("create-input-surface"),
-                transitionSpec = {
-                    if (!motion.animateLayout) EnterTransition.None togetherWith ExitTransition.None
-                    else fadeIn() togetherWith fadeOut()
-                },
-                label = "create-input-task-transition",
-            ) { taskState ->
-                if (taskState) {
-                    TaskProgressCard(
-                        title = presentation.title,
-                        stageLabel = state.processing.stage
-                            .takeUnless { it == CreateProcessingStage.IDLE }
-                            ?.displayLabel,
-                        statusMessage = state.statusMessage,
-                        progress = state.processing.progress.takeIf { state.isProcessing },
-                        checkpointMessage = presentation.checkpointMessage,
-                        description = presentation.guidance,
-                        modifier = Modifier.fillMaxWidth(),
-                        stageModifier = Modifier.testTag("create-processing-stage"),
-                        progressModifier = Modifier.testTag("create-progress"),
-                        statusModifier = Modifier.testTag("create-status"),
-                        checkpointModifier = Modifier.testTag("create-checkpoint"),
-                        cancelModifier = Modifier.testTag("create-cancel"),
-                        stageContentDescription = "处理阶段：${state.processing.stage.displayLabel}",
-                        stageLiveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite,
-                        stageColor = if (state.processing.stage == CreateProcessingStage.FAILED) {
-                            MaterialTheme.colorScheme.error
-                        } else null,
-                        showCancel = state.isProcessing,
-                        cancelEnabled = state.processing.isCancellable,
-                        onCancel = { onEvent(CreateEvent.CancelProcessing) },
-                    )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("create-input-surface")
+                    .then(if (motion.animateLayout) Modifier.animateContentSize() else Modifier),
+            ) {
+                if (showTaskState) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TaskProgressCard(
+                            title = presentation.title,
+                            stageLabel = state.processing.stage
+                                .takeUnless { it == CreateProcessingStage.IDLE }
+                                ?.displayLabel,
+                            statusMessage = state.statusMessage,
+                            progress = state.processing.progress.takeIf { state.isProcessing },
+                            checkpointMessage = presentation.checkpointMessage,
+                            description = presentation.guidance,
+                            modifier = Modifier.fillMaxWidth(),
+                            stageModifier = Modifier.testTag("create-processing-stage"),
+                            progressModifier = Modifier.testTag("create-progress"),
+                            statusModifier = Modifier.testTag("create-status"),
+                            checkpointModifier = Modifier.testTag("create-checkpoint"),
+                            cancelModifier = Modifier.testTag("create-cancel"),
+                            stageContentDescription = "处理阶段：${state.processing.stage.displayLabel}",
+                            stageLiveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite,
+                            stageColor = if (state.processing.stage == CreateProcessingStage.FAILED) {
+                                MaterialTheme.colorScheme.error
+                            } else null,
+                            showCancel = state.isProcessing,
+                            cancelEnabled = state.processing.isCancellable,
+                            onCancel = { onEvent(CreateEvent.CancelProcessing) },
+                        )
+                        if (state.processing.stage == CreateProcessingStage.RECOVERABLE && !state.isProcessing) {
+                            UnarchiveButton(
+                                onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
+                                enabled = state.videoReference.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth().testTag("create-generate-note"),
+                            ) { Text("继续生成笔记草稿") }
+                        }
+                    }
                 } else {
                     ReadingSurface(
                         modifier = Modifier.fillMaxWidth(),

@@ -210,6 +210,7 @@ private fun NotesHeader(
             ) {
                 DropdownMenuItem(
                     text = { Text("打开完整笔记库") },
+                    modifier = Modifier.testTag("notes-more-open-library"),
                     onClick = { moreExpanded = false; onOpenLibrary() },
                 )
             }

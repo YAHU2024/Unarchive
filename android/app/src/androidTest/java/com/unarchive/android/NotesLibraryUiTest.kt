@@ -91,7 +91,7 @@ class NotesLibraryUiTest {
 
         composeRule.onNodeWithTag("notes-more").performClick()
         composeRule.onNodeWithTag("notes-more-menu").assertIsDisplayed()
-        composeRule.onNodeWithText("打开完整笔记库").performClick()
+        composeRule.onNodeWithTag("notes-more-open-library").performClick()
         composeRule.runOnIdle { assertEquals(1, openedLibrary) }
     }
 
