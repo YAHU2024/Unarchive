@@ -57,8 +57,9 @@ internal fun InsetGroupedList(
         title?.let {
             Text(
                 text = it,
-                modifier = Modifier.padding(horizontal = 4.dp).semantics { heading() },
-                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp).semantics { heading() },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         CupertinoSection(
@@ -66,7 +67,7 @@ internal fun InsetGroupedList(
             style = SectionStyle.InsetGrouped,
             state = rememberSectionState(canCollapse = false),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
         ) {
             Column(content = content)

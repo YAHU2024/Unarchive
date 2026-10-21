@@ -203,9 +203,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
             LogTab(onBack)
         },
         securityContent = { onBack ->
-            LegacyRouteFrame(title = "安全设置", onBack = onBack) {
-                SecuritySettingsScreen(vm, onBack)
-            }
+            SecuritySettingsScreen(vm, onBack)
         },
         noteDocumentRepository = vm.noteDocumentRepository,
         noteContentRepository = vm.noteContentRepository,

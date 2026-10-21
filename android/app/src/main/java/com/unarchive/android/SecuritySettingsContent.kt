@@ -95,6 +95,7 @@ internal fun SecuritySettingsContent(
         }
     }
 
+    com.unarchive.android.ui.components.SecondaryPage("安全设置", onBack, "security-back", "security-title") {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -104,17 +105,6 @@ internal fun SecuritySettingsContent(
             .semantics { contentDescription = "安全设置列表，可上下滚动" },
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text(
-                "安全设置",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("security-title")
-                    .semantics { heading() },
-            )
-            UnarchiveTextButton(onClick = onBack, modifier = Modifier.testTag("security-back")) { Text("返回") }
-        }
         Text("凭据使用 Android Keystore 加密保存；页面只显示配置状态，不回显密钥。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("security-privacy-note"))
 
         InsetGroupedList(title = "DeepSeek") {
@@ -239,6 +229,8 @@ internal fun SecuritySettingsContent(
             )
         }
     }
+}
+
 }
 
 @Composable

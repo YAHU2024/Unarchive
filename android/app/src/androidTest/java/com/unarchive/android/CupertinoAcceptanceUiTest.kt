@@ -109,7 +109,7 @@ class CupertinoAcceptanceUiTest(private val dark: Boolean, private val scale: Fl
                         checked = it; changes++
                     }
                     CupertinoButton(onClick = {}) {
-                        expected = MaterialTheme.colorScheme.onPrimary
+                        expected = Color.White
                         actual = LocalContentColor.current
                         Text("主操作")
                     }

@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.lazy.LazyColumn
+import com.unarchive.android.ui.components.RootPage
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,13 +59,14 @@ internal fun CreateScreen(
     val presentation = state.presentation()
     val motion = LocalMotionPolicy.current
     val showTaskState = state.isProcessing || state.processing.stage != CreateProcessingStage.IDLE
-    LazyColumn(
+    RootPage(
+        title = "创作",
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 20.dp)
             .testTag("create-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
     ) {
         item {
             LibraryPageHeader(title = "创作", description =

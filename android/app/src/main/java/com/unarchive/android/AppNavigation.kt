@@ -61,6 +61,7 @@ import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.batch.BatchCreateScreen
 import com.unarchive.android.ui.components.GlassDock
+import com.unarchive.android.ui.components.LocalDockClearance
 import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.GlassScaffold
 import com.unarchive.android.ui.components.GlassDockItem
@@ -392,7 +393,7 @@ private fun GraphScreen(
             .padding(horizontal = 16.dp)
             .testTag("graph-scroll"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp + LocalDockClearance.current),
     ) {
         item {
             PageHeader("图谱", "从一篇笔记出发，查看可解释、可编辑的一跳连接。")
@@ -703,21 +704,7 @@ internal fun LegacyRouteFrame(
     onBack: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            UnarchiveIconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
-                )
-            }
-            Text(title, style = MaterialTheme.typography.titleLarge)
-        }
+    com.unarchive.android.ui.components.SecondaryPage(title, onBack) {
         content()
     }
 }

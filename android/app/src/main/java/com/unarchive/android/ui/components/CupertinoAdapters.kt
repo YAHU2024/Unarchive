@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
+import com.unarchive.android.ui.theme.LocalSemanticColors
 import io.github.alexzhirkevich.cupertino.CupertinoButton as LibraryCupertinoButton
 import io.github.alexzhirkevich.cupertino.CupertinoButtonDefaults
 import io.github.alexzhirkevich.cupertino.CupertinoIconButton
@@ -57,8 +58,8 @@ internal fun CupertinoButton(
         modifier = modifier.heightIn(min = 48.dp),
         enabled = enabled,
         colors = CupertinoButtonDefaults.filledButtonColors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
+            containerColor = LocalSemanticColors.current.actionFill,
+            contentColor = Color.White,
         ),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
         content = content,

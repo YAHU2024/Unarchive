@@ -12,12 +12,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -26,16 +25,14 @@ import com.unarchive.android.storage.AppStorageSnapshot
 import com.unarchive.android.storage.formatStorageBytes
 import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.ChoiceSettingsRow
-import com.unarchive.android.ui.components.CupertinoSwitchControl
 import com.unarchive.android.ui.components.CupertinoSlider
 import com.unarchive.android.ui.components.CupertinoTextField
 import com.unarchive.android.ui.components.InsetGroupedList
-import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.SecondaryPage
 import com.unarchive.android.ui.components.SettingsRow
 import com.unarchive.android.ui.components.ToggleSettingsRow
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveSecondaryButton
-import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.SettingsEvent
 import com.unarchive.android.ui.state.SettingsUiState
 import java.io.File
@@ -50,6 +47,7 @@ internal fun SettingsScreen(
     onEvent: (SettingsEvent) -> Unit,
     onBack: () -> Unit,
 ) {
+    SecondaryPage("设置", onBack, "settings-back") {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -58,11 +56,6 @@ internal fun SettingsScreen(
             .testTag("settings-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            UnarchiveTextButton(onClick = onBack, modifier = Modifier.testTag("settings-back")) { Text("返回") }
-            Text("设置", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            androidx.compose.foundation.layout.Spacer(Modifier.padding(32.dp))
-        }
         InsetGroupedList(title = "平台账号") {
             Column(Modifier.padding(16.dp)) { loginContent() }
         }
@@ -118,6 +111,8 @@ internal fun SettingsScreen(
             }
         }
     }
+}
+
 }
 
 @Composable
