@@ -83,7 +83,8 @@ internal fun MoreToolsScreen(
             UnarchiveIconButton(onClick = onBack) {
                 AppIcon(AppIcons.Back, contentDescription = "返回")
             }
-            Text("更多工具", style = MaterialTheme.typography.titleLarge)
+            Text("更多工具", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            androidx.compose.foundation.layout.Spacer(Modifier.padding(20.dp))
         }
         Column(
             modifier = Modifier

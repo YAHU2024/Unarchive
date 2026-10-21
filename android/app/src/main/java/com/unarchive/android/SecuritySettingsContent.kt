@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -37,6 +36,8 @@ import com.unarchive.android.security.SecuritySettingsState
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveSecondaryButton
 import com.unarchive.android.ui.components.UnarchiveTextButton
+import com.unarchive.android.ui.components.GlassBottomSheet
+import com.unarchive.android.ui.components.InsetGroupedList
 
 /**
  * Presentational security settings surface. State contains presence-only facts;
@@ -61,14 +62,12 @@ internal fun SecuritySettingsContent(
 
     if (state.pendingClear != null) {
         val profile = state.pendingClear!!
-        AlertDialog(
-            onDismissRequest = {
-                localNotice = null
-                onCancelClear()
-            },
-            title = { Text("确认清除${profile.displayLabel()}凭据？") },
-            text = { Text("这会移除本机保存的该服务凭据；本地笔记和转写结果不会删除。") },
-            confirmButton = {
+        GlassBottomSheet(
+            title = "确认清除${profile.displayLabel()}凭据？",
+            onDismissRequest = { localNotice = null; onCancelClear() },
+        ) {
+            Text("这会移除本机保存的该服务凭据；本地笔记和转写结果不会删除。")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 UnarchiveButton(
                     onClick = {
                         localNotice = null
@@ -85,45 +84,41 @@ internal fun SecuritySettingsContent(
                     },
                     modifier = Modifier.testTag("security-clear-confirm"),
                 ) { Text("确认清除") }
-            },
-            dismissButton = {
                 UnarchiveTextButton(
                     onClick = {
                         localNotice = null
                         onCancelClear()
                     },
                     modifier = Modifier.testTag("security-clear-cancel"),
-                ) { Text("取消") }
-            },
-        )
+                ) { Text("取消", color = MaterialTheme.colorScheme.error) }
+            }
+        }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 20.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .testTag("security-scroll")
             .semantics { contentDescription = "安全设置列表，可上下滚动" },
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text(
                 "安全设置",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier
+                    .weight(1f)
                     .testTag("security-title")
                     .semantics { heading() },
             )
-            UnarchiveTextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack, modifier = Modifier.testTag("security-back")) { Text("返回") }
         }
-        Text(
-            "凭据使用 Android Keystore 加密保存。页面只显示是否已配置，不回显密钥或内部服务编号。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag("security-privacy-note"),
-        )
+        Text("凭据使用 Android Keystore 加密保存；页面只显示配置状态，不回显密钥。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("security-privacy-note"))
 
-        SecureCredentialField(
+        InsetGroupedList(title = "DeepSeek") {
+          SecureCredentialField(
             label = "DeepSeek API Key",
             credential = SecureCredential.DEEPSEEK_API_KEY,
             configured = state.presence(SecureCredential.DEEPSEEK_API_KEY).configured,
@@ -140,8 +135,8 @@ internal fun SecuritySettingsContent(
                 if (result is CredentialMutationResult.Saved) deepSeekInput = ""
             },
             onClear = { onRequestClear(SecurityProfile.DEEPSEEK) },
-        )
-        ConnectionRow(
+          )
+          ConnectionRow(
             profile = SecurityProfile.DEEPSEEK,
             status = state.connection[SecurityProfile.DEEPSEEK],
             canCheck = !state.presence(SecureCredential.DEEPSEEK_API_KEY).hasPendingInput,
@@ -149,11 +144,11 @@ internal fun SecuritySettingsContent(
                 localNotice = null
                 onCheckConnection(profile)
             },
-        )
+          )
+        }
 
-        HorizontalDivider()
-
-        SecureCredentialField(
+        InsetGroupedList(title = "SiliconFlow") {
+          SecureCredentialField(
             label = "SiliconFlow API Key",
             credential = SecureCredential.SILICONFLOW_API_KEY,
             configured = state.presence(SecureCredential.SILICONFLOW_API_KEY).configured,
@@ -170,8 +165,8 @@ internal fun SecuritySettingsContent(
                 if (result is CredentialMutationResult.Saved) siliconFlowInput = ""
             },
             onClear = { onRequestClear(SecurityProfile.SILICONFLOW) },
-        )
-        ConnectionRow(
+          )
+          ConnectionRow(
             profile = SecurityProfile.SILICONFLOW,
             status = state.connection[SecurityProfile.SILICONFLOW],
             canCheck = !state.presence(SecureCredential.SILICONFLOW_API_KEY).hasPendingInput,
@@ -179,11 +174,11 @@ internal fun SecuritySettingsContent(
                 localNotice = null
                 onCheckConnection(profile)
             },
-        )
+          )
+        }
 
-        HorizontalDivider()
-        Text("ima", style = MaterialTheme.typography.titleMedium)
-        SecureCredentialField(
+        InsetGroupedList(title = "ima") {
+          SecureCredentialField(
             label = "Client ID",
             credential = SecureCredential.IMA_CLIENT_ID,
             configured = state.presence(SecureCredential.IMA_CLIENT_ID).configured,
@@ -200,8 +195,8 @@ internal fun SecuritySettingsContent(
                 if (result is CredentialMutationResult.Saved) imaClientIdInput = ""
             },
             onClear = { onRequestClear(SecurityProfile.IMA) },
-        )
-        SecureCredentialField(
+          )
+          SecureCredentialField(
             label = "API Key",
             credential = SecureCredential.IMA_API_KEY,
             configured = state.presence(SecureCredential.IMA_API_KEY).configured,
@@ -218,8 +213,8 @@ internal fun SecuritySettingsContent(
                 if (result is CredentialMutationResult.Saved) imaApiKeyInput = ""
             },
             onClear = { onRequestClear(SecurityProfile.IMA) },
-        )
-        ConnectionRow(
+          )
+          ConnectionRow(
             profile = SecurityProfile.IMA,
             status = state.connection[SecurityProfile.IMA],
             canCheck = !state.presence(SecureCredential.IMA_CLIENT_ID).hasPendingInput &&
@@ -228,7 +223,8 @@ internal fun SecuritySettingsContent(
                 localNotice = null
                 onCheckConnection(profile)
             },
-        )
+          )
+        }
 
         (localNotice ?: state.notice?.safeMessage())?.let {
             Text(

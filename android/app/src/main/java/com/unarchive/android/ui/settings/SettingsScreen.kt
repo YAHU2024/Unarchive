@@ -35,6 +35,7 @@ import com.unarchive.android.ui.components.SettingsRow
 import com.unarchive.android.ui.components.ToggleSettingsRow
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveSecondaryButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.SettingsEvent
 import com.unarchive.android.ui.state.SettingsUiState
 import java.io.File
@@ -57,9 +58,10 @@ internal fun SettingsScreen(
             .testTag("settings-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            PageHeader("设置", modifier = Modifier.weight(1f))
-            UnarchiveSecondaryButton(onClick = onBack) { Text("返回") }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            UnarchiveTextButton(onClick = onBack, modifier = Modifier.testTag("settings-back")) { Text("返回") }
+            Text("设置", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            androidx.compose.foundation.layout.Spacer(Modifier.padding(32.dp))
         }
         InsetGroupedList(title = "平台账号") {
             Column(Modifier.padding(16.dp)) { loginContent() }
