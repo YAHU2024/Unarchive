@@ -78,7 +78,7 @@ internal fun GlassDock(
                 Modifier.offset(x = (itemWidth + gap) * position)
                     .width(itemWidth).height(itemHeight)
                     .clip(RoundedCornerShape(26.dp))
-                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .background(MaterialTheme.colorScheme.primaryContainer)
                     .testTag("dock-selection-capsule"),
             )
             Row(
@@ -102,7 +102,7 @@ internal fun RowScope.GlassDockItem(
     val colors = MaterialTheme.colorScheme
     val motion = LocalMotionPolicy.current
     val contentColor by animateColorAsState(
-        targetValue = if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant,
+        targetValue = if (selected) colors.primary else colors.onSurfaceVariant,
         animationSpec = tween(durationMillis = motion.shortDurationMillis),
         label = "dock-content",
     )

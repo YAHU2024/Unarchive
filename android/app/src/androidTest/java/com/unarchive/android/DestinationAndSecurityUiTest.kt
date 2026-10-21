@@ -1,5 +1,12 @@
 package com.unarchive.android
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import com.unarchive.android.card.FileNoteDocumentRepository
+import java.io.File
+import org.junit.Before
+import org.junit.After
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
@@ -53,6 +60,32 @@ import org.junit.Test
 class DestinationAndSecurityUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    private lateinit var fixtureDirectory: File
+    private lateinit var noteRepository: FileNoteDocumentRepository
+
+    @Before
+    fun prepareEditorRepository() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        fixtureDirectory = File(context.cacheDir, "destination-editor-route-${System.nanoTime()}")
+        noteRepository = FileNoteDocumentRepository(fixtureDirectory)
+        check(noteRepository.save(document()).isComplete)
+    }
+
+    @After
+    fun cleanEditorRepository() {
+        fixtureDirectory.deleteRecursively()
+    }
+
+    private fun openDestinationsFromSavedRow() {
+        val document = document()
+        composeRule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}")
+            .performScrollTo().performClick()
+        composeRule.waitUntil(5_000L) {
+            composeRule.onAllNodesWithTag("note-editor-destinations").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("note-editor-destinations").performClick()
+    }
 
     @Test
     fun destinationPresentationCanRenderAndEmitEventsWithoutNavigationHost() {
@@ -154,12 +187,13 @@ class DestinationAndSecurityUiTest {
                     legacyLogContent = { _ -> Text("legacy log") },
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
+                    noteDocumentRepository = noteRepository,
                 )
             }
         }
 
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
-        composeRule.onNodeWithText("分享与去向").performClick()
+        openDestinationsFromSavedRow()
         composeRule.onNodeWithText("分享与去向").assertIsDisplayed()
         composeRule.onNodeWithText("本地笔记").assertIsDisplayed()
         composeRule.onNodeWithTag("destination-export").assertIsDisplayed()
@@ -195,12 +229,13 @@ class DestinationAndSecurityUiTest {
                     legacyLogContent = { _ -> Text("legacy log") },
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
+                    noteDocumentRepository = noteRepository,
                 )
             }
         }
 
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
-        composeRule.onNodeWithText("分享与去向").performClick()
+        openDestinationsFromSavedRow()
         composeRule.onNodeWithTag("destination-target-required").assertIsDisplayed()
         composeRule.onNodeWithTag("destination-sync-ima").assertIsNotEnabled()
     }
@@ -267,12 +302,13 @@ class DestinationAndSecurityUiTest {
                     legacyLogContent = { _ -> Text("legacy log") },
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
+                    noteDocumentRepository = noteRepository,
                 )
             }
         }
 
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
-        composeRule.onNodeWithText("分享与去向").performClick()
+        openDestinationsFromSavedRow()
         composeRule.onNodeWithTag("destination-knowledge-base").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("destination-knowledge-base-option-0").performClick()
         composeRule.onNodeWithTag("destination-folder").assertIsEnabled().performClick()
@@ -316,12 +352,13 @@ class DestinationAndSecurityUiTest {
                     legacyLogContent = { _ -> Text("legacy log") },
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
+                    noteDocumentRepository = noteRepository,
                 )
             }
         }
 
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
-        composeRule.onNodeWithText("分享与去向").performClick()
+        openDestinationsFromSavedRow()
         composeRule.onNodeWithText("知识库加载失败，请重试。").assertIsDisplayed()
         composeRule.onNodeWithText("文件夹加载失败，可重试或选择根目录。").assertIsDisplayed()
         composeRule.onNodeWithTag("destination-sync-ima").assertIsNotEnabled()
@@ -365,13 +402,14 @@ class DestinationAndSecurityUiTest {
                         legacyLogContent = { _ -> Text("legacy log") },
                         legacySettingsContent = { _ -> Text("legacy settings") },
                         securityContent = { _ -> Text("security") },
+                        noteDocumentRepository = noteRepository,
                     )
                 }
             }
         }
 
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
-        composeRule.onNodeWithText("分享与去向").performScrollTo().performClick()
+        openDestinationsFromSavedRow()
         composeRule.runOnIdle {
             assertEquals(listOf(DestinationEvent.OpenCard(card.cardId.value, card.cardVersion)), events)
         }

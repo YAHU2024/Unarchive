@@ -147,14 +147,14 @@ class LiquidGlassLayoutUiTest(private val dark: Boolean, private val glass: Bool
     @Test fun opaqueEmptyStateOffersExplicitNextStepAndRetainsFilterSemantics() {
         val events = mutableListOf<NotesEvent>()
         var opened = 0
-        rule.setContent { Theme { NotesScreen(NotesUiState(0, 0, emptyList()), events::add, { opened++ }, {}, {}) } }
+        rule.setContent { Theme { NotesScreen(NotesUiState(0, 0, emptyList()), events::add, {}, {}, {}, onOpenCreate = { opened++ }) } }
         rule.onNodeWithTag("notes-filter-saved").performScrollTo().performClick().assertIsSelected()
         screenshot("notes-empty-saved")
         rule.onNodeWithTag("notes-empty-action").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
         rule.onNodeWithTag("notes-filter-recent").assertIsSelected()
         rule.runOnIdle { assertTrue(events.isEmpty()); assertEquals(0, opened) }
         rule.onNodeWithTag("notes-empty-action").performScrollTo().performClick()
-        rule.runOnIdle { assertEquals(listOf(NotesEvent.Refresh), events); assertEquals(1, opened) }
+        rule.runOnIdle { assertTrue(events.isEmpty()); assertEquals(1, opened) }
     }
 
     @Test fun meAppearanceUsesExplicitExistingRouteWithoutDeveloperSideEffects() {

@@ -138,7 +138,7 @@ class NoteCoverUiTest {
             "notes-cover-status-${stableKey(document)}",
             useUnmergedTree = true,
         ).performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("编辑").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("notes-item-${stableKey(document)}").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("note-editor-title").assertIsDisplayed()
     }
 
@@ -172,7 +172,7 @@ class NoteCoverUiTest {
             .performScrollTo()
             .assertIsDisplayed()
             .performClick()
-        composeRule.onNodeWithText("编辑").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("notes-item-${stableKey(document)}").performScrollTo().assertIsDisplayed()
         composeRule.runOnIdle {
             assertEquals(1, events.filterIsInstance<NotesEvent.RetryCover>().size)
         }

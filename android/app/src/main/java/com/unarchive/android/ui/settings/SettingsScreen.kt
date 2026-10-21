@@ -27,6 +27,7 @@ import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.ChoiceSettingsRow
 import com.unarchive.android.ui.components.CupertinoSlider
 import com.unarchive.android.ui.components.CupertinoTextField
+import com.unarchive.android.ui.components.NavigationSettingsRow
 import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.SecondaryPage
 import com.unarchive.android.ui.components.SettingsRow
@@ -46,8 +47,9 @@ internal fun SettingsScreen(
     loginContent: @Composable () -> Unit,
     onEvent: (SettingsEvent) -> Unit,
     onBack: () -> Unit,
+    section: SettingsSection? = null,
 ) {
-    SecondaryPage("设置", onBack, "settings-back") {
+    SecondaryPage(section?.label ?: "设置", onBack, "settings-back") {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -56,10 +58,10 @@ internal fun SettingsScreen(
             .testTag("settings-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        InsetGroupedList(title = "平台账号") {
+        if (section == null || section == SettingsSection.Account) InsetGroupedList(title = "平台账号") {
             Column(Modifier.padding(16.dp)) { loginContent() }
         }
-        InsetGroupedList(title = "识别引擎", modifier = Modifier.testTag("settings-engine-group")) {
+        if (section == null || section == SettingsSection.Engine) InsetGroupedList(title = "识别引擎", modifier = Modifier.testTag("settings-engine-group")) {
             Column(Modifier.selectableGroup()) {
                 state.availableEngines.forEach { engine ->
                     ChoiceSettingsRow(engine.displayName, engine == state.selectedEngine, !state.isBusy) {
@@ -69,7 +71,7 @@ internal fun SettingsScreen(
             }
             Column(Modifier.padding(16.dp)) { SiliconFlowModelSettings(state, onEvent) }
         }
-        InsetGroupedList(title = "处理选项") {
+        if (section == null || section == SettingsSection.Processing) InsetGroupedList(title = "处理选项") {
             Column(Modifier.selectableGroup()) {
                 Text("推理线程数（性能对比用）", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall)
                 listOf(null to "自动（按大核数）", 1 to "1", 2 to "2", 4 to "4").forEach { (threads, label) ->
@@ -94,18 +96,10 @@ internal fun SettingsScreen(
                 onEvent(SettingsEvent.SetThinkingEnabled(it))
             }
         }
-        InsetGroupedList(title = "服务凭据") {
-            SettingsRow("安全设置", "凭据编辑、连接检查和清除确认已集中到“安全设置”。此页不显示或修改密钥。")
-        }
-        LiquidGlassSettingsSection(
-            enabled = state.liquidGlassEnabled,
-            onEnabledChange = { onEvent(SettingsEvent.SetLiquidGlassEnabled(it)) },
-            isBusy = state.isBusy,
-        )
-        InsetGroupedList(title = "本地存储") {
+        if (section == null || section == SettingsSection.Storage) InsetGroupedList(title = "本地存储") {
             Column(Modifier.padding(16.dp)) { StorageManagementSection(state, onEvent) }
         }
-        InsetGroupedList(title = "本地模型") {
+        if (section == null || section == SettingsSection.Models) InsetGroupedList(title = "本地模型") {
             Column(Modifier.padding(16.dp)) {
                 ModelManagementSection(modelsDirectory = modelsDirectory, enabled = !state.isBusy)
             }
@@ -113,6 +107,42 @@ internal fun SettingsScreen(
     }
 }
 
+}
+
+internal enum class SettingsSection(val label: String) {
+    Account("平台账号"), Engine("识别引擎"), Processing("处理选项"), Models("本地模型"), Storage("本地存储")
+}
+
+@Composable
+internal fun SettingsOverviewScreen(onBack: () -> Unit, onOpen: (SettingsSection) -> Unit) {
+    SecondaryPage("设置", onBack, "settings-back") {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp).testTag("settings-overview"), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            listOf("服务" to listOf(SettingsSection.Account, SettingsSection.Engine), "处理" to listOf(SettingsSection.Processing, SettingsSection.Models), "存储" to listOf(SettingsSection.Storage)).forEach { (title, sections) ->
+                InsetGroupedList(title = title) {
+                    sections.forEachIndexed { index, section ->
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = 16.dp))
+                        NavigationSettingsRow(section.label, if (section == SettingsSection.Account) "Bilibili" else "", { onOpen(section) }, Modifier.testTag("settings-open-${section.name}"))
+                    }
+                }
+            }
+            Text("缓存清理只作用于可重建文件。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+internal fun AppearanceScreen(state: SettingsUiState, onEvent: (SettingsEvent) -> Unit, onBack: () -> Unit) {
+    SecondaryPage("界面效果", onBack, "appearance-back") {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp).testTag("appearance-screen"), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            LiquidGlassSettingsSection(state.liquidGlassEnabled, { onEvent(SettingsEvent.SetLiquidGlassEnabled(it)) }, state.isBusy)
+            InsetGroupedList(title = "系统辅助选项") {
+                SettingsRow("动态效果", "跟随系统")
+                HorizontalDivider(Modifier.padding(start = 16.dp))
+                SettingsRow("透明度与对比度", "系统优先")
+            }
+            Text("系统高对比度、节电或设备性能限制时，自动使用不透明背景。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 @Composable

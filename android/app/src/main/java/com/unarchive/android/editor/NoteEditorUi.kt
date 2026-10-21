@@ -70,6 +70,7 @@ internal fun NoteEditorRoute(
     document: NoteDocument,
     repository: NoteDocumentRepository,
     onBack: () -> Unit,
+    onOpenDestinations: (() -> Unit)? = null,
     aiProposalGenerator: NoteDocumentAiProposalGenerator? = null,
     proposalRepository: NoteDocumentProposalRepository? = null,
 ) {
@@ -83,6 +84,7 @@ internal fun NoteEditorRoute(
         state = state,
         onEvent = editorViewModel::onEvent,
         onBack = onBack,
+            onOpenDestinations = onOpenDestinations,
         onRequestAiProposal = { editorViewModel.onEvent(NoteEditorEvent.RequestAiProposal) },
         onOpenSource = { sourceRef ->
             val startSeconds = (sourceRef.startMs ?: 0L).coerceAtLeast(0L) / 1_000L
@@ -100,6 +102,7 @@ internal fun NoteEditorScreen(
     state: NoteEditorUiState,
     onEvent: (NoteEditorEvent) -> Unit,
     onBack: () -> Unit,
+    onOpenDestinations: (() -> Unit)? = null,
     onOpenSource: (NoteSourceRef) -> Unit = {},
     onRequestAiProposal: () -> Unit = {},
 ) {
@@ -119,6 +122,10 @@ internal fun NoteEditorScreen(
                     }
                 },
                 actions = {
+                    if (onOpenDestinations != null) UnarchiveIconButton(onClick = onOpenDestinations, enabled = !state.isDirty && state.saveState in setOf(NoteEditorSaveState.CLEAN, NoteEditorSaveState.SAVED), modifier = Modifier.testTag("note-editor-destinations").semantics { contentDescription = if (!state.isDirty && state.saveState in setOf(NoteEditorSaveState.CLEAN, NoteEditorSaveState.SAVED)) "分享与去向" else "分享与去向，请先保存到本机" }) {
+                        com.unarchive.android.ui.components.AppIcon(com.unarchive.android.ui.components.AppIcons.Share, contentDescription = "分享与去向")
+                    }
+
                     UnarchiveIconButton(
                         onClick = onRequestAiProposal,
                         enabled = state.aiProposalState != NoteAiProposalState.RUNNING &&

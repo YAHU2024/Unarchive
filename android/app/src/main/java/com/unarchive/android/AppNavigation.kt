@@ -95,6 +95,10 @@ internal object AppRoutes {
     const val NOTES = "notes"
     const val GRAPH = "graph"
     const val ME = "me"
+    const val APPEARANCE = "me/appearance"
+    const val SETTINGS = "me/settings"
+    const val SETTINGS_DETAIL = "me/settings/{section}"
+    const val SECURITY_DETAIL = "security/{profile}"
     const val MORE_TOOLS = "more-tools"
     const val NOTE_EDITOR = "notes/{platform}/{videoId}/{cardVersion}/edit"
     const val DESTINATIONS = "destinations/{platform}/{videoId}/{cardVersion}"
@@ -118,9 +122,9 @@ private data class MainDestination(
 )
 
 private val mainDestinations = listOf(
-    MainDestination(AppRoutes.CREATE, "创作", AppIcons.Create),
+    MainDestination(AppRoutes.CREATE, "创作", AppIcons.Add),
     MainDestination(AppRoutes.NOTES, "笔记", AppIcons.Notes),
-    MainDestination(AppRoutes.GRAPH, "图谱", AppIcons.Graph),
+    MainDestination(AppRoutes.GRAPH, "图谱", AppIcons.GraphNodes),
     MainDestination(AppRoutes.ME, "我的", AppIcons.Me),
 )
 
@@ -154,6 +158,10 @@ internal fun UnarchiveNavigationHost(
             UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
+    settingsDetailContent: (@Composable (section: com.unarchive.android.ui.settings.SettingsSection, onBack: () -> Unit) -> Unit)? = null,
+    appearanceContent: (@Composable (onBack: () -> Unit) -> Unit)? = null,
+    securityDetailContent: (@Composable (profile: com.unarchive.android.security.SecurityProfile, onBack: () -> Unit) -> Unit)? = null,
+    securityOverviewContent: (@Composable (onBack: () -> Unit, onOpen: (com.unarchive.android.security.SecurityProfile) -> Unit) -> Unit)? = null,
     securityContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("安全设置暂不可用")
@@ -234,6 +242,7 @@ internal fun UnarchiveNavigationHost(
                 NotesScreen(
                     state = state.notes,
                     onEvent = onNotesEvent,
+                    onOpenCreate = { navController.navigateMainDestination(AppRoutes.CREATE) },
                     onOpenLegacyNotes = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
                     onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
                     onOpenDestinations = { document ->
@@ -270,6 +279,10 @@ internal fun UnarchiveNavigationHost(
                         aiProposalGenerator = markdownAiProposalGenerator,
                         aiProposalRepository = markdownAiProposalRepository,
                         onBack = { navController.popBackStack() },
+                        onOpenDestinations = {
+                            onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                            navController.navigate(AppRoutes.destinations(document))
+                        },
                         assetResolver = if (card != null && knowledgeCardRepository != null) {
                             cardAssetMarkdownResolver(card, knowledgeCardRepository)
                         } else {
@@ -284,6 +297,10 @@ internal fun UnarchiveNavigationHost(
                         aiProposalGenerator = aiProposalGenerator,
                         proposalRepository = proposalRepository,
                         onBack = { navController.popBackStack() },
+                        onOpenDestinations = {
+                            onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                            navController.navigate(AppRoutes.destinations(document))
+                        },
                     )
                 }
             }
@@ -319,7 +336,9 @@ internal fun UnarchiveNavigationHost(
                     onEvent = onMeEvent,
                     onOpenSecurity = { navController.navigate(AppRoutes.SECURITY) },
                     onOpenMoreTools = { navController.navigate(AppRoutes.MORE_TOOLS) },
-                    onOpenAppearance = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
+                    onOpenAppearance = { navController.navigate(AppRoutes.APPEARANCE) },
+                    onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) },
+                    noteCount = state.notes.noteCount,
                 )
             }
             composable(AppRoutes.MORE_TOOLS) {
@@ -346,8 +365,26 @@ internal fun UnarchiveNavigationHost(
             composable(AppRoutes.LEGACY_SETTINGS) {
                 legacySettingsContent { navController.popBackStack() }
             }
+            composable(AppRoutes.APPEARANCE) {
+                if (appearanceContent != null) appearanceContent { navController.popBackStack() }
+                else legacySettingsContent { navController.popBackStack() }
+            }
+            composable(AppRoutes.SETTINGS) {
+                com.unarchive.android.ui.settings.SettingsOverviewScreen({ navController.popBackStack() }) { section -> navController.navigate("me/settings/${section.name}") }
+            }
+            composable(AppRoutes.SETTINGS_DETAIL) { entry ->
+                val section = com.unarchive.android.ui.settings.SettingsSection.entries.firstOrNull { it.name == entry.arguments?.getString("section") }
+                if (section != null && settingsDetailContent != null) settingsDetailContent(section) { navController.popBackStack() }
+                else legacySettingsContent { navController.popBackStack() }
+            }
             composable(AppRoutes.SECURITY) {
-                securityContent { navController.popBackStack() }
+                if (securityOverviewContent != null) securityOverviewContent({ navController.popBackStack() }) { profile -> navController.navigate("security/${profile.name}") }
+                else securityContent { navController.popBackStack() }
+            }
+            composable(AppRoutes.SECURITY_DETAIL) { entry ->
+                val profile = com.unarchive.android.security.SecurityProfile.entries.firstOrNull { it.name == entry.arguments?.getString("profile") }
+                if (profile != null && securityDetailContent != null) securityDetailContent(profile) { navController.popBackStack() }
+                else securityContent { navController.popBackStack() }
             }
         }
     }

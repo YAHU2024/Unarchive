@@ -132,13 +132,12 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
         }
         screenshot("create")
         rule.onNodeWithTag("create-generate-note").performScrollTo().performClick()
-        rule.onNodeWithTag("create-screen").performScrollToNode(hasTestTag("create-batch-create"))
-        rule.onNodeWithTag("create-batch-create").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
-        rule.onNodeWithText("开发者测试").performScrollTo().performClick()
-        rule.onNodeWithText("查看笔记").performScrollTo().performClick()
+        rule.onNodeWithTag("create-batch-create").assertHeightIsAtLeast(48.dp).performClick()
+        rule.onNodeWithText("开发者测试").assertDoesNotExist()
+        rule.onNodeWithTag("create-review-results").performScrollTo().performClick()
         rule.runOnIdle {
             assertEquals(listOf(CreateEvent.GenerateNoteDraft), events)
-            assertEquals(listOf("batch", "developer", "notes"), opened)
+            assertEquals(listOf("batch", "notes"), opened)
         }
         screenshot("create-navigation")
     }
@@ -159,7 +158,7 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
     }
 
     @Test
-    fun savedNoteKeepsEditorAndDestinationActionsReachable() {
+    fun savedNoteWholeRowOpensEditorWithoutDuplicatedDestinationAction() {
         val card = fixtureCard()
         val document = fixtureContent(card).structuredMetadata
         val opened = mutableListOf<String>()
@@ -172,9 +171,11 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
             }
         }
         rule.runOnIdle { assertTrue(opened.isEmpty()) }
-        rule.onNodeWithText("编辑", useUnmergedTree = true).performScrollTo().assertIsDisplayed().performClick()
-        rule.onNodeWithText("分享与去向", useUnmergedTree = true).performScrollTo().assertIsDisplayed().performClick()
-        rule.runOnIdle { assertEquals(listOf("editor", "destination"), opened) }
+        rule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}")
+            .performScrollTo().assertIsDisplayed().performClick()
+        rule.onNodeWithText("编辑", useUnmergedTree = true).assertDoesNotExist()
+        rule.onNodeWithText("分享与去向", useUnmergedTree = true).assertDoesNotExist()
+        rule.runOnIdle { assertEquals(listOf("editor"), opened) }
         screenshot("notes-saved")
     }
 
@@ -198,20 +199,23 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
     @Test
     fun groupedSettingsKeepWholeRowActionsAndBusyState() {
         val events = mutableListOf<SettingsEvent>()
+        var appearance by mutableStateOf(false)
         var state by mutableStateOf(SettingsUiState(availableEngines = listOf(AsrEngineKind.SILICONFLOW_CLOUD)))
         val context = ApplicationProvider.getApplicationContext<Context>()
         rule.setContent {
-            Theme { SettingsScreen(state, File(context.cacheDir, "d-c6-missing-model-fixture"), {}, events::add, {}) }
+            Theme { if (appearance) com.unarchive.android.ui.settings.AppearanceScreen(state, events::add, {}) else SettingsScreen(state, File(context.cacheDir, "d-c6-missing-model-fixture"), {}, events::add, {}) }
         }
         screenshot("settings")
         rule.onNodeWithText("启用 VAD 静音检测（实验性，可能崩溃）").performScrollTo().performClick()
         rule.onNodeWithText("思考模式（更慢但更深入）").performScrollTo().performClick()
+        rule.runOnIdle { appearance = true }
         rule.onNodeWithTag("liquid-glass-switch").performScrollTo().performClick()
         rule.runOnIdle {
             assertEquals(listOf(SettingsEvent.SetEnableVad(true), SettingsEvent.SetThinkingEnabled(true), SettingsEvent.SetLiquidGlassEnabled(false)), events)
             state = state.copy(isBusy = true)
         }
         rule.onNodeWithTag("liquid-glass-switch").assertIsNotEnabled()
+        rule.runOnIdle { appearance = false }
         rule.onNodeWithText("思考模式（更慢但更深入）").performScrollTo().assertIsNotEnabled()
         rule.onNodeWithText("刷新存储信息").performScrollTo().assertIsDisplayed().performClick()
         rule.onNodeWithText("系统存储设置").performScrollTo().assertIsDisplayed().performClick()

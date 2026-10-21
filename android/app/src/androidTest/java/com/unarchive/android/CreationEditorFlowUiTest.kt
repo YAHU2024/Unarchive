@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -124,7 +125,7 @@ class CreationEditorFlowUiTest {
         back(commit = true)
         rule.onNodeWithTag("create-screen").assertIsDisplayed()
         rule.onNodeWithTag("bottom-nav-notes").performClick()
-        rule.onNodeWithText("编辑").performScrollTo().performClick()
+        rule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}").performScrollTo().performClick()
         waitForEditor()
         rule.onNodeWithTag("markdown-editor-edit-tab").performClick()
         rule.onNodeWithTag("markdown-editor-source").assertTextContains("# 已确认笔记\n\n本地正式正文")
@@ -256,8 +257,10 @@ class CreationEditorFlowUiTest {
             }
         }
         rule.onNodeWithTag("bottom-nav-notes").performClick()
-        rule.onNodeWithText("本地已保存").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("分享与去向").performScrollTo().performClick()
+        rule.onNodeWithContentDescription("本地已保存").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}").performScrollTo().performClick()
+        waitForEditor()
+        rule.onNodeWithTag("note-editor-destinations").performClick()
         rule.onNodeWithText("尚未配置 ima 凭据。本地笔记不受影响。").performScrollTo().assertIsDisplayed()
         rule.runOnIdle {
             state = state.copy(destinations = state.destinations.copy(
@@ -276,7 +279,6 @@ class CreationEditorFlowUiTest {
         rule.onNodeWithText("重试").performScrollTo().performClick()
         rule.runOnIdle { assertEquals(1, destinationEvents.filterIsInstance<DestinationEvent.RetryIma>().size) }
         back(commit = true)
-        rule.onNodeWithText("编辑").performScrollTo().performClick()
         waitForEditor()
         assertEquals(0L, v3.find(document.cardId, document.generation.cardVersion)?.markdownRevision)
     }

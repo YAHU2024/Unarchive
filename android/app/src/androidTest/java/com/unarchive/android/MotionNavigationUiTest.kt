@@ -21,6 +21,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
@@ -136,7 +137,7 @@ class MotionNavigationUiTest {
 
     private fun openToolsAndSettings() {
         rule.onNodeWithTag("bottom-nav-me").performClick()
-        rule.onNodeWithTag("me-more-tools").performClick()
+        rule.onNodeWithTag("me-more-tools").performScrollTo().performClick()
         rule.onNodeWithTag("more-tools-settings").performClick()
         rule.onNodeWithTag("motion-settings").assertIsDisplayed()
     }

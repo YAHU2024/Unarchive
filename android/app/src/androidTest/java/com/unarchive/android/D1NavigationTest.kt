@@ -133,7 +133,7 @@ class D1NavigationTest {
         }
 
         composeRule.onNodeWithTag("bottom-nav-me").performClick()
-        composeRule.onNodeWithTag("me-more-tools").performClick()
+        composeRule.onNodeWithTag("me-more-tools").performScrollTo().performClick()
         composeRule.onNodeWithText("更多工具").assertIsDisplayed()
 
         composeRule.onNodeWithTag("more-tools-test").performClick()
@@ -173,7 +173,7 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithText("开始生成笔记草稿").performClick()
+        composeRule.onNodeWithTag("create-generate-note").performClick()
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.GenerateNoteDraft), events)
@@ -197,7 +197,7 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithTag("create-batch-create").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("create-batch-create").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("batch-create-screen").assertIsDisplayed()
         composeRule.onNodeWithText("批量创作").assertIsDisplayed()
     }
@@ -420,7 +420,7 @@ class D1NavigationTest {
                     legacyTestContent = { _, _ -> Text("legacy test") },
                     legacyResultsContent = { _ -> Text("legacy results") },
                     legacyLogContent = { _ -> Text("legacy log") },
-                    legacySettingsContent = { onBack ->
+                    appearanceContent = { onBack ->
                         LegacyRouteFrame(title = "legacy settings", onBack = onBack) {
                             Text("界面效果设置样板", Modifier.testTag("appearance-settings"))
                         }

@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** Header measurement is local to its root page; no screen state or navigation ownership. */
 internal val LocalRootTitleHeight = staticCompositionLocalOf<(Int) -> Unit> { {} }
@@ -88,6 +89,7 @@ internal fun SecondaryPage(title: String, onBack: () -> Unit, backTag: String = 
 
 @Composable
 private fun PageTopBar(title: String, onBack: (() -> Unit)? = null, backTag: String = "page-back", tag: String, actions: @Composable RowScope.() -> Unit = {}) {
+    val titleScale = LocalDensity.current.fontScale.coerceAtMost(1.25f) / LocalDensity.current.fontScale
     var actionWidth by remember { mutableStateOf(0) }
     val titleInset = with(LocalDensity.current) { actionWidth.toDp() }.coerceAtLeast(64.dp)
     Box(Modifier.fillMaxWidth().heightIn(min = 48.dp).background(MaterialTheme.colorScheme.background)) {
@@ -96,7 +98,7 @@ private fun PageTopBar(title: String, onBack: (() -> Unit)? = null, backTag: Str
         }
         Row(Modifier.align(Alignment.CenterEnd).onSizeChanged { actionWidth = it.width }, content = actions)
         if (title.isNotEmpty()) Text(
-            title, style = MaterialTheme.typography.titleMedium,
+            title, style = MaterialTheme.typography.titleMedium.copy(fontSize = (17f * titleScale).sp, lineHeight = (24f * titleScale).sp),
             textAlign = TextAlign.Center,
             modifier = Modifier.align(Alignment.Center).padding(horizontal = titleInset, vertical = 10.dp)
                 .testTag(tag).semantics { heading() },

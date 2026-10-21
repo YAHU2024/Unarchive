@@ -53,6 +53,7 @@ internal fun SecuritySettingsContent(
     onCancelClear: () -> Unit,
     onConfirmClear: () -> ClearResult,
     onCheckConnection: (SecurityProfile) -> Unit,
+    profile: SecurityProfile? = null,
 ) {
     var deepSeekInput by remember { mutableStateOf("") }
     var siliconFlowInput by remember { mutableStateOf("") }
@@ -95,7 +96,7 @@ internal fun SecuritySettingsContent(
         }
     }
 
-    com.unarchive.android.ui.components.SecondaryPage("安全设置", onBack, "security-back", "security-title") {
+    com.unarchive.android.ui.components.SecondaryPage(profile?.displayLabel() ?: "安全设置", onBack, "security-back", "security-title") {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -107,7 +108,7 @@ internal fun SecuritySettingsContent(
     ) {
         Text("凭据使用 Android Keystore 加密保存；页面只显示配置状态，不回显密钥。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("security-privacy-note"))
 
-        InsetGroupedList(title = "DeepSeek") {
+        if (profile == null || profile == SecurityProfile.DEEPSEEK) InsetGroupedList(title = "凭据与连接") {
           SecureCredentialField(
             label = "DeepSeek API Key",
             credential = SecureCredential.DEEPSEEK_API_KEY,
@@ -137,7 +138,7 @@ internal fun SecuritySettingsContent(
           )
         }
 
-        InsetGroupedList(title = "SiliconFlow") {
+        if (profile == null || profile == SecurityProfile.SILICONFLOW) InsetGroupedList(title = "凭据与连接") {
           SecureCredentialField(
             label = "SiliconFlow API Key",
             credential = SecureCredential.SILICONFLOW_API_KEY,
@@ -167,7 +168,7 @@ internal fun SecuritySettingsContent(
           )
         }
 
-        InsetGroupedList(title = "ima") {
+        if (profile == null || profile == SecurityProfile.IMA) InsetGroupedList(title = "凭据与连接") {
           SecureCredentialField(
             label = "Client ID",
             credential = SecureCredential.IMA_CLIENT_ID,
@@ -245,7 +246,7 @@ private fun SecureCredentialField(
 ) {
     val presenceLabel = if (configured) "已配置" else "未配置"
     Column(
-        modifier = Modifier.semantics {
+        modifier = Modifier.padding(16.dp).semantics {
             contentDescription = "$label，$presenceLabel，新值输入已掩码"
         },
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -280,6 +281,7 @@ private fun ConnectionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
             .testTag("security-connection-${profile.name.lowercase()}")
             .semantics { contentDescription = "${profile.displayLabel()}连接状态：$statusText" },
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -297,7 +299,7 @@ private fun saveMessage(result: CredentialMutationResult): String = when (result
     is CredentialMutationResult.Failed -> "保存失败，请稍后重试。"
 }
 
-private fun SecurityProfile.displayLabel(): String = when (this) {
+internal fun SecurityProfile.displayLabel(): String = when (this) {
     SecurityProfile.DEEPSEEK -> "DeepSeek"
     SecurityProfile.SILICONFLOW -> "SiliconFlow"
     SecurityProfile.IMA -> "ima"

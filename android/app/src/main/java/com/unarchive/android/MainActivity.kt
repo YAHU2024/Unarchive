@@ -57,6 +57,25 @@ class MainActivity : ComponentActivity() {
 private fun UnarchiveApp(vm: UnarchiveViewModel) {
     val state = vm.toUnarchiveUiState()
     val context = LocalContext.current
+    val onSettingsEvent: (SettingsEvent) -> Unit = { event ->
+                    when (event) {
+                        is SettingsEvent.SelectEngine -> vm.setEngine(event.engine)
+                        is SettingsEvent.SelectSiliconFlowModel -> vm.selectSiliconFlowModel(event.model)
+                        is SettingsEvent.AddSiliconFlowModel -> vm.addSiliconFlowModel(event.model)
+                        is SettingsEvent.SetThreads -> vm.setThreads(event.threads)
+                        is SettingsEvent.SetEnableVad -> vm.setEnableVad(event.enabled)
+                        is SettingsEvent.SetVadMaxSeconds -> vm.selectedVadMaxSeconds = event.seconds
+                        is SettingsEvent.SetThinkingEnabled -> vm.updateThinkingEnabled(event.enabled)
+                        is SettingsEvent.SetLiquidGlassEnabled -> vm.updateLiquidGlassEnabled(event.enabled)
+                        SettingsEvent.RefreshStorage -> vm.refreshStorageStats()
+                        SettingsEvent.OpenSystemStorageSettings -> vm.openSystemStorageSettings()
+                        SettingsEvent.ClearRebuildableCache -> vm.clearRebuildableCache()
+                        SettingsEvent.UseAutomaticCacheBudget -> vm.useAutomaticCacheBudget()
+                        is SettingsEvent.UsePresetCacheBudget -> vm.usePresetCacheBudget(event.gibibytes)
+                        is SettingsEvent.CustomCacheBudgetChanged -> vm.customCacheBudgetInput = event.value
+                        SettingsEvent.SaveCustomCacheBudget -> vm.saveCustomCacheBudget()
+                    }
+                }
     UnarchiveNavigationHost(
         state = state,
         aiProposalGenerator = vm.noteDocumentAiProposalGenerator(),
@@ -143,25 +162,32 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
                     )
                 },
                 onBack = onBack,
-                onEvent = { event ->
-                    when (event) {
-                        is SettingsEvent.SelectEngine -> vm.setEngine(event.engine)
-                        is SettingsEvent.SelectSiliconFlowModel -> vm.selectSiliconFlowModel(event.model)
-                        is SettingsEvent.AddSiliconFlowModel -> vm.addSiliconFlowModel(event.model)
-                        is SettingsEvent.SetThreads -> vm.setThreads(event.threads)
-                        is SettingsEvent.SetEnableVad -> vm.setEnableVad(event.enabled)
-                        is SettingsEvent.SetVadMaxSeconds -> vm.selectedVadMaxSeconds = event.seconds
-                        is SettingsEvent.SetThinkingEnabled -> vm.updateThinkingEnabled(event.enabled)
-                        is SettingsEvent.SetLiquidGlassEnabled -> vm.updateLiquidGlassEnabled(event.enabled)
-                        SettingsEvent.RefreshStorage -> vm.refreshStorageStats()
-                        SettingsEvent.OpenSystemStorageSettings -> vm.openSystemStorageSettings()
-                        SettingsEvent.ClearRebuildableCache -> vm.clearRebuildableCache()
-                        SettingsEvent.UseAutomaticCacheBudget -> vm.useAutomaticCacheBudget()
-                        is SettingsEvent.UsePresetCacheBudget -> vm.usePresetCacheBudget(event.gibibytes)
-                        is SettingsEvent.CustomCacheBudgetChanged -> vm.customCacheBudgetInput = event.value
-                        SettingsEvent.SaveCustomCacheBudget -> vm.saveCustomCacheBudget()
-                    }
+                onEvent = onSettingsEvent,
+            )
+        },
+        settingsDetailContent = { section, onBack ->
+            SettingsScreen(
+                state = state.settings,
+                section = section,
+                modelsDirectory = java.io.File(vm.getApplication<android.app.Application>().filesDir, "models"),
+                loginContent = {
+                    BilibiliLoginSection(
+                        authStore = vm.authStore,
+                        loginClient = vm.loginClient,
+                        loggedIn = vm.loggedIn,
+                        onLoggedIn = vm::onLoggedIn,
+                        onLoggedOut = vm::onLoggedOut,
+                    )
                 },
+                onBack = onBack,
+                onEvent = onSettingsEvent,
+            )
+        },
+        appearanceContent = { onBack ->
+            com.unarchive.android.ui.settings.AppearanceScreen(
+                state = state.settings,
+                onBack = onBack,
+                onEvent = onSettingsEvent,
             )
         },
         onGraphEvent = { event ->
@@ -202,6 +228,8 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         legacyLogContent = { onBack ->
             LogTab(onBack)
         },
+        securityOverviewContent = { onBack, onOpen -> SecuritySettingsOverviewScreen(vm, onBack, onOpen) },
+        securityDetailContent = { profile, onBack -> SecuritySettingsScreen(vm, onBack, profile) },
         securityContent = { onBack ->
             SecuritySettingsScreen(vm, onBack)
         },

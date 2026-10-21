@@ -1,7 +1,9 @@
 package com.unarchive.android.ui.create
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,38 +13,35 @@ import androidx.compose.animation.animateContentSize
 import com.unarchive.android.ui.components.RootPage
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.unarchive.android.card.NoteBlockType
 import com.unarchive.android.card.NoteDocument
-import com.unarchive.android.card.NoteGenerationState
 import com.unarchive.android.card.SingleCardRecoveryState
+import com.unarchive.android.ui.components.AppIcon
+import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.GlassBottomSheet
 import com.unarchive.android.ui.components.CupertinoTextField
-import com.unarchive.android.ui.components.InsetGroupedList
-import com.unarchive.android.ui.components.NavigationSettingsRow
 import com.unarchive.android.ui.components.LibraryPageHeader
-import com.unarchive.android.ui.components.ProvenanceKind
-import com.unarchive.android.ui.components.ProvenanceRail
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.RecoveryCard
-import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
 import com.unarchive.android.ui.components.UnarchiveButton
-import com.unarchive.android.ui.components.UnarchiveSecondaryButton
 import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateUiState
+import com.unarchive.android.ui.state.formatNotesUpdatedAt
 import com.unarchive.android.ui.state.displayLabel
 import com.unarchive.android.ui.theme.LocalMotionPolicy
 
@@ -58,7 +57,8 @@ internal fun CreateScreen(
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     val presentation = state.presentation()
     val motion = LocalMotionPolicy.current
-    val showTaskState = state.isProcessing || state.processing.stage != CreateProcessingStage.IDLE
+    var editingSource by rememberSaveable(state.isProcessing) { mutableStateOf(false) }
+    val showTaskState = state.isProcessing || (!editingSource && state.processing.stage != CreateProcessingStage.IDLE)
     RootPage(
         title = "创作",
         modifier = Modifier
@@ -67,14 +67,16 @@ internal fun CreateScreen(
             .testTag("create-screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+        actions = {
+            UnarchiveTextButton(onOpenBatchCreate, Modifier.testTag("create-batch-create")) { Text("批量") }
+        },
     ) {
         item {
-            LibraryPageHeader(title = "创作", description =
-                "从一段视频开始，留下可以复习的知识。",
-            )
+            LibraryPageHeader(title = "创作")
         }
         item {
-            Box(
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("create-input-surface")
@@ -106,51 +108,105 @@ internal fun CreateScreen(
                             cancelEnabled = state.processing.isCancellable,
                             onCancel = { onEvent(CreateEvent.CancelProcessing) },
                         )
-                        if (state.processing.stage == CreateProcessingStage.RECOVERABLE && !state.isProcessing) {
+                        if (!state.isProcessing && state.processing.stage in setOf(
+                                CreateProcessingStage.RECOVERABLE, CreateProcessingStage.FAILED, CreateProcessingStage.CANCELLED,
+                            )) {
                             UnarchiveButton(
                                 onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
                                 enabled = state.videoReference.isNotBlank(),
                                 modifier = Modifier.fillMaxWidth().testTag("create-generate-note"),
-                            ) { Text("继续生成笔记草稿") }
+                            ) { Text(if (state.processing.stage == CreateProcessingStage.RECOVERABLE) "继续生成笔记草稿" else "重试生成") }
+                        }
+                        if (!state.isProcessing) {
+                            UnarchiveTextButton(
+                                onClick = { editingSource = true },
+                                modifier = Modifier.testTag("create-edit-source"),
+                            ) { Text(if (state.processing.stage == CreateProcessingStage.COMPLETED) "添加其他视频" else "修改视频输入") }
                         }
                     }
                 } else {
+                    Text("添加 B 站视频", style = MaterialTheme.typography.titleLarge)
                     ReadingSurface(
                         modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(20.dp),
+                        contentPadding = PaddingValues(16.dp),
+                    ) {
+                        CupertinoTextField(
+                            value = state.videoReference,
+                            onValueChange = { onEvent(CreateEvent.VideoReferenceChanged(it)) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("create-video-reference")
+                                .semantics { contentDescription = "B站视频链接或BV号" },
+                            placeholder = "视频链接或 BV 号",
+                            enabled = !state.isProcessing,
+                            singleLine = false,
+                            minLines = 3,
+                        )
+                    }
+                    UnarchiveButton(
+                        onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
+                        enabled = state.videoReference.isNotBlank() && !state.isProcessing,
+                        modifier = Modifier.fillMaxWidth().testTag("create-generate-note"),
+                    ) {
+                        Text(
+                            if (state.processing.stage == CreateProcessingStage.RECOVERABLE &&
+                                state.processing.checkpointSegmentCount > 0
+                            ) "继续生成笔记草稿" else "生成笔记",
+                        )
+                    }
+                }
+                if (state.hasRecovery) {
+                    RecoveryCard(
+                        title = "发现未完成任务",
+                        statusLabel = "已保留可以继续使用的处理中成果。",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("create-batch-recovery"),
+                        actionLabel = "继续处理",
+                        primaryAction = false,
+                        actionModifier = Modifier.testTag("create-resume-batch"),
+                        onAction = { onEvent(CreateEvent.ResumeBatch) },
+                    )
+                }
+                if (state.recoveries.isNotEmpty()) {
+                    ReadingSurface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("create-single-card-recoveries"),
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ProvenanceRail("来源 · B 站视频", ProvenanceKind.Source)
-                            Text("添加 B 站视频", style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                "支持 BV 号、av 号或完整链接。先保留本地基础笔记，再按配置使用 AI 整理；确认后在编辑器正式保存。",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            CupertinoTextField(
-                                value = state.videoReference,
-                                onValueChange = { onEvent(CreateEvent.VideoReferenceChanged(it)) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("create-video-reference")
-                                    .semantics { contentDescription = "B站视频链接或BV号" },
-                                label = "BV 号 / B站链接",
-                                placeholder = "输入 BV 号或完整链接",
-                                enabled = !state.isProcessing,
-                                singleLine = false,
-                                minLines = 2,
-                            )
-                            UnarchiveButton(
-                                onClick = { onEvent(CreateEvent.GenerateNoteDraft) },
-                                enabled = state.videoReference.isNotBlank() && !state.isProcessing,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("create-generate-note"),
-                            ) {
-                                Text(
-                                    if (state.processing.stage == CreateProcessingStage.RECOVERABLE &&
-                                        state.processing.checkpointSegmentCount > 0
-                                    ) "继续生成笔记草稿" else "开始生成笔记草稿",
+                            Text("未完成的笔记生成", style = MaterialTheme.typography.titleMedium)
+                            state.recoveries.forEach { recovery ->
+                                RecoveryCard(
+                                    title = recovery.title,
+                                    statusLabel = when {
+                                        recovery.state == SingleCardRecoveryState.RECOVERING ->
+                                            "恢复中 · ${recovery.stageLabel}"
+                                        recovery.errorMessage != null ->
+                                            "上次失败 · ${recovery.stageLabel}"
+                                        else -> "已中断 · ${recovery.stageLabel}"
+                                    },
+                                    statusTone = if (recovery.errorMessage != null) {
+                                        StatusBannerTone.ERROR
+                                    } else {
+                                        StatusBannerTone.NEUTRAL
+                                    },
+                                    errorMessage = recovery.errorMessage,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("create-recovery-${recovery.operationId}"),
+                                    wrapSurface = false,
+                                    primaryAction = false,
+                                    actionLabel = if (recovery.state == SingleCardRecoveryState.RECOVERING) {
+                                        "恢复中..."
+                                    } else {
+                                        "继续生成"
+                                    },
+                                    actionEnabled = recovery.canResume && !state.isProcessing,
+                                    actionModifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("create-recovery-resume-${recovery.operationId}"),
+                                    onAction = { recoveryToConfirm = recovery.operationId },
                                 )
                             }
                         }
@@ -158,126 +214,66 @@ internal fun CreateScreen(
                 }
             }
         }
-        if (!state.isProcessing && state.storedResultCount > 0) {
-            item {
-                UnarchiveSecondaryButton(
-                    onClick = onOpenNotes,
-                    modifier = Modifier.fillMaxWidth().testTag("create-review-results"),
-                ) { Text("查看笔记与保留素材") }
-            }
-        }
-        if (state.hasRecovery) {
-            item {
-                RecoveryCard(
-                    title = "发现未完成任务",
-                    statusLabel = "已保留可以继续使用的处理中成果。",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("create-batch-recovery"),
-                    actionLabel = "继续处理",
-                    primaryAction = false,
-                    actionModifier = Modifier.testTag("create-resume-batch"),
-                    onAction = { onEvent(CreateEvent.ResumeBatch) },
-                )
-            }
-        }
-        if (state.recoveries.isNotEmpty()) {
-            item {
-                ReadingSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("create-single-card-recoveries"),
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("未完成的笔记生成", style = MaterialTheme.typography.titleMedium)
-                        state.recoveries.forEach { recovery ->
-                            RecoveryCard(
-                                title = recovery.title,
-                                statusLabel = when {
-                                    recovery.state == SingleCardRecoveryState.RECOVERING ->
-                                        "恢复中 · ${recovery.stageLabel}"
-                                    recovery.errorMessage != null ->
-                                        "上次失败 · ${recovery.stageLabel}"
-                                    else -> "已中断 · ${recovery.stageLabel}"
-                                },
-                                statusTone = if (recovery.errorMessage != null) {
-                                    StatusBannerTone.ERROR
-                                } else {
-                                    StatusBannerTone.NEUTRAL
-                                },
-                                errorMessage = recovery.errorMessage,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("create-recovery-${recovery.operationId}"),
-                                wrapSurface = false,
-                                primaryAction = false,
-                                actionLabel = if (recovery.state == SingleCardRecoveryState.RECOVERING) {
-                                    "恢复中..."
-                                } else {
-                                    "继续生成"
-                                },
-                                actionEnabled = recovery.canResume && !state.isProcessing,
-                                actionModifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("create-recovery-resume-${recovery.operationId}"),
-                                onAction = { recoveryToConfirm = recovery.operationId },
-                            )
-                        }
-                    }
-                }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("最近笔记", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                UnarchiveTextButton(onOpenNotes, Modifier.testTag("create-review-results")) { Text("全部") }
             }
         }
         state.latestNoteDocument?.let { document ->
             item {
                 ReadingSurface(modifier = Modifier.fillMaxWidth().testTag("create-latest-local-note")) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("最近的知识笔记", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            document.title,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        SaveStateIndicator(
-                            label = when {
-                                document.editing.lastSaveError != null -> "最近笔记有保存错误"
-                                document.editing.dirty -> "最近笔记有未保存修改"
-                                else -> "最近笔记已在本地保存"
-                            },
-                            tone = if (document.editing.lastSaveError != null) {
-                                StatusBannerTone.ERROR
-                            } else {
-                                StatusBannerTone.NEUTRAL
-                            },
-                            detail = when (document.generation.state) {
-                                NoteGenerationState.COMPLETE -> "AI 整理内容可继续编辑；外部同步状态请在笔记库查看。"
-                                else -> "基础内容可继续编辑；AI 整理或外部同步未完成也不影响本地阅读。"
-                            },
-                        )
-                        UnarchiveSecondaryButton(
-                            onClick = { onOpenLatestNote(document) },
-                            enabled = !state.isProcessing,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("create-latest-note"),
-                        ) {
-                            Text("继续编辑笔记")
+                    val summary = (
+                        document.blocks.firstOrNull { it.type == NoteBlockType.SUMMARY && it.text.isNotBlank() }?.text
+                            ?: document.blocks.firstOrNull {
+                                (it.type == NoteBlockType.KEY_POINT || it.type == NoteBlockType.USER_NOTE) && it.text.isNotBlank()
+                            }?.text
+                            ?: document.sourceTranscript.take(3).joinToString(" ") { it.text }
+                        ).trim().replace(Regex("\\s+"), " ")
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onOpenLatestNote(document) }.testTag("create-latest-note"),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(document.title, style = MaterialTheme.typography.titleMedium,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (summary.isNotBlank()) Text(
+                                summary, style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                listOfNotNull(
+                                    formatNotesUpdatedAt(document.updatedAtEpochMs),
+                                    if (document.cardId.platform == "bilibili") "B 站" else null,
+                                ).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            when {
+                                document.editing.lastSaveError != null -> Text(
+                                    "本地保存失败", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "本地保存失败，修改仍保留，请进入笔记重试保存"
+                                    },
+                                )
+                                document.editing.dirty -> Text(
+                                    "有未保存修改", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
+                        AppIcon(AppIcons.Chevron, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
+        } ?: item {
+            Text("还没有笔记", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).testTag("create-recent-empty"))
         }
-        item {
-            InsetGroupedList(title = "继续创作", modifier = Modifier.testTag("create-navigation-group")) {
-                NavigationSettingsRow("查看笔记", "已保存笔记与待整理素材", onOpenNotes)
-                androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                NavigationSettingsRow(
-                    "批量创作", "从 B 站收藏夹选择多个视频", onOpenBatchCreate,
-                    modifier = Modifier.testTag("create-batch-create"),
-                )
-                androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                NavigationSettingsRow("开发者测试", "本地音频、处理测试与诊断", onOpenDeveloperTest)
-            }
-        }
+
     }
     val selectedRecovery = state.recoveries.firstOrNull { it.operationId == recoveryToConfirm }
     if (selectedRecovery != null) {
@@ -298,7 +294,7 @@ internal fun CreateScreen(
                 UnarchiveTextButton(
                     onClick = { recoveryToConfirm = null },
                     modifier = Modifier.testTag("create-recovery-dismiss"),
-                ) { Text("取消") }
+                ) { Text("取消", color = MaterialTheme.colorScheme.error) }
             }
         }
     }

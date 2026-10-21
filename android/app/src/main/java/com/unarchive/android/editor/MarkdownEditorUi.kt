@@ -73,6 +73,7 @@ internal fun MarkdownEditorMigrationRoute(
     contentRepository: FileNoteContentRepository,
     documentRepository: NoteDocumentRepository,
     onBack: () -> Unit,
+    onOpenDestinations: (() -> Unit)? = null,
     assetResolver: MarkdownAssetResolver = NoOpMarkdownAssetResolver,
     imageOptions: List<MarkdownEditorImageOption> = emptyList(),
     aiProposalGenerator: MarkdownAiProposalGenerator? = null,
@@ -93,6 +94,7 @@ internal fun MarkdownEditorMigrationRoute(
             cardVersion = document.generation.cardVersion,
             repository = contentRepository,
             onBack = onBack,
+            onOpenDestinations = onOpenDestinations,
             assetResolver = assetResolver,
             imageOptions = imageOptions,
             aiProposalGenerator = aiProposalGenerator,
@@ -120,6 +122,7 @@ internal fun MarkdownEditorRoute(
     cardVersion: String,
     repository: FileNoteContentRepository,
     onBack: () -> Unit,
+    onOpenDestinations: (() -> Unit)? = null,
     assetResolver: MarkdownAssetResolver = NoOpMarkdownAssetResolver,
     imageOptions: List<MarkdownEditorImageOption> = emptyList(),
     aiProposalGenerator: MarkdownAiProposalGenerator? = null,
@@ -140,6 +143,7 @@ internal fun MarkdownEditorRoute(
         state = state,
         onEvent = editorViewModel::onEvent,
         onBack = onBack,
+            onOpenDestinations = onOpenDestinations,
         assetResolver = assetResolver,
         imageOptions = imageOptions,
     )
@@ -285,6 +289,7 @@ internal fun MarkdownEditorScreen(
     state: MarkdownEditorUiState,
     onEvent: (MarkdownEditorEvent) -> Unit,
     onBack: () -> Unit,
+    onOpenDestinations: (() -> Unit)? = null,
     assetResolver: MarkdownAssetResolver = NoOpMarkdownAssetResolver,
     imageOptions: List<MarkdownEditorImageOption> = emptyList(),
 ) {
@@ -304,6 +309,10 @@ internal fun MarkdownEditorScreen(
                     }
                 },
                 actions = {
+                    if (onOpenDestinations != null) UnarchiveIconButton(onClick = onOpenDestinations, enabled = !state.isDirty && state.saveState in setOf(MarkdownEditorSaveState.CLEAN, MarkdownEditorSaveState.SAVED), modifier = Modifier.testTag("note-editor-destinations").semantics { contentDescription = if (!state.isDirty && state.saveState in setOf(MarkdownEditorSaveState.CLEAN, MarkdownEditorSaveState.SAVED)) "分享与去向" else "分享与去向，请先保存到本机" }) {
+                        com.unarchive.android.ui.components.AppIcon(com.unarchive.android.ui.components.AppIcons.Share, contentDescription = "分享与去向")
+                    }
+
                     UnarchiveIconButton(
                         onClick = { onEvent(MarkdownEditorEvent.RequestAiProposal) },
                         enabled = state.aiProposalState != MarkdownAiProposalState.RUNNING &&
