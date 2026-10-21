@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onAllNodesWithTag
+import org.junit.Assert.assertEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -17,7 +19,6 @@ import com.unarchive.android.ui.state.CreateProcessingUiState
 import com.unarchive.android.ui.state.CreateUiState
 import com.unarchive.android.ui.theme.MotionPolicy
 import com.unarchive.android.ui.theme.UnarchiveTheme
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -25,6 +26,25 @@ import org.junit.Test
 /** Small state/action gate; fixtures never invoke a provider or mutate user data. */
 class CreationFlowUiTest {
     @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun processingUsesTheCreateSurfaceAndHidesVideoInput() {
+        val state = CreateUiState(
+            "BV_example", true, "正在转写", false, 0,
+            processing = CreateProcessingUiState(CreateProcessingStage.TRANSCRIBING, 0.4f, 2, true),
+        )
+        rule.setContent {
+            UnarchiveTheme(motionPolicy = MotionPolicy.Reduced) {
+                CreateScreen(state, {}, {}, {}, onOpenDeveloperTest = {})
+            }
+        }
+
+        rule.onNodeWithTag("create-input-surface").assertIsDisplayed()
+        rule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
+        rule.runOnIdle {
+            assertEquals(0, rule.onAllNodesWithTag("create-video-reference").fetchSemanticsNodes().size)
+        }
+    }
 
     @Test
     fun reducedMotionCancellationKeepsCheckpointAndExplicitContinuationReachable() {

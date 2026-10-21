@@ -75,6 +75,27 @@ class NotesLibraryUiTest {
     }
 
     @Test
+    fun notesMoreMenuOpensAnchoredLibraryActionWithoutDuplicateRefresh() {
+        var openedLibrary = 0
+        composeRule.setContent {
+            UnarchiveTheme {
+                NotesScreen(
+                    state = state(document(), material()).notes,
+                    onEvent = {},
+                    onOpenLegacyNotes = { openedLibrary++ },
+                    onOpenEditor = {},
+                    onOpenDestinations = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("notes-more").performClick()
+        composeRule.onNodeWithTag("notes-more-menu").assertIsDisplayed()
+        composeRule.onNodeWithText("打开完整笔记库").performClick()
+        composeRule.runOnIdle { assertEquals(1, openedLibrary) }
+    }
+
+    @Test
     fun filtersNotesAndMaterialsAndExposesCompleteUserFacingMetadata() {
         val events = mutableListOf<NotesEvent>()
         val document = document()
