@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
@@ -61,12 +60,13 @@ import com.unarchive.android.editor.NoteEditorRoute
 import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.batch.BatchCreateScreen
 import com.unarchive.android.ui.components.GlassDock
-import com.unarchive.android.ui.components.LocalDockClearance
 import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.GlassScaffold
 import com.unarchive.android.ui.components.GlassDockItem
-import com.unarchive.android.ui.components.PageHeader
+import com.unarchive.android.ui.components.AppIcon
+import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.RootPage
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveIconButton
 import com.unarchive.android.ui.components.UnarchiveTextButton
@@ -305,7 +305,11 @@ internal fun UnarchiveNavigationHost(
                 }
             }
             composable(AppRoutes.GRAPH) {
-                GraphScreen(state = state.graph, onEvent = onGraphEvent)
+                GraphScreen(
+                    state = state.graph,
+                    onEvent = onGraphEvent,
+                    onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
+                )
             }
             composable(AppRoutes.DESTINATIONS) { entry ->
                 val card = state.destinations.card ?: run {
@@ -423,34 +427,31 @@ private fun NavHostController.navigateMainDestination(route: String) {
 private fun GraphScreen(
     state: GraphUiState,
     onEvent: (GraphEvent) -> Unit,
+    onOpenNotes: () -> Unit = {},
 ) {
-    LazyColumn(
+    RootPage(
+        title = "图谱",
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp)
             .testTag("graph-scroll"),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp + LocalDockClearance.current),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
     ) {
         item {
-            PageHeader("图谱", "从一篇笔记出发，查看可解释、可编辑的一跳连接。")
+            LibraryPageHeader("图谱")
         }
         if (state.noteDocuments.isEmpty()) {
             item {
-                ReadingSurface(modifier = Modifier.fillMaxWidth()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("局部关系", style = MaterialTheme.typography.titleLarge)
-                        Text("还没有可显示的关系", style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            "先从创作页生成一篇笔记，再添加第一个关联。",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                GraphEmptyState(onOpenNotes = onOpenNotes)
             }
         } else {
             item {
-                Text("当前笔记", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "当前笔记",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -474,7 +475,10 @@ private fun GraphScreen(
                 }
             }
             item {
-                GraphPreview(state)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("局部关系", style = MaterialTheme.typography.titleMedium)
+                    GraphPreview(state)
+                }
             }
             item {
                 Row(
@@ -483,7 +487,7 @@ private fun GraphScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
-                        Text("关系列表", style = MaterialTheme.typography.titleLarge)
+                        Text("关系列表", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "${state.relationCount} 条一跳关系 · 图形不可用时仍可操作",
                             style = MaterialTheme.typography.bodySmall,
@@ -543,6 +547,45 @@ private fun GraphScreen(
                     RelationListItem(item, onEvent)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GraphEmptyState(onOpenNotes: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(360.dp)
+            .testTag("graph-empty-state")
+            .semantics { contentDescription = "图谱为空：从一条关系开始" },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        AppIcon(
+            imageVector = AppIcons.GraphNodes,
+            contentDescription = null,
+            modifier = Modifier.height(48.dp).width(48.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "从一条关系开始",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "在笔记中连接相关内容，\n在这里查看它们的联系。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        UnarchiveButton(
+            onClick = onOpenNotes,
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .testTag("graph-empty-open-notes"),
+        ) {
+            Text("查看笔记")
         }
     }
 }
