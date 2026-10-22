@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.unarchive.android.ui.theme.UnarchiveDimensions
 import io.github.alexzhirkevich.cupertino.ExperimentalCupertinoApi
 import io.github.alexzhirkevich.cupertino.section.CupertinoSection
@@ -58,7 +59,7 @@ internal fun InsetGroupedList(
             Text(
                 text = it,
                 modifier = Modifier.padding(horizontal = 16.dp).semantics { heading() },
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -107,11 +108,11 @@ internal fun SettingsRow(
     ) {
         leadingContent?.invoke()
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(text = title, style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 24.sp))
             description?.let {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

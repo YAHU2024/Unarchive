@@ -49,7 +49,12 @@ internal fun SecuritySettingsOverviewScreen(vm: UnarchiveViewModel, onBack: () -
                         com.unarchive.android.security.SecurityProfile.SILICONFLOW -> listOf(com.unarchive.android.security.SecureCredential.SILICONFLOW_API_KEY)
                         com.unarchive.android.security.SecurityProfile.IMA -> listOf(com.unarchive.android.security.SecureCredential.IMA_CLIENT_ID, com.unarchive.android.security.SecureCredential.IMA_API_KEY)
                     }
-                    com.unarchive.android.ui.components.NavigationSettingsRow(profile.displayLabel(), if (credentials.all { state.presence(it).configured }) "已配置" else "未配置", { onOpen(profile) }, androidx.compose.ui.Modifier.testTag("security-open-${profile.name.lowercase()}"))
+                    com.unarchive.android.ui.components.NavigationSettingsRow(
+                        title = profile.displayLabel(),
+                        onClick = { onOpen(profile) },
+                        modifier = androidx.compose.ui.Modifier.testTag("security-open-${profile.name.lowercase()}"),
+                        trailingValue = if (credentials.all { state.presence(it).configured }) "已配置" else "未配置",
+                    )
                 }
             }
             androidx.compose.material3.Text("凭据加密保存在本机，密钥不回显。", style = androidx.compose.material3.MaterialTheme.typography.bodySmall)

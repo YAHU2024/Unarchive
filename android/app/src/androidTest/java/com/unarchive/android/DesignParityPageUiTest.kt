@@ -21,6 +21,8 @@ import org.junit.runners.Parameterized
 import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.abs
+import org.junit.Assert.assertTrue
 
 /** Public synthetic titles matching the approved prototype; never opens a user repository. */
 @RunWith(Parameterized::class)
@@ -66,6 +68,12 @@ class DesignParityPageUiTest(private val dark: Boolean, private val scale: Float
         rule.onNodeWithTag("appearance-back").performClick()
         rule.onNodeWithTag("me-settings").performScrollTo().performClick()
         rule.onNodeWithTag("settings-overview").assertExists()
+        val accountTitle = rule.onNodeWithText("平台账号").fetchSemanticsNode().boundsInRoot
+        val accountValue = rule.onNodeWithText("Bilibili").fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "platform account value should remain on the same row",
+            abs(accountTitle.center.y - accountValue.center.y) < 32f * scale,
+        )
         capture("filled-settings")
         rule.onNodeWithTag("settings-open-Engine").performScrollTo().performClick()
         rule.onNodeWithTag("fixture-settings-detail").assertTextEquals("Engine")

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +39,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import com.unarchive.android.ui.theme.LocalSemanticColors
 import com.unarchive.android.ui.theme.UnarchiveDimensions
 
@@ -125,15 +128,26 @@ internal fun PageHeader(title: String, description: String? = null, modifier: Mo
 @Composable
 internal fun NavigationSettingsRow(
     title: String,
-    description: String,
+    description: String? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    trailingValue: String? = null,
 ) {
     CupertinoSettingsRow(
         title = title, description = description, onClick = onClick,
         modifier = modifier, enabled = enabled,
         trailingContent = {
+            if (!trailingValue.isNullOrBlank()) {
+                Text(
+                    text = trailingValue,
+                    modifier = Modifier.widthIn(max = 160.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             AppIcon(AppIcons.Chevron, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         },
     )

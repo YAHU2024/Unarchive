@@ -121,7 +121,12 @@ internal fun SettingsOverviewScreen(onBack: () -> Unit, onOpen: (SettingsSection
                 InsetGroupedList(title = title) {
                     sections.forEachIndexed { index, section ->
                         if (index > 0) HorizontalDivider(Modifier.padding(start = 16.dp))
-                        NavigationSettingsRow(section.label, if (section == SettingsSection.Account) "Bilibili" else "", { onOpen(section) }, Modifier.testTag("settings-open-${section.name}"))
+                        NavigationSettingsRow(
+                            title = section.label,
+                            onClick = { onOpen(section) },
+                            modifier = Modifier.testTag("settings-open-${section.name}"),
+                            trailingValue = if (section == SettingsSection.Account) "Bilibili" else null,
+                        )
                     }
                 }
             }
