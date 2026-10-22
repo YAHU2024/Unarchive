@@ -1,64 +1,80 @@
 package com.unarchive.android.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.snap
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
-import com.unarchive.android.ui.theme.LocalMotionPolicy
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 
-/** In-content right-swipe back; vertical scrolling keeps priority until horizontal intent is clear. */
+/**
+ * Feeds an in-content right swipe into the same predictive-back dispatcher
+ * used by the system edge gesture. Navigation Compose therefore draws the
+ * previous page underneath, follows the finger, and restores it on cancel.
+ */
 @Composable
-internal fun Modifier.appContentBackGesture(enabled: Boolean, onBack: () -> Unit): Modifier {
-    val motion = LocalMotionPolicy.current
+internal fun Modifier.appContentBackGesture(
+    enabled: Boolean,
+    onBack: () -> Unit,
+): Modifier {
+    val dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val latestOnBack = rememberUpdatedState(onBack)
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    var settleTarget by remember { mutableFloatStateOf(0f) }
-    var dragging by remember { mutableStateOf(false) }
-    var widthPx by remember { mutableFloatStateOf(1f) }
-    val settledOffset by animateFloatAsState(
-        targetValue = settleTarget,
-        animationSpec = if (motion.animateLayout) {
-            spring(dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness)
-        } else snap(),
-        label = "content-back-settle",
-    )
-    val drawnOffset = if (dragging) dragOffset else settledOffset
-    val threshold = widthPx * 0.32f
+    val density = LocalDensity.current
+    val state = remember { ContentBackGestureState() }
+    val slop = with(density) { 18.dp.toPx() }
 
     return this
-        .graphicsLayer {
-            widthPx = size.width.coerceAtLeast(1f)
-            translationX = drawnOffset
-            alpha = 1f - (drawnOffset / widthPx) * 0.04f
-        }
+        .onSizeChanged { state.widthPx = it.width.toFloat().coerceAtLeast(1f) }
         .draggable(
-            state = rememberDraggableState { delta ->
-                dragging = true
-                dragOffset = (dragOffset + delta).coerceIn(0f, widthPx)
-            },
-            orientation = Orientation.Horizontal,
-            enabled = enabled,
-            onDragStarted = {
-                dragOffset = 0f
-                settleTarget = 0f
-                dragging = true
-            },
-            onDragStopped = {
-                val commit = dragOffset >= threshold
-                dragging = false
-                settleTarget = if (commit) widthPx else 0f
-                if (commit) latestOnBack.value()
-            },
-        )
+        state = rememberDraggableState { delta ->
+            if (!state.active) return@rememberDraggableState
+            state.totalX += delta
+            state.totalY += 0f
+            if (state.totalX > slop && state.totalX > kotlin.math.abs(state.totalY)) {
+                val progress = (state.totalX / state.widthPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                dispatcher?.dispatchOnBackProgressed(
+                    BackEventCompat(0f, 0f, progress, BackEventCompat.EDGE_LEFT),
+                )
+            }
+        },
+        orientation = Orientation.Horizontal,
+        enabled = enabled,
+        onDragStarted = {
+            state.reset()
+            state.active = true
+            dispatcher?.dispatchOnBackStarted(
+                BackEventCompat(0f, 0f, 0f, BackEventCompat.EDGE_LEFT),
+            )
+        },
+        onDragStopped = {
+            val commit = state.totalX >= state.widthPx * COMMIT_FRACTION
+            state.active = false
+            if (commit) {
+                dispatcher?.onBackPressed() ?: latestOnBack.value()
+            } else {
+                dispatcher?.dispatchOnBackCancelled()
+            }
+            state.reset()
+        },
+    )
+}
+
+private const val COMMIT_FRACTION = 0.32f
+
+private class ContentBackGestureState {
+    var active: Boolean = false
+    var totalX: Float = 0f
+    var totalY: Float = 0f
+    var widthPx: Float = 1f
+
+    fun reset() {
+        totalX = 0f
+        totalY = 0f
+    }
 }
