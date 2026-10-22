@@ -181,6 +181,8 @@ private fun NotesActions(onRefresh: () -> Unit, onOpenLibrary: () -> Unit) {
         ) {
             AnchoredMenuItem(
                 text = "打开完整笔记库",
+                icon = AppIcons.Folder,
+                iconTestTag = "notes-more-open-library-icon",
                 modifier = Modifier.testTag("notes-more-open-library"),
                 onClick = { moreExpanded = false; onOpenLibrary() },
             )

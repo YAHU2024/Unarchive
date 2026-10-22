@@ -8,13 +8,16 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -22,15 +25,17 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
@@ -80,10 +85,10 @@ internal fun AnchoredMenu(
                 } else androidx.compose.animation.ExitTransition.None,
             ) {
                 Surface(
-                    modifier = modifier.widthIn(min = 192.dp, max = 280.dp)
+                    modifier = modifier.widthIn(min = 176.dp, max = 224.dp)
                         .semantics { paneTitle = title }
                         .testTag(testTag),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     tonalElevation = 4.dp,
@@ -123,14 +128,38 @@ internal fun AnchoredMenuItem(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    iconTestTag: String? = null,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     Row(
-        modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (pressed) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                else MaterialTheme.colorScheme.surface,
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
     ) {
-        Text(text, style = MaterialTheme.typography.bodyLarge)
+        icon?.let {
+            AppIcon(
+                imageVector = it,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).then(
+                    if (iconTestTag != null) Modifier.testTag(iconTestTag) else Modifier,
+                ),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }

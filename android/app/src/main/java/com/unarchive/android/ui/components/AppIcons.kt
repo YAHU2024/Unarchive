@@ -27,6 +27,7 @@ internal object AppIcons {
     val Info = icon("info", "M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0", "M12 16v-4M12 8h.01")
     val Refresh = icon("refresh-cw", "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5", "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5")
     val More = icon("ellipsis", "M5 12h.01M12 12h.01M19 12h.01")
+    val Folder = icon("folder", "M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z")
     val Share = icon("share-2", "M21 5a3 3 0 1 1-6 0a3 3 0 1 1 6 0", "M9 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0", "M21 19a3 3 0 1 1-6 0a3 3 0 1 1 6 0", "m8.59 13.51 6.83 3.98m-.01-10.98-6.82 3.98")
 
     private fun icon(name: String, vararg paths: String, autoMirror: Boolean = false): ImageVector =
