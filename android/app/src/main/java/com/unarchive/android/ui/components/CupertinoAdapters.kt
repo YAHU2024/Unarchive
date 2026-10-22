@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
@@ -254,8 +255,20 @@ internal fun CupertinoSegmentedControl(
         }
         Row(Modifier.fillMaxWidth()) {
             items.forEachIndexed { index, label ->
+            val interactionSource = remember(index) { MutableInteractionSource() }
+            val pressed by interactionSource.collectIsPressedAsState()
+            val pressScale by animateFloatAsState(
+                targetValue = if (pressed && motion.animateLayout) 0.97f else 1f,
+                animationSpec = if (motion.animateLayout) spring(stiffness = 900f) else snap(),
+                label = "segment-press-$index",
+            )
             Box(itemModifier(index).weight(1f).heightIn(min = 48.dp)
-                    .clickable { if (selectedIndex != index) onSelected(index) }
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        role = Role.Tab,
+                    ) { if (selectedIndex != index) onSelected(index) }
+                    .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
                     .semantics {
                         role = Role.Tab
                         selected = selectedIndex == index

@@ -6,6 +6,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
@@ -26,9 +28,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
@@ -107,6 +111,13 @@ internal fun RowScope.GlassDockItem(
         label = "dock-content",
     )
     val itemShape = RoundedCornerShape(26.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed && motion.animateLayout) 0.97f else 1f,
+        animationSpec = if (motion.animateLayout) spring(stiffness = 900f) else snap(),
+        label = "dock-item-press",
+    )
     Box(
         modifier = Modifier
             .weight(1f)
@@ -114,9 +125,12 @@ internal fun RowScope.GlassDockItem(
             .clip(itemShape)
             .selectable(
                 selected = selected,
+                interactionSource = interactionSource,
+                indication = null,
                 role = Role.Tab,
                 onClick = onClick,
             )
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
             .semantics(mergeDescendants = true) {
                 contentDescription = "导航：$label${if (selected) "，当前" else ""}"
                 this.selected = selected
