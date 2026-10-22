@@ -23,8 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.semantics.heading
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -48,6 +46,8 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.ui.components.AppIcon
 import com.unarchive.android.ui.components.AppIcons
+import com.unarchive.android.ui.components.AnchoredMenu
+import com.unarchive.android.ui.components.AnchoredMenuItem
 import com.unarchive.android.ui.components.CupertinoSegmentedControl
 import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.UnarchiveButton
@@ -173,11 +173,17 @@ private fun NotesActions(onRefresh: () -> Unit, onOpenLibrary: () -> Unit) {
         UnarchiveIconButton(onClick = { moreExpanded = true }, modifier = Modifier.testTag("notes-more")) {
             AppIcon(AppIcons.More, contentDescription = "更多")
         }
-        DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false },
-            modifier = Modifier.testTag("notes-more-menu")) {
-            DropdownMenuItem(text = { Text("打开完整笔记库") },
+        AnchoredMenu(
+            expanded = moreExpanded,
+            onDismissRequest = { moreExpanded = false },
+            title = "笔记更多操作",
+            testTag = "notes-more-menu",
+        ) {
+            AnchoredMenuItem(
+                text = "打开完整笔记库",
                 modifier = Modifier.testTag("notes-more-open-library"),
-                onClick = { moreExpanded = false; onOpenLibrary() })
+                onClick = { moreExpanded = false; onOpenLibrary() },
+            )
         }
     }
 }

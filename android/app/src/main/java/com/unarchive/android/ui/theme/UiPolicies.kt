@@ -66,8 +66,8 @@ internal data class MotionPolicy(
     companion object {
         val Reduced = MotionPolicy(
             mode = MotionMode.Reduced,
-            shortDurationMillis = 90,
-            standardDurationMillis = 120,
+            shortDurationMillis = 0,
+            standardDurationMillis = 0,
             springStiffness = 1000f,
             springDampingRatio = 1f,
             pageTravelFraction = 0f,

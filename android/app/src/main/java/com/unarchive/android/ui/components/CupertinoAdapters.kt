@@ -4,6 +4,32 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.text.font.FontWeight
+import com.unarchive.android.ui.theme.LocalMotionPolicy
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -37,8 +63,6 @@ import com.unarchive.android.ui.theme.LocalSemanticColors
 import io.github.alexzhirkevich.cupertino.CupertinoButton as LibraryCupertinoButton
 import io.github.alexzhirkevich.cupertino.CupertinoButtonDefaults
 import io.github.alexzhirkevich.cupertino.CupertinoIconButton
-import io.github.alexzhirkevich.cupertino.CupertinoSegmentedControl as LibraryCupertinoSegmentedControl
-import io.github.alexzhirkevich.cupertino.CupertinoSegmentedControlTab
 import io.github.alexzhirkevich.cupertino.CupertinoSwitch
 import io.github.alexzhirkevich.cupertino.CupertinoSlider as LibraryCupertinoSlider
 import io.github.alexzhirkevich.cupertino.CupertinoTextFieldDefaults
@@ -62,7 +86,7 @@ internal fun CupertinoButton(
             contentColor = Color.White,
         ),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        content = content,
+        content = { ProvideTextStyle(MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)) { content() } },
     )
 }
 
@@ -112,11 +136,37 @@ internal fun CupertinoIconAction(
     contentDescription: String? = null,
     icon: @Composable () -> Unit,
 ) {
+    var feedbackSequence by remember { mutableStateOf(0) }
+    var activated by remember { mutableStateOf(false) }
+    val motion = LocalMotionPolicy.current
+    LaunchedEffect(feedbackSequence) {
+        if (feedbackSequence > 0) {
+            activated = true
+            delay(if (motion.animateLayout) 140 else 80)
+            activated = false
+        }
+    }
+    var pressed by remember { mutableStateOf(false) }
+    val emphasized = enabled && (pressed || activated)
+    val scale by animateFloatAsState(
+        if (emphasized && motion.animateLayout) 0.9f else 1f,
+        animationSpec = if (motion.animateLayout) spring(stiffness = 900f) else snap(), label = "icon-press",
+    )
     CupertinoIconButton(
-        onClick = onClick,
-        modifier = modifier.size(48.dp).semantics {
-            if (contentDescription != null) this.contentDescription = contentDescription
-        },
+        onClick = { activated = true; feedbackSequence++; onClick() },
+        modifier = modifier.size(48.dp)
+            .pointerInput(enabled) {
+                if (enabled) awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    pressed = true
+                    try { waitForUpOrCancellation(pass = PointerEventPass.Initial) } finally { pressed = false }
+                }
+            }
+            .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (emphasized) 0.55f else 1f }
+            .semantics {
+                actionEmphasized = emphasized
+                if (contentDescription != null) this.contentDescription = contentDescription
+            },
         enabled = enabled,
         content = icon,
     )
@@ -184,16 +234,38 @@ internal fun CupertinoSegmentedControl(
     onSelected: (Int) -> Unit,
     itemModifier: (Int) -> Modifier = { Modifier },
 ) {
-    LibraryCupertinoSegmentedControl(selectedTabIndex = selectedIndex, modifier = modifier) {
-        items.forEachIndexed { index, label ->
-            CupertinoSegmentedControlTab(
-                onClick = { onSelected(index) },
-                isSelected = selectedIndex == index,
-                modifier = itemModifier(index).heightIn(min = 48.dp).semantics {
-                    selected = selectedIndex == index
-                    role = Role.Tab
-                },
-            ) { Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) }
+    if (items.isEmpty()) return
+    val motion = LocalMotionPolicy.current
+    val animatedPosition by animateFloatAsState(
+        targetValue = selectedIndex.coerceIn(items.indices).toFloat(),
+        animationSpec = if (motion.animateLayout) spring(
+            dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness,
+        ) else snap(),
+        label = "segmented-thumb",
+    )
+    val position = if (motion.animateLayout) animatedPosition else selectedIndex.coerceIn(items.indices).toFloat()
+    BoxWithConstraints(modifier.clip(RoundedCornerShape(10.dp))
+        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+        .padding(3.dp).selectableGroup().semantics { segmentPosition = position }) {
+        val tabWidth = maxWidth / items.size
+        Box(Modifier.matchParentSize()) {
+            Box(Modifier.offset(x = tabWidth * position).width(tabWidth).fillMaxSize()
+                .clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surface))
+        }
+        Row(Modifier.fillMaxWidth()) {
+            items.forEachIndexed { index, label ->
+            Box(itemModifier(index).weight(1f).heightIn(min = 48.dp)
+                    .clickable { if (selectedIndex != index) onSelected(index) }
+                    .semantics {
+                        role = Role.Tab
+                        selected = selectedIndex == index
+                    },
+                    contentAlignment = Alignment.Center) {
+                    Text(label, modifier = Modifier.padding(horizontal = 2.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (selectedIndex == index) FontWeight.SemiBold else FontWeight.Normal)
+                }
+            }
         }
     }
 }
@@ -263,3 +335,9 @@ internal fun AppIcon(
         tint = tint,
     )
 }
+
+/** Observable presentation state also used by adapter regression tests. */
+internal val ActionEmphasizedKey = SemanticsPropertyKey<Boolean>("ActionEmphasized")
+internal var SemanticsPropertyReceiver.actionEmphasized by ActionEmphasizedKey
+internal val SegmentPositionKey = SemanticsPropertyKey<Float>("SegmentPosition")
+internal var SemanticsPropertyReceiver.segmentPosition by SegmentPositionKey

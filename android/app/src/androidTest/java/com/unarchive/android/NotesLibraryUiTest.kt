@@ -92,6 +92,10 @@ class NotesLibraryUiTest {
 
         composeRule.onNodeWithTag("notes-more").performClick()
         composeRule.onNodeWithTag("notes-more-menu").assertIsDisplayed()
+        composeRule.runOnIdle { }
+        val anchorBounds = composeRule.onNodeWithTag("notes-more").fetchSemanticsNode().boundsInWindow
+        val menuBounds = composeRule.onNodeWithTag("notes-more-menu").fetchSemanticsNode().boundsInWindow
+        org.junit.Assert.assertTrue("the menu should be a compact anchored surface", menuBounds.width < anchorBounds.width * 8 && menuBounds.height > 0f)
         composeRule.onNodeWithTag("notes-more-open-library").performClick()
         composeRule.runOnIdle { assertEquals(1, openedLibrary) }
     }

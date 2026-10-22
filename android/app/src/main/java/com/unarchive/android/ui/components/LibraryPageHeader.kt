@@ -19,12 +19,13 @@ import androidx.compose.ui.platform.LocalDensity
 /** Large, wrapping entry title shared by the three LG-B structure samples. */
 @Composable
 internal fun LibraryPageHeader(title: String, description: String? = null, modifier: Modifier = Modifier) {
-    val titleScale = LocalDensity.current.fontScale.coerceAtMost(1.4f) / LocalDensity.current.fontScale
+    val density = LocalDensity.current
+    val titleScale = density.fontScale.coerceAtMost(1.4f)
     val reportTitleHeight = LocalRootTitleHeight.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             title,
-            style = MaterialTheme.typography.displaySmall.copy(fontSize = (34f * titleScale).sp, lineHeight = (41f * titleScale).sp),
+            style = MaterialTheme.typography.displaySmall.copy(fontSize = with(density) { (34f * titleScale).dp.toSp() }, lineHeight = with(density) { (41f * titleScale).dp.toSp() }),
             fontWeight = FontWeight.Bold,
             modifier = Modifier
                 .testTag("root-large-title")

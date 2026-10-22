@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,12 +61,26 @@ internal fun SecuritySettingsContent(
     var imaClientIdInput by remember { mutableStateOf("") }
     var imaApiKeyInput by remember { mutableStateOf("") }
     var localNotice by remember { mutableStateOf<String?>(null) }
+    var clearSheetProfile by remember { mutableStateOf<SecurityProfile?>(null) }
+    var clearSheetVisible by remember { mutableStateOf(false) }
 
-    if (state.pendingClear != null) {
-        val profile = state.pendingClear!!
+    LaunchedEffect(state.pendingClear) {
+        val pending = state.pendingClear
+        if (pending == null) {
+            if (clearSheetProfile != null) clearSheetVisible = false
+        } else {
+            clearSheetProfile = pending
+            clearSheetVisible = true
+        }
+    }
+
+    if (clearSheetProfile != null) {
+        val profile = requireNotNull(clearSheetProfile)
         GlassBottomSheet(
+            visible = clearSheetVisible,
             title = "确认清除${profile.displayLabel()}凭据？",
             onDismissRequest = { localNotice = null; onCancelClear() },
+            onDismissed = { clearSheetProfile = null },
         ) {
             Text("这会移除本机保存的该服务凭据；本地笔记和转写结果不会删除。")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

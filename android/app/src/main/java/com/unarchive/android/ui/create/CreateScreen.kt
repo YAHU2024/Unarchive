@@ -55,6 +55,11 @@ internal fun CreateScreen(
     onOpenDeveloperTest: () -> Unit,
 ) {
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
+    var recoverySheetVisible by rememberSaveable { mutableStateOf(false) }
+    var recoveryConfirmSent by rememberSaveable { mutableStateOf(false) }
+    var cancelSheetMounted by rememberSaveable { mutableStateOf(false) }
+    var cancelSheetVisible by rememberSaveable { mutableStateOf(false) }
+    var cancelConfirmSent by rememberSaveable { mutableStateOf(false) }
     val presentation = state.presentation()
     val motion = LocalMotionPolicy.current
     var editingSource by rememberSaveable(state.isProcessing) { mutableStateOf(false) }
@@ -106,7 +111,13 @@ internal fun CreateScreen(
                             } else null,
                             showCancel = state.isProcessing,
                             cancelEnabled = state.processing.isCancellable,
-                            onCancel = { onEvent(CreateEvent.CancelProcessing) },
+                            onCancel = {
+                                if (state.processing.isCancellable && !cancelSheetMounted) {
+                                    cancelConfirmSent = false
+                                    cancelSheetMounted = true
+                                    cancelSheetVisible = true
+                                }
+                            },
                         )
                         if (!state.isProcessing && state.processing.stage in setOf(
                                 CreateProcessingStage.RECOVERABLE, CreateProcessingStage.FAILED, CreateProcessingStage.CANCELLED,
@@ -206,7 +217,11 @@ internal fun CreateScreen(
                                     actionModifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("create-recovery-resume-${recovery.operationId}"),
-                                    onAction = { recoveryToConfirm = recovery.operationId },
+                                    onAction = {
+                                        recoveryConfirmSent = false
+                                        recoveryToConfirm = recovery.operationId
+                                        recoverySheetVisible = true
+                                    },
                                 )
                             }
                         }
@@ -276,24 +291,58 @@ internal fun CreateScreen(
 
     }
     val selectedRecovery = state.recoveries.firstOrNull { it.operationId == recoveryToConfirm }
-    if (selectedRecovery != null) {
+    if (recoveryToConfirm != null) {
         GlassBottomSheet(
-            onDismissRequest = { recoveryToConfirm = null },
+            visible = recoverySheetVisible,
+            onDismissRequest = { recoverySheetVisible = false },
+            onDismissed = { recoveryToConfirm = null },
             title = "继续生成这篇笔记？",
         ) {
-            Text("将复用已保存的本地转写，从“${selectedRecovery.stageLabel}”阶段重新执行。不会重新下载音频或转写。")
+            if (selectedRecovery != null) {
+                Text("将复用已保存的本地转写，从“${selectedRecovery.stageLabel}”阶段重新执行。不会重新下载音频或转写。")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    UnarchiveButton(
+                        onClick = {
+                            if (!recoveryConfirmSent) {
+                                recoveryConfirmSent = true
+                                onEvent(CreateEvent.ResumeSingleCard(selectedRecovery.operationId))
+                                recoverySheetVisible = false
+                            }
+                        },
+                        enabled = selectedRecovery.canResume && !state.isProcessing && !recoveryConfirmSent,
+                        modifier = Modifier.testTag("create-recovery-confirm"),
+                    ) { Text("继续生成") }
+                    UnarchiveTextButton(
+                        onClick = { recoverySheetVisible = false },
+                        modifier = Modifier.testTag("create-recovery-dismiss"),
+                    ) { Text("取消", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+    }
+    if (cancelSheetMounted) {
+        GlassBottomSheet(
+            visible = cancelSheetVisible,
+            onDismissRequest = { cancelSheetVisible = false },
+            onDismissed = { cancelSheetMounted = false },
+            title = "取消当前任务？",
+        ) {
+            Text("确定停止正在处理的视频？")
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 UnarchiveButton(
                     onClick = {
-                        onEvent(CreateEvent.ResumeSingleCard(selectedRecovery.operationId))
-                        recoveryToConfirm = null
+                        if (!cancelConfirmSent && state.isProcessing && state.processing.isCancellable) {
+                            cancelConfirmSent = true
+                            onEvent(CreateEvent.CancelProcessing)
+                            cancelSheetVisible = false
+                        }
                     },
-                    enabled = selectedRecovery.canResume && !state.isProcessing,
-                    modifier = Modifier.testTag("create-recovery-confirm"),
-                ) { Text("继续生成") }
+                    enabled = !cancelConfirmSent && state.isProcessing && state.processing.isCancellable,
+                    modifier = Modifier.testTag("create-cancel-confirm"),
+                ) { Text("停止任务") }
                 UnarchiveTextButton(
-                    onClick = { recoveryToConfirm = null },
-                    modifier = Modifier.testTag("create-recovery-dismiss"),
+                    onClick = { cancelSheetVisible = false },
+                    modifier = Modifier.testTag("create-cancel-dismiss"),
                 ) { Text("取消", color = MaterialTheme.colorScheme.error) }
             }
         }

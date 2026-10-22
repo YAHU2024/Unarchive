@@ -28,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
@@ -117,13 +118,17 @@ class LiquidGlassLayoutUiTest(private val dark: Boolean, private val glass: Bool
         rule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
         rule.onNodeWithTag("create-generate-note").assertDoesNotExist()
         rule.onNodeWithTag("create-cancel").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("create-cancel-confirm").assertIsDisplayed()
+        rule.runOnIdle { assertTrue(events.isEmpty()) }
+        rule.onNodeWithTag("create-cancel-confirm").performClick()
         screenshot("create-processing")
         rule.runOnIdle {
             assertEquals(listOf(CreateEvent.CancelProcessing), events)
             state = state.copy(isProcessing = false, statusMessage = "处理失败，转写已保留", processing = state.processing.copy(stage = CreateProcessingStage.FAILED))
         }
         rule.onNodeWithTag("create-cancel").assertDoesNotExist()
-        rule.onNodeWithTag("create-review-results").performScrollTo().performClick()
+        rule.onNodeWithTag("create-screen").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, 2000f) }
+        rule.onNodeWithTag("create-review-results").performClick()
         screenshot("create-failed")
         rule.runOnIdle { assertEquals(1, opened); assertEquals(1, events.size) }
     }

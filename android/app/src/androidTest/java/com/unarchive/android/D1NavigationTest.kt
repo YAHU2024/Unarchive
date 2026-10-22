@@ -34,6 +34,7 @@ import com.unarchive.android.platform.bilibili.BilibiliFavoriteVideo
 import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -378,6 +379,9 @@ class D1NavigationTest {
         }
 
         composeRule.onNodeWithTag("create-cancel").performClick()
+        composeRule.onNodeWithTag("create-cancel-confirm").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(events.isEmpty()) }
+        composeRule.onNodeWithTag("create-cancel-confirm").performClick()
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.CancelProcessing), events)

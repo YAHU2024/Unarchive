@@ -26,6 +26,24 @@ class RootPageGeometryUiTest {
     @Test fun darkLarge() = checkGeometry(true, 2f)
 
     @Test
+    fun chromeTextScaleUsesDpCapAtLargeFontScale() {
+        rule.setContent {
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, 2f)) {
+                UnarchiveTheme(motionPolicy = MotionPolicy.Reduced) {
+                    Column {
+                        LibraryPageHeader("笔记")
+                        SecondaryPage("设置", {}, titleTag = "geometry-secondary-title") {}
+                    }
+                }
+            }
+        }
+        val density = rule.density
+        assertTrue(rule.onNodeWithTag("root-large-title").fetchSemanticsNode().boundsInRoot.height <= with(density) { 64.dp.toPx() })
+        assertTrue(rule.onNodeWithTag("geometry-secondary-title").fetchSemanticsNode().boundsInRoot.height <= with(density) { 34.dp.toPx() })
+    }
+
+    @Test
     fun compactTitleAppearsWhenLargeTitleLeavesButDescriptionRemains() {
         val description = "这段说明仍然留在滚动视口中。".repeat(6)
         var topPaddingPx = 0
@@ -40,7 +58,7 @@ class RootPageGeometryUiTest {
         }
         val largeTitleHeight = rule.onNodeWithTag("root-large-title")
             .fetchSemanticsNode().boundsInRoot.height.toInt()
-        rule.onNodeWithTag("root-compact-title").assertDoesNotExist()
+        rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
         rule.onNodeWithTag("geometry-list").performSemanticsAction(SemanticsActions.ScrollBy) {
             it(0f, (largeTitleHeight + topPaddingPx + 1).toFloat())
         }

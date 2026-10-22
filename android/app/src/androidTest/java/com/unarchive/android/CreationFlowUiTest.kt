@@ -67,6 +67,9 @@ class CreationFlowUiTest {
         rule.onNodeWithTag("create-processing-stage").assertIsDisplayed()
         rule.onNodeWithTag("create-generate-note").assertDoesNotExist()
         rule.onNodeWithTag("create-cancel").performScrollTo().performClick()
+        rule.onNodeWithTag("create-cancel-confirm").assertIsDisplayed()
+        rule.runOnIdle { assertTrue(events.isEmpty()) }
+        rule.onNodeWithTag("create-cancel-confirm").performClick()
         rule.onNodeWithTag("create-checkpoint").performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("create-cancel").assertDoesNotExist()
         rule.runOnIdle { assertEquals(listOf(CreateEvent.CancelProcessing), events) }
