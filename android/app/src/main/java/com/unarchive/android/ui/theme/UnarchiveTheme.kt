@@ -1,6 +1,7 @@
 package com.unarchive.android.ui.theme
 
 import android.os.Build
+import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -11,11 +12,15 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.unarchive.android.ui.components.GlassRenderer
 import com.unarchive.android.ui.components.glassRendererFor
+import androidx.core.view.WindowCompat
 
 internal val LocalLiquidGlassPolicy = staticCompositionLocalOf {
     LiquidGlassPolicy.fromUserSetting(enabled = true)
@@ -117,6 +122,20 @@ internal fun UnarchiveTheme(
     content: @Composable () -> Unit,
 ) {
     val policy = LiquidGlassPolicy.resolve(glassInputs.copy(userEnabled = liquidGlassEnabled))
+    val view = LocalView.current
+    val window = (view.context as? Activity)?.window
+    SideEffect {
+        if (window != null) {
+            // Match the canvas color below the status bar and adapt icon contrast
+            // whenever the app switches between light and dark themes.
+            window.statusBarColor = if (Build.VERSION.SDK_INT >= 35) {
+                android.graphics.Color.TRANSPARENT
+            } else {
+                (if (darkTheme) DarkSemanticColors.canvas else LightSemanticColors.canvas).toArgb()
+            }
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+        }
+    }
     CompositionLocalProvider(
         LocalLiquidGlassPolicy provides policy,
         LocalMotionPolicy provides motionPolicy,

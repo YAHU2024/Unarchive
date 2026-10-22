@@ -22,10 +22,10 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.pipeline.BatchItemState
 import com.unarchive.android.pipeline.ImaBatchStageState
-import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.InsetGroupedList
+import com.unarchive.android.ui.components.SecondaryPage
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveSecondaryButton
-import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.BatchCreateEvent
 import com.unarchive.android.ui.state.BatchCreateUiState
 
@@ -35,36 +35,18 @@ internal fun BatchCreateScreen(
     onEvent: (BatchCreateEvent) -> Unit,
     onBack: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-            .testTag("batch-create-screen"),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp),
-    ) {
+    SecondaryPage("批量创作", onBack, "batch-create-back") {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .testTag("batch-create-screen"),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+        ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("批量创作", style = MaterialTheme.typography.headlineLarge)
-                    Text(
-                        "从一个 B 站收藏夹选择多个视频，按顺序生成本地知识笔记。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                UnarchiveTextButton(onClick = onBack, modifier = Modifier.testTag("batch-create-back")) {
-                    Text("返回")
-                }
-            }
-        }
-
-        item {
-            ReadingSurface(modifier = Modifier.fillMaxWidth()) {
+            InsetGroupedList(title = "来源") {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("选择收藏夹", style = MaterialTheme.typography.titleMedium)
                     if (!state.isLoggedIn) {
                         Text(
                             "请先在设置中登录 B 站。",
@@ -105,9 +87,8 @@ internal fun BatchCreateScreen(
 
         if (state.favoriteVideos.isNotEmpty()) {
             item {
-                ReadingSurface(modifier = Modifier.fillMaxWidth()) {
+                InsetGroupedList(title = "视频") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("选择视频", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "可用 ${state.favoriteVideos.count { it.isAvailable }} 项 · 已选 ${state.selectedVideoIds.size} 项",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -191,13 +172,11 @@ internal fun BatchCreateScreen(
 
         if (state.batchRecoveryAvailable) {
             item {
-                ReadingSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("batch-recovery"),
+                InsetGroupedList(
+                    modifier = Modifier.testTag("batch-recovery"),
+                    title = "待恢复",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("发现未完成批次", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "批次 ${state.batchManifestItems.size} 项（收藏夹 ${state.recoveryFolderLabel.ifBlank { "未知" }}），" +
                                 "待恢复卡片 ${state.batchManifestItems.count { it.cardState != CardStageState.SUCCEEDED }} 项。",
@@ -239,13 +218,11 @@ internal fun BatchCreateScreen(
 
         state.batchSummary?.let { summary ->
             item {
-                ReadingSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("batch-summary"),
+                InsetGroupedList(
+                    modifier = Modifier.testTag("batch-summary"),
+                    title = "最近批次",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("最近批次", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "成功 ${summary.succeeded} · 跳过 ${summary.skipped} · " +
                                 "不可用 ${summary.unavailable} · 失败 ${summary.failed}",
@@ -310,6 +287,7 @@ internal fun BatchCreateScreen(
                     )
                 }
             }
+        }
     }
 }
 

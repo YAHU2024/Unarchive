@@ -76,6 +76,7 @@ import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.ui.me.MeScreen
 import com.unarchive.android.ui.me.MoreToolsScreen
 import com.unarchive.android.ui.notes.NotesScreen
+import com.unarchive.android.ui.notes.NotesLibraryScreen
 import com.unarchive.android.ui.state.BatchCreateEvent
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.DestinationEvent
@@ -93,6 +94,7 @@ internal object AppRoutes {
     const val CREATE = "create"
     const val BATCH_CREATE = "create/batch"
     const val NOTES = "notes"
+    const val NOTES_LIBRARY = "notes/library"
     const val GRAPH = "graph"
     const val ME = "me"
     const val APPEARANCE = "me/appearance"
@@ -243,7 +245,18 @@ internal fun UnarchiveNavigationHost(
                     state = state.notes,
                     onEvent = onNotesEvent,
                     onOpenCreate = { navController.navigateMainDestination(AppRoutes.CREATE) },
-                    onOpenLegacyNotes = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
+                    onOpenLegacyNotes = { navController.navigate(AppRoutes.NOTES_LIBRARY) },
+                    onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
+                    onOpenDestinations = { document ->
+                        onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                        navController.navigate(AppRoutes.destinations(document))
+                    },
+                )
+            }
+            composable(AppRoutes.NOTES_LIBRARY) {
+                NotesLibraryScreen(
+                    state = state.notes,
+                    onBack = { navController.popBackStack() },
                     onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
                     onOpenDestinations = { document ->
                         onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))

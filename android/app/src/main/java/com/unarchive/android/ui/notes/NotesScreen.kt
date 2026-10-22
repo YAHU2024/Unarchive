@@ -99,7 +99,10 @@ internal fun NotesScreen(
                     NotesFilter.SAVED -> 2
                 },
                 items = listOf("最近", "待整理", "已保存"),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).testTag("notes-filter-row"),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 28.dp, bottom = 16.dp)
+                    .testTag("notes-filter-row"),
                 itemModifier = { index ->
                     Modifier.testTag(
                         when (index) {

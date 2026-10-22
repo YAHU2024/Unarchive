@@ -97,7 +97,9 @@ internal fun CreateScreen(
                             statusMessage = state.statusMessage,
                             progress = state.processing.progress.takeIf { state.isProcessing },
                             checkpointMessage = presentation.checkpointMessage,
-                            description = presentation.guidance,
+                            // The task card is the status surface; longer guidance belongs to
+                            // the explicit recovery/material actions below it.
+                            description = null,
                             modifier = Modifier.fillMaxWidth(),
                             stageModifier = Modifier.testTag("create-processing-stage"),
                             progressModifier = Modifier.testTag("create-progress"),

@@ -310,11 +310,13 @@ internal fun TaskProgressCard(
                     color = progressColor ?: MaterialTheme.colorScheme.primary,
                 )
             }
-            Text(
-                statusMessage,
-                modifier = statusModifier,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            statusMessage.takeIf(String::isNotBlank)?.let {
+                Text(
+                    it,
+                    modifier = statusModifier,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             checkpointMessage?.takeIf(String::isNotBlank)?.let {
                 Text(
                     it,

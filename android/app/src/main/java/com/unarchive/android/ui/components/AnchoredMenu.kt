@@ -91,7 +91,9 @@ internal fun AnchoredMenu(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface,
-                    tonalElevation = 4.dp,
+                    // Avoid Material's primary-tinted tonal overlay: this is a neutral
+                    // floating menu surface, while the shadow supplies its separation.
+                    tonalElevation = 0.dp,
                     shadowElevation = 8.dp,
                     border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
