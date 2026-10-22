@@ -81,7 +81,11 @@ internal fun RootPage(
 /** One stable centered title and one back action for every secondary destination. */
 @Composable
 internal fun SecondaryPage(title: String, onBack: () -> Unit, backTag: String = "page-back", titleTag: String = "secondary-page-title", actions: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .appContentBackGesture(enabled = true, onBack = onBack),
+    ) {
         PageTopBar(title, onBack, backTag, titleTag, actions)
         content()
     }
