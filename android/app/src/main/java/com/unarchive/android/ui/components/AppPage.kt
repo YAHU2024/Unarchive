@@ -1,5 +1,6 @@
 package com.unarchive.android.ui.components
 
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -24,6 +25,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -38,6 +40,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.graphicsLayer
 
 /** Header measurement is local to its root page; no screen state or navigation ownership. */
 internal val LocalRootTitleHeight = staticCompositionLocalOf<(Int) -> Unit> { {} }
@@ -81,7 +84,25 @@ internal fun RootPage(
 /** One stable centered title and one back action for every secondary destination. */
 @Composable
 internal fun SecondaryPage(title: String, onBack: () -> Unit, backTag: String = "page-back", titleTag: String = "secondary-page-title", actions: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize()) {
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    PredictiveBackHandler { progress ->
+        var completed = false
+        try {
+            progress.collect { event -> backProgress = event.progress }
+            completed = true
+        } finally {
+            backProgress = 0f
+            if (completed) onBack()
+        }
+    }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                translationX = size.width * backProgress * 0.28f
+                alpha = 1f - backProgress * 0.06f
+            },
+    ) {
         PageTopBar(title, onBack, backTag, titleTag, actions)
         content()
     }
