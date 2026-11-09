@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
@@ -97,7 +98,10 @@ class D1NavigationTest {
 
         composeRule.onNodeWithText("添加 B 站视频").assertIsDisplayed()
         composeRule.onNodeWithText("图谱").performClick()
-        composeRule.onNodeWithText("局部关系").assertIsDisplayed()
+        composeRule.onNodeWithTag("graph-empty-state").assertIsDisplayed()
+        composeRule.onNodeWithText("从一条关系开始").assertIsDisplayed()
+        composeRule.onNodeWithTag("graph-empty-open-notes").performClick()
+        composeRule.onNodeWithTag("bottom-nav-notes").assertIsSelected()
     }
 
     @Test

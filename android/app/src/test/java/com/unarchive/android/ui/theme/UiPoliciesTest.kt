@@ -69,10 +69,24 @@ class UiPoliciesTest {
         assertEquals(MotionMode.Reduced, MotionPolicy.Reduced.mode)
         assertTrue(MotionPolicy.Reduced.shortDurationMillis < MotionPolicy().shortDurationMillis)
         assertTrue(MotionPolicy.Reduced.standardDurationMillis < MotionPolicy().standardDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.secondaryPageEnterDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.secondaryPageExitDurationMillis)
         assertFalse(MotionPolicy.Reduced.animateLayout)
         assertEquals(0f, MotionPolicy.Reduced.pageTravelFraction)
         assertEquals(0f, MotionPolicy.Reduced.stateTravelDp)
         assertEquals(1f, MotionPolicy.Reduced.stateInitialAlpha)
+    }
+
+    @Test
+    fun secondaryPageMotionUsesSlowerEntryAndQuickExitWithoutChangingSharedMotion() {
+        val policy = MotionPolicy()
+        assertEquals(380, policy.secondaryPageEnterDurationMillis)
+        assertEquals(200, policy.secondaryPageExitDurationMillis)
+        assertEquals(260, policy.standardDurationMillis)
+        assertEquals(180, policy.shortDurationMillis)
+        assertEquals(0.18f, policy.pageTravelFraction)
+        assertEquals(0.22f, policy.secondaryPageTravelFraction)
+        assertEquals(0f, MotionPolicy.Reduced.secondaryPageTravelFraction)
     }
 
     @Test
