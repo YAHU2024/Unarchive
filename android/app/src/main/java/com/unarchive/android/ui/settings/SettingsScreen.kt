@@ -136,10 +136,9 @@ internal fun SettingsOverviewScreen(onBack: () -> Unit, onOpen: (SettingsSection
 }
 
 @Composable
-internal fun AppearanceScreen(state: SettingsUiState, onEvent: (SettingsEvent) -> Unit, onBack: () -> Unit) {
+internal fun AppearanceScreen(onBack: () -> Unit) {
     SecondaryPage("界面效果", onBack, "appearance-back") {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp).testTag("appearance-screen"), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            LiquidGlassSettingsSection(state.liquidGlassEnabled, { onEvent(SettingsEvent.SetLiquidGlassEnabled(it)) }, state.isBusy)
             InsetGroupedList(title = "系统辅助选项") {
                 SettingsRow("动态效果", "跟随系统")
                 HorizontalDivider(Modifier.padding(start = 16.dp))
@@ -147,28 +146,6 @@ internal fun AppearanceScreen(state: SettingsUiState, onEvent: (SettingsEvent) -
             }
             Text("系统高对比度、节电或设备性能限制时，自动使用不透明背景。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }
-}
-
-@Composable
-internal fun LiquidGlassSettingsSection(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-    isBusy: Boolean,
-) {
-    InsetGroupedList(
-        modifier = Modifier.testTag("liquid-glass-section"),
-        title = "界面效果",
-    ) {
-        ToggleSettingsRow(
-            title = "液态玻璃",
-            description = if (enabled) "用于导航和短状态层；正文保持稳定阅读面。"
-            else "已关闭，玻璃元素降级为不透明背景，适合性能较低的设备。",
-            checked = enabled,
-            enabled = !isBusy,
-            modifier = Modifier.testTag("liquid-glass-switch"),
-            onCheckedChange = onEnabledChange,
-        )
     }
 }
 

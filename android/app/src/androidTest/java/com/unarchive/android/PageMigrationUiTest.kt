@@ -203,18 +203,18 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
         var state by mutableStateOf(SettingsUiState(availableEngines = listOf(AsrEngineKind.SILICONFLOW_CLOUD)))
         val context = ApplicationProvider.getApplicationContext<Context>()
         rule.setContent {
-            Theme { if (appearance) com.unarchive.android.ui.settings.AppearanceScreen(state, events::add, {}) else SettingsScreen(state, File(context.cacheDir, "d-c6-missing-model-fixture"), {}, events::add, {}) }
+            Theme { if (appearance) com.unarchive.android.ui.settings.AppearanceScreen({}) else SettingsScreen(state, File(context.cacheDir, "d-c6-missing-model-fixture"), {}, events::add, {}) }
         }
         screenshot("settings")
         rule.onNodeWithText("启用 VAD 静音检测（实验性，可能崩溃）").performScrollTo().performClick()
         rule.onNodeWithText("思考模式（更慢但更深入）").performScrollTo().performClick()
         rule.runOnIdle { appearance = true }
-        rule.onNodeWithTag("liquid-glass-switch").performScrollTo().performClick()
+        rule.onNodeWithText("动态效果").assertIsDisplayed()
+        rule.onNodeWithTag("liquid-glass-switch").assertDoesNotExist()
         rule.runOnIdle {
-            assertEquals(listOf(SettingsEvent.SetEnableVad(true), SettingsEvent.SetThinkingEnabled(true), SettingsEvent.SetLiquidGlassEnabled(false)), events)
+            assertEquals(listOf(SettingsEvent.SetEnableVad(true), SettingsEvent.SetThinkingEnabled(true)), events)
             state = state.copy(isBusy = true)
         }
-        rule.onNodeWithTag("liquid-glass-switch").assertIsNotEnabled()
         rule.runOnIdle { appearance = false }
         rule.onNodeWithText("思考模式（更慢但更深入）").performScrollTo().assertIsNotEnabled()
         rule.onNodeWithText("刷新存储信息").performScrollTo().assertIsDisplayed().performClick()

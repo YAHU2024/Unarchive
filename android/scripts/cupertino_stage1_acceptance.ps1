@@ -28,7 +28,7 @@ if (-not $SkipBuild) {
         "com.unarchive.android.NoteEditorUiTest",
         "com.unarchive.android.MotionNavigationUiTest",
         "com.unarchive.android.PageMigrationUiTest",
-        "com.unarchive.android.LiquidGlassSettingsUiTest",
+        "com.unarchive.android.AppearanceSettingsUiTest",
         "com.unarchive.android.SiliconFlowModelSettingsUiTest",
         "com.unarchive.android.GraphRelationUiTest",
         "com.unarchive.android.DestinationAndSecurityUiTest",

@@ -185,9 +185,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         },
         appearanceContent = { onBack ->
             com.unarchive.android.ui.settings.AppearanceScreen(
-                state = state.settings,
                 onBack = onBack,
-                onEvent = onSettingsEvent,
             )
         },
         onGraphEvent = { event ->

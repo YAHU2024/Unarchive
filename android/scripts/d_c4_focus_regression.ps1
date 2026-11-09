@@ -32,7 +32,7 @@ if (-not $SkipBuild) {
 $navigationTests = @(
     "com.unarchive.android.MotionNavigationUiTest",
     "com.unarchive.android.D1NavigationTest",
-    "com.unarchive.android.LiquidGlassSettingsUiTest",
+    "com.unarchive.android.AppearanceSettingsUiTest",
     "com.unarchive.android.NotesLibraryUiTest"
 )
 $stateTests = @(

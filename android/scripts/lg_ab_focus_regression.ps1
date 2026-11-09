@@ -21,6 +21,6 @@ if (-not $SkipBuild) {
         "com.unarchive.android.D1NavigationTest",
         "com.unarchive.android.CreationFlowUiTest",
         "com.unarchive.android.NotesLibraryUiTest",
-        "com.unarchive.android.LiquidGlassSettingsUiTest"
+        "com.unarchive.android.AppearanceSettingsUiTest"
     ) `
     -SuccessMessage "LG-B fixture gate passed. Candidate material and user visual acceptance remain separate."

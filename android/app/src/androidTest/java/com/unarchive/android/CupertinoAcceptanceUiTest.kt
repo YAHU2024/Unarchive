@@ -81,7 +81,7 @@ class CupertinoAcceptanceUiTest(private val dark: Boolean, private val scale: Fl
                     onCreateEvent = {}, onNotesEvent = {}, onMeEvent = {},
                     legacyTestContent = { _, _ -> }, legacyLogContent = {},
                     appearanceContent = { back ->
-                        com.unarchive.android.ui.settings.AppearanceScreen(SettingsUiState(), {}, back)
+                        com.unarchive.android.ui.settings.AppearanceScreen(back)
                     },
                     legacySettingsContent = { back ->
                         SettingsScreen(SettingsUiState(), File(ApplicationProvider.getApplicationContext<Context>().cacheDir, "cupertino-no-models"), {}, {}, back)

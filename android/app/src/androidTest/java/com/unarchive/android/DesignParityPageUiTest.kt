@@ -51,7 +51,7 @@ class DesignParityPageUiTest(private val dark: Boolean, private val scale: Float
                         com.unarchive.android.ui.components.SecondaryPage("安全设置", back) { com.unarchive.android.ui.components.UnarchiveTextButton({ open(com.unarchive.android.security.SecurityProfile.IMA) }, androidx.compose.ui.Modifier.testTag("fixture-open-ima")) { androidx.compose.material3.Text("ima") } }
                     }, securityDetailContent = { profile, back ->
                         com.unarchive.android.ui.components.SecondaryPage(profile.name, back) { androidx.compose.material3.Text(profile.name, androidx.compose.ui.Modifier.testTag("fixture-security-detail")) }
-                    }, appearanceContent = { back -> com.unarchive.android.ui.settings.AppearanceScreen(SettingsUiState(), {}, back) })
+                    }, appearanceContent = { back -> com.unarchive.android.ui.settings.AppearanceScreen(back) })
                 }
             }
         }

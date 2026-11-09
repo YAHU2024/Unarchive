@@ -37,7 +37,7 @@ $editor = @(
 )
 $settings = @(
     "com.unarchive.android.PageMigrationUiTest",
-    "com.unarchive.android.LiquidGlassSettingsUiTest",
+    "com.unarchive.android.AppearanceSettingsUiTest",
     "com.unarchive.android.SiliconFlowModelSettingsUiTest"
 )
 $delivery = @(
