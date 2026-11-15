@@ -49,19 +49,17 @@ import com.unarchive.android.ui.theme.LocalMotionPolicy
 internal fun GlassDock(
     selectedIndex: Int,
     itemCount: Int,
+    positionOverride: Float? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
     require(itemCount > 0 && selectedIndex in 0 until itemCount)
     val motion = LocalMotionPolicy.current
-    val animatedPosition by animateFloatAsState(
-        targetValue = selectedIndex.toFloat(),
-        animationSpec = if (motion.animateLayout) {
-            spring(dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness)
-        } else { snap() },
-        label = "dock-capsule",
-    )
     // Reduced motion is synchronous; even a snap animation waits for a frame.
-    val position = if (motion.animateLayout) animatedPosition else selectedIndex.toFloat()
+    val position = if (!motion.animateLayout) selectedIndex.toFloat() else positionOverride ?: animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = spring(dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness),
+        label = "dock-capsule",
+    ).value
     val shape = RoundedCornerShape(32.dp)
     val itemHeight = dockItemHeight()
     GlassSurface(
@@ -158,4 +156,4 @@ internal fun RowScope.GlassDockItem(
 }
 
 @Composable
-private fun dockItemHeight() = if (LocalDensity.current.fontScale >= 1.5f) 88.dp else 56.dp
+internal fun dockItemHeight() = if (LocalDensity.current.fontScale >= 1.5f) 88.dp else 56.dp

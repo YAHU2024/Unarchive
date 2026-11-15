@@ -22,6 +22,9 @@ if (-not $SkipBuild) {
         & .\gradlew.bat :app:testDebugUnitTest `
             --tests com.unarchive.android.ui.theme.UiPoliciesTest `
             --tests com.unarchive.android.ui.components.GlassRendererTest `
+            --tests com.unarchive.android.ui.components.ContentBackGesturePolicyTest `
+            --tests com.unarchive.android.ui.components.ContentBackGestureControllerTest `
+            --tests com.unarchive.android.ui.components.NavigationDepthPolicyTest `
             :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
         if ($LASTEXITCODE -ne 0) { throw "D-C4 focused build/JVM regression failed ($LASTEXITCODE)." }
     } finally {
@@ -31,6 +34,8 @@ if (-not $SkipBuild) {
 
 $navigationTests = @(
     "com.unarchive.android.MotionNavigationUiTest",
+    "com.unarchive.android.AutomaticNavigationFrameUiTest",
+    "com.unarchive.android.RootPageGeometryUiTest",
     "com.unarchive.android.D1NavigationTest",
     "com.unarchive.android.AppearanceSettingsUiTest",
     "com.unarchive.android.NotesLibraryUiTest"

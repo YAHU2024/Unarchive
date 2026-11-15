@@ -2,6 +2,11 @@ package com.unarchive.android
 
 import android.net.Uri
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
@@ -31,16 +40,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -67,6 +84,9 @@ import com.unarchive.android.ui.components.AppIcon
 import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.RootPage
+import com.unarchive.android.ui.components.NavigationPage
+import com.unarchive.android.ui.components.NavigationBackHost
+import com.unarchive.android.ui.components.AutomaticNavigationHost
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveIconButton
 import com.unarchive.android.ui.components.UnarchiveTextButton
@@ -178,52 +198,64 @@ internal fun UnarchiveNavigationHost(
     val motion = LocalMotionPolicy.current
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    val backStack by navController.currentBackStack.collectAsState()
     val selectedMainRoute = mainDestinations
         .firstOrNull { it.route == currentRoute }
         ?.route
+    var lastMainIndex by rememberSaveable { mutableIntStateOf(0) }
+    val mainIndex = mainDestinations.indexOfFirst { it.route == selectedMainRoute }.takeIf { it >= 0 }
+    SideEffect { if (mainIndex != null) lastMainIndex = mainIndex }
+    val dockPosition = animateFloatAsState(
+        targetValue = (mainIndex ?: lastMainIndex).toFloat(),
+        animationSpec = if (motion.animateLayout) {
+            spring(dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness)
+        } else snap(),
+        label = "root-dock-selection",
+    )
 
-    GlassScaffold(
-        bottomBar = {
-            if (selectedMainRoute != null) {
-                AppBottomNavigation(
-                    currentRoute = selectedMainRoute,
-                    onSelect = { destination ->
-                        navController.navigateMainDestination(destination.route)
-                    },
-                )
-            }
-        },
-    ) {
+    NavigationBackHost(
+        routeId = backStackEntry?.id,
+        enabled = currentRoute != null && selectedMainRoute == null,
+        canGoBack = navController.previousBackStackEntry != null,
+    ) { backGesture ->
+        AutomaticNavigationHost(
+            entryId = backStackEntry?.id,
+            backStackIds = backStack.map { it.id },
+            main = selectedMainRoute != null,
+            interactive = backGesture.seeking,
+        ) {
         NavHost(
             navController = navController,
             startDestination = AppRoutes.CREATE,
             enterTransition = {
-                motion.pageEnter(
+                if (!isMainDestinationChange(initialState.destination.route, targetState.destination.route)) EnterTransition.None else motion.pageEnter(
                     forward = true,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
                 )
             },
             exitTransition = {
-                motion.pageExit(
+                if (!isMainDestinationChange(initialState.destination.route, targetState.destination.route)) ExitTransition.None else motion.pageExit(
                     forward = true,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
                 )
             },
             popEnterTransition = {
-                motion.pageEnter(
+                if (!backGesture.seeking && !isMainDestinationChange(initialState.destination.route, targetState.destination.route)) EnterTransition.None else motion.pageEnter(
                     forward = false,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                    interactiveBack = backGesture.seeking,
                 )
             },
             popExitTransition = {
-                motion.pageExit(
+                if (!backGesture.seeking && !isMainDestinationChange(initialState.destination.route, targetState.destination.route)) ExitTransition.None else motion.pageExit(
                     forward = false,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                    interactiveBack = backGesture.seeking,
                 )
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().clipToBounds(),
         ) {
-            composable(AppRoutes.CREATE) {
+            appPage(AppRoutes.CREATE, navController, selectedMainRoute, dockPosition) {
                 CreateScreen(
                     state = state.create,
                     onEvent = onCreateEvent,
@@ -233,14 +265,14 @@ internal fun UnarchiveNavigationHost(
                     onOpenDeveloperTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
                 )
             }
-            composable(AppRoutes.BATCH_CREATE) {
+            appPage(AppRoutes.BATCH_CREATE, navController, selectedMainRoute, dockPosition) {
                 BatchCreateScreen(
                     state = state.batchCreate,
                     onEvent = onBatchCreateEvent,
                     onBack = { navController.popBackStack() },
                 )
             }
-            composable(AppRoutes.NOTES) {
+            appPage(AppRoutes.NOTES, navController, selectedMainRoute, dockPosition) {
                 NotesScreen(
                     state = state.notes,
                     onEvent = onNotesEvent,
@@ -253,7 +285,7 @@ internal fun UnarchiveNavigationHost(
                     },
                 )
             }
-            composable(AppRoutes.NOTES_LIBRARY) {
+            appPage(AppRoutes.NOTES_LIBRARY, navController, selectedMainRoute, dockPosition) {
                 NotesLibraryScreen(
                     state = state.notes,
                     onBack = { navController.popBackStack() },
@@ -264,7 +296,7 @@ internal fun UnarchiveNavigationHost(
                     },
                 )
             }
-            composable(AppRoutes.NOTE_EDITOR) { entry ->
+            appPage(AppRoutes.NOTE_EDITOR, navController, selectedMainRoute, dockPosition) { entry ->
                 val platform = entry.arguments?.getString("platform")
                 val videoId = entry.arguments?.getString("videoId")
                 val cardVersion = entry.arguments?.getString("cardVersion")
@@ -317,14 +349,14 @@ internal fun UnarchiveNavigationHost(
                     )
                 }
             }
-            composable(AppRoutes.GRAPH) {
+            appPage(AppRoutes.GRAPH, navController, selectedMainRoute, dockPosition) {
                 GraphScreen(
                     state = state.graph,
                     onEvent = onGraphEvent,
                     onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
                 )
             }
-            composable(AppRoutes.DESTINATIONS) { entry ->
+            appPage(AppRoutes.DESTINATIONS, navController, selectedMainRoute, dockPosition) { entry ->
                 val card = state.destinations.card ?: run {
                     val platform = entry.arguments?.getString("platform")
                     val videoId = entry.arguments?.getString("videoId")
@@ -347,7 +379,7 @@ internal fun UnarchiveNavigationHost(
                     onOpenSecuritySettings = { navController.navigate(AppRoutes.SECURITY) },
                 )
             }
-            composable(AppRoutes.ME) {
+            appPage(AppRoutes.ME, navController, selectedMainRoute, dockPosition) {
                 MeScreen(
                     state = state.me,
                     onEvent = onMeEvent,
@@ -358,7 +390,7 @@ internal fun UnarchiveNavigationHost(
                     noteCount = state.notes.noteCount,
                 )
             }
-            composable(AppRoutes.MORE_TOOLS) {
+            appPage(AppRoutes.MORE_TOOLS, navController, selectedMainRoute, dockPosition) {
                 MoreToolsScreen(
                     onBack = { navController.popBackStack() },
                     onOpenTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
@@ -367,41 +399,73 @@ internal fun UnarchiveNavigationHost(
                     onOpenSettings = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
                 )
             }
-            composable(AppRoutes.LEGACY_TEST) {
+            appPage(AppRoutes.LEGACY_TEST, navController, selectedMainRoute, dockPosition) {
                 legacyTestContent(
                     { navController.popBackStack() },
                     { navController.navigate(AppRoutes.LEGACY_LOG) },
                 )
             }
-            composable(AppRoutes.LEGACY_RESULTS) {
+            appPage(AppRoutes.LEGACY_RESULTS, navController, selectedMainRoute, dockPosition) {
                 legacyResultsContent { navController.popBackStack() }
             }
-            composable(AppRoutes.LEGACY_LOG) {
+            appPage(AppRoutes.LEGACY_LOG, navController, selectedMainRoute, dockPosition) {
                 legacyLogContent { navController.popBackStack() }
             }
-            composable(AppRoutes.LEGACY_SETTINGS) {
+            appPage(AppRoutes.LEGACY_SETTINGS, navController, selectedMainRoute, dockPosition) {
                 legacySettingsContent { navController.popBackStack() }
             }
-            composable(AppRoutes.APPEARANCE) {
+            appPage(AppRoutes.APPEARANCE, navController, selectedMainRoute, dockPosition) {
                 if (appearanceContent != null) appearanceContent { navController.popBackStack() }
                 else legacySettingsContent { navController.popBackStack() }
             }
-            composable(AppRoutes.SETTINGS) {
+            appPage(AppRoutes.SETTINGS, navController, selectedMainRoute, dockPosition) {
                 com.unarchive.android.ui.settings.SettingsOverviewScreen({ navController.popBackStack() }) { section -> navController.navigate("me/settings/${section.name}") }
             }
-            composable(AppRoutes.SETTINGS_DETAIL) { entry ->
+            appPage(AppRoutes.SETTINGS_DETAIL, navController, selectedMainRoute, dockPosition) { entry ->
                 val section = com.unarchive.android.ui.settings.SettingsSection.entries.firstOrNull { it.name == entry.arguments?.getString("section") }
                 if (section != null && settingsDetailContent != null) settingsDetailContent(section) { navController.popBackStack() }
                 else legacySettingsContent { navController.popBackStack() }
             }
-            composable(AppRoutes.SECURITY) {
+            appPage(AppRoutes.SECURITY, navController, selectedMainRoute, dockPosition) {
                 if (securityOverviewContent != null) securityOverviewContent({ navController.popBackStack() }) { profile -> navController.navigate("security/${profile.name}") }
                 else securityContent { navController.popBackStack() }
             }
-            composable(AppRoutes.SECURITY_DETAIL) { entry ->
+            appPage(AppRoutes.SECURITY_DETAIL, navController, selectedMainRoute, dockPosition) { entry ->
                 val profile = com.unarchive.android.security.SecurityProfile.entries.firstOrNull { it.name == entry.arguments?.getString("profile") }
                 if (profile != null && securityDetailContent != null) securityDetailContent(profile) { navController.popBackStack() }
                 else securityContent { navController.popBackStack() }
+            }
+        }
+        }
+    }
+}
+
+/** Every route shares the same opaque page and depth treatment. */
+private fun NavGraphBuilder.appPage(
+    route: String,
+    navController: NavHostController,
+    selectedMainRoute: String?,
+    dockPosition: State<Float>,
+    content: @Composable (NavBackStackEntry) -> Unit,
+) {
+    composable(route) { entry ->
+        NavigationPage(route, entry.id) {
+            if (mainDestinations.any { it.route == route }) {
+                // Dock and its measured clearance belong to this page for the entire
+                // push/pop, including the period when it is visible underneath.
+                GlassScaffold(bottomBar = {
+                    AppBottomNavigation(selectedMainRoute ?: route, if (selectedMainRoute != null) dockPosition else null) { destination ->
+                        if (navController.currentBackStackEntry?.id == entry.id) {
+                            navController.navigateMainDestination(destination.route)
+                        }
+                    }
+                }) { content(entry) }
+            } else {
+                // Background/shadow stay full-window; only interactive content is inset.
+                // Consumption prevents nested Material Scaffolds from padding twice.
+                Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+                    content(entry)
+                }
             }
         }
     }
@@ -410,11 +474,13 @@ internal fun UnarchiveNavigationHost(
 @Composable
 private fun AppBottomNavigation(
     currentRoute: String,
+    dockPosition: State<Float>? = null,
     onSelect: (MainDestination) -> Unit,
 ) {
     GlassDock(
         selectedIndex = mainDestinations.indexOfFirst { it.route == currentRoute },
         itemCount = mainDestinations.size,
+        positionOverride = dockPosition?.value,
     ) {
         mainDestinations.forEach { destination ->
             GlassDockItem(

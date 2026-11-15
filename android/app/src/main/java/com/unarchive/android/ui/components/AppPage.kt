@@ -82,9 +82,7 @@ internal fun RootPage(
 @Composable
 internal fun SecondaryPage(title: String, onBack: () -> Unit, backTag: String = "page-back", titleTag: String = "secondary-page-title", actions: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier
-            .fillMaxSize()
-            .appContentBackGesture(enabled = true, onBack = onBack),
+        Modifier.fillMaxSize(),
     ) {
         PageTopBar(title, onBack, backTag, titleTag, actions)
         content()

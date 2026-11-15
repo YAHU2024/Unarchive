@@ -80,13 +80,15 @@ class UiPoliciesTest {
     @Test
     fun secondaryPageMotionUsesSlowerEntryAndQuickExitWithoutChangingSharedMotion() {
         val policy = MotionPolicy()
-        assertEquals(380, policy.secondaryPageEnterDurationMillis)
-        assertEquals(200, policy.secondaryPageExitDurationMillis)
+        assertEquals(320, policy.secondaryPageEnterDurationMillis)
+        assertEquals(280, policy.secondaryPageExitDurationMillis)
+        assertEquals(200, policy.secondaryPageCancelDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.secondaryPageCancelDurationMillis)
         assertEquals(260, policy.standardDurationMillis)
         assertEquals(180, policy.shortDurationMillis)
         assertEquals(0.18f, policy.pageTravelFraction)
-        assertEquals(0.22f, policy.secondaryPageTravelFraction)
-        assertEquals(0f, MotionPolicy.Reduced.secondaryPageTravelFraction)
+        assertEquals(0.23f, policy.secondaryPageParallaxFraction)
+        assertEquals(0f, MotionPolicy.Reduced.secondaryPageParallaxFraction)
     }
 
     @Test
@@ -94,5 +96,14 @@ class UiPoliciesTest {
         assertEquals(MotionPolicy.Reduced, MotionPolicy.fromAnimatorDurationScale(0f))
         assertEquals(MotionMode.Full, MotionPolicy.fromAnimatorDurationScale(0.5f).mode)
         assertEquals(MotionMode.Full, MotionPolicy.fromAnimatorDurationScale(2f).mode)
+    }
+
+    @Test
+    fun automaticTimingIsSeparateFromInteractiveReleaseAndReducedMotion() {
+        val changed = MotionPolicy().copy(automaticPageExitDurationMillis = 500)
+        assertEquals(280, changed.secondaryPageExitDurationMillis)
+        assertEquals(200, changed.secondaryPageCancelDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.automaticPageEnterDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.automaticPageExitDurationMillis)
     }
 }
