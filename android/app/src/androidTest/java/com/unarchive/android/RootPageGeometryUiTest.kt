@@ -4,9 +4,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -15,6 +17,7 @@ import com.unarchive.android.ui.components.*
 import com.unarchive.android.ui.theme.MotionPolicy
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
@@ -48,7 +51,7 @@ class RootPageGeometryUiTest {
         val description = "这段说明仍然留在滚动视口中。".repeat(6)
         var topPaddingPx = 0
         rule.setContent {
-            topPaddingPx = with(LocalDensity.current) { 8.dp.roundToPx() }
+            topPaddingPx = with(LocalDensity.current) { 40.dp.roundToPx() }
             UnarchiveTheme(motionPolicy = MotionPolicy.Reduced) {
                 RootPage("笔记", modifier = Modifier.fillMaxWidth().testTag("geometry-list")) {
                     item { LibraryPageHeader("笔记", description) }
@@ -64,6 +67,68 @@ class RootPageGeometryUiTest {
         }
         rule.onNodeWithText(description).assertIsDisplayed()
         rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+    }
+
+    @Test
+    fun narrowLargeTextKeepsFullTitleAndLiveActionsWithoutBlockingContent() {
+        var actionClicks = 0
+        var bodyClicks = 0
+        rule.setContent {
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, 2f)) {
+                UnarchiveTheme(motionPolicy = MotionPolicy.Reduced) {
+                    Box(Modifier.width(320.dp).fillMaxHeight()) {
+                        RootPage("笔记", modifier = Modifier.padding(horizontal = 20.dp).testTag("narrow-list"),
+                            actions = {
+                                UnarchiveIconButton({ actionClicks++ }, Modifier.testTag("narrow-refresh")) { AppIcon(AppIcons.Refresh) }
+                                UnarchiveIconButton({ actionClicks++ }, Modifier.testTag("narrow-more")) { AppIcon(AppIcons.More) }
+                            }) {
+                            item { LibraryPageHeader("笔记") }
+                            item {
+                                UnarchiveButton({ bodyClicks++ }, Modifier.testTag("narrow-body")) { Text("内容操作") }
+                            }
+                            items(20) { Text("内容 $it", Modifier.height(64.dp)) }
+                        }
+                    }
+                }
+            }
+        }
+        val layouts = mutableListOf<TextLayoutResult>()
+        rule.onNodeWithTag("root-large-title").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertEquals(1, layouts.single().lineCount)
+        val textLayout = layouts.single()
+        val textDetails = "widthOverflow=${textLayout.didOverflowWidth}, heightOverflow=${textLayout.didOverflowHeight}, " +
+            "size=${textLayout.size}, paragraph=${textLayout.multiParagraph.width}x${textLayout.multiParagraph.height}, " +
+            "constraints=${textLayout.layoutInput.constraints}"
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val directory = java.io.File(context.getExternalFilesDir(null), "root-header-after").apply { mkdirs() }
+        java.io.File(directory, "narrow-layout.txt").writeText(textDetails)
+        val bitmap = rule.onRoot().captureToImage().asAndroidBitmap()
+        java.io.File(directory, "narrow-large.png").outputStream().use {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        // The paragraph can retain the Row's wider measurement budget even when Text
+        // wraps its actual glyphs. Check visible character bounds rather than that budget.
+        assertTrue("Large title must fit vertically: $textDetails", !textLayout.didOverflowHeight)
+        assertTrue("Title must not be ellipsized", !textLayout.isLineEllipsized(0))
+        assertEquals(textLayout.layoutInput.text.length, textLayout.getLineEnd(0, visibleEnd = true))
+        for (offset in textLayout.layoutInput.text.indices) {
+            val character = textLayout.getBoundingBox(offset)
+            assertTrue("Every title character must fit: $character; $textDetails",
+                character.left >= -1f && character.right <= textLayout.size.width + 1f)
+        }
+        val title = rule.onNodeWithTag("root-large-title").fetchSemanticsNode().boundsInRoot
+        val refresh = rule.onNodeWithTag("narrow-refresh").fetchSemanticsNode().boundsInRoot
+        assertTrue("Large title must leave the actions clear", title.right < refresh.left)
+        rule.onNodeWithTag("narrow-refresh").performTouchInput { click(center) }
+        rule.onNodeWithTag("narrow-body").performTouchInput { click(center) }
+        rule.onNodeWithTag("narrow-list").performScrollToIndex(10)
+        rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+        rule.onNodeWithTag("narrow-more").performTouchInput { click(center) }
+        rule.runOnIdle {
+            assertEquals(2, actionClicks)
+            assertEquals(1, bodyClicks)
+        }
     }
 
     private fun checkGeometry(dark: Boolean, fontScale: Float) {

@@ -33,14 +33,22 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import kotlin.math.roundToInt
 
 /** Header measurement is local to its root page; no screen state or navigation ownership. */
 internal val LocalRootTitleHeight = staticCompositionLocalOf<(Int) -> Unit> { {} }
+internal val LocalRootTitleActionWidth = staticCompositionLocalOf { 0.dp }
+
+// Replaces the old 48dp toolbar reservation: titles and following content rise by 16dp.
+private val RootHeaderTopSpace = 32.dp
 
 /** Root content scrolls behind the floating Dock; only its end clears measured Chrome. */
 @Composable
@@ -54,26 +62,100 @@ internal fun RootPage(
 ) {
     val state = rememberLazyListState()
     var titleHeight by remember(title) { mutableStateOf(0) }
-    val topPadding = with(LocalDensity.current) { contentPadding.calculateTopPadding().roundToPx() }
+    var actionWidth by remember(title) { mutableStateOf(0) }
+    val density = LocalDensity.current
+    val titleTop = RootHeaderTopSpace + contentPadding.calculateTopPadding()
+    val topPadding = with(density) { titleTop.roundToPx() }
+    val trailingSpace = with(density) { actionWidth.toDp() }
     val collapsed by remember(state, topPadding) { derivedStateOf {
         state.firstVisibleItemIndex > 0 ||
             (titleHeight > 0 && state.firstVisibleItemScrollOffset >= topPadding + titleHeight)
     } }
-    Column(Modifier.fillMaxSize()) {
-        PageTopBar(if (collapsed) title else "", tag = "root-compact-title", actions = actions)
-        CompositionLocalProvider(LocalRootTitleHeight provides { titleHeight = it }) {
+    Box(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(
+            LocalRootTitleHeight provides { titleHeight = it },
+            LocalRootTitleActionWidth provides trailingSpace,
+        ) {
             LazyColumn(
                 state = state,
-                modifier = modifier.weight(1f),
+                modifier = modifier.fillMaxSize(),
                 verticalArrangement = verticalArrangement,
                 contentPadding = PaddingValues(
                     start = contentPadding.calculateStartPadding(LocalLayoutDirection.current),
                     end = contentPadding.calculateEndPadding(LocalLayoutDirection.current),
-                    top = contentPadding.calculateTopPadding(),
+                    top = titleTop,
                     bottom = contentPadding.calculateBottomPadding() + LocalDockClearance.current,
                 ),
                 content = content,
             )
+        }
+        RootHeaderChrome(
+            title = title,
+            collapsed = collapsed,
+            actionWidth = trailingSpace,
+            onActionWidthChanged = { actionWidth = it },
+            expandedTitleCenter = {
+                // Placement reads scroll state, so moving the one action row does not
+                // recompose its buttons or reset an anchored menu on every scroll frame.
+                val item = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
+                val height = titleHeight.takeIf { it > 0 }
+                    ?: with(density) { (41f * density.fontScale.coerceAtMost(1.4f)).dp.roundToPx() }
+                if (item == null) 0 else topPadding + item.offset + height / 2
+            },
+            actions = actions,
+        )
+    }
+}
+
+/** One persistent action row follows the large title, then pins beside the compact title. */
+@Composable
+private fun RootHeaderChrome(
+    title: String,
+    collapsed: Boolean,
+    actionWidth: Dp,
+    onActionWidthChanged: (Int) -> Unit,
+    expandedTitleCenter: () -> Int,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    val titleScale = density.fontScale.coerceAtMost(1.12f)
+    val titleInset = actionWidth.coerceAtLeast(64.dp)
+    Layout(
+        modifier = Modifier.fillMaxSize(),
+        content = {
+            Row(Modifier.testTag("root-actions").onSizeChanged { onActionWidthChanged(it.width) },
+                verticalAlignment = Alignment.CenterVertically, content = actions)
+            if (collapsed) {
+                Box(Modifier.background(MaterialTheme.colorScheme.background))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = with(density) { (17f * titleScale).dp.toSp() },
+                        lineHeight = with(density) { (24f * titleScale).dp.toSp() },
+                    ),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(vertical = if (density.fontScale > 1.4f) 4.dp else 10.dp)
+                        .testTag("root-compact-title").semantics { heading() },
+                )
+            }
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val actionRow = measurables[0].measure(loose)
+        val compactTitle = if (collapsed) measurables[2].measure(loose.copy(
+            maxWidth = (constraints.maxWidth - 2 * titleInset.roundToPx()).coerceAtLeast(0),
+        )) else null
+        val barHeight = maxOf(48.dp.roundToPx(), actionRow.height, compactTitle?.height ?: 0)
+        val background = if (collapsed) measurables[1].measure(
+            Constraints.fixed(constraints.maxWidth, barHeight),
+        ) else null
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            background?.placeRelative(0, 0)
+            compactTitle?.placeRelative((constraints.maxWidth - compactTitle.width) / 2,
+                (barHeight - compactTitle.height) / 2)
+            val center = expandedTitleCenter().coerceAtLeast(barHeight / 2)
+            actionRow.placeRelative(constraints.maxWidth - actionRow.width,
+                (center - actionRow.height / 2f).roundToInt())
         }
     }
 }

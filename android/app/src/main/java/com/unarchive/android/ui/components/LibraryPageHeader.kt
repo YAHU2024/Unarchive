@@ -2,6 +2,9 @@ package com.unarchive.android.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -16,22 +19,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
 
-/** Large, wrapping entry title shared by the three LG-B structure samples. */
+/** Large root title; reserves space for the single action row owned by RootPage. */
 @Composable
 internal fun LibraryPageHeader(title: String, description: String? = null, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val titleScale = density.fontScale.coerceAtMost(1.4f)
     val reportTitleHeight = LocalRootTitleHeight.current
+    val actionWidth = LocalRootTitleActionWidth.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.displaySmall.copy(fontSize = with(density) { (34f * titleScale).dp.toSp() }, lineHeight = with(density) { (41f * titleScale).dp.toSp() }),
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .testTag("root-large-title")
-                .onSizeChanged { reportTitleHeight(it.height) }
-                .semantics { heading() },
-        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(
+                title,
+                style = MaterialTheme.typography.displaySmall.copy(fontSize = with(density) { (34f * titleScale).dp.toSp() }, lineHeight = with(density) { (41f * titleScale).dp.toSp() }),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .testTag("root-large-title")
+                    .onSizeChanged { reportTitleHeight(it.height) }
+                    .semantics { heading() },
+            )
+            if (actionWidth > 0.dp) Spacer(Modifier.width(actionWidth + 12.dp))
+        }
         if (!description.isNullOrBlank()) Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
