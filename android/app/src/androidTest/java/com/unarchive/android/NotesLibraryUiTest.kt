@@ -5,6 +5,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -130,7 +131,7 @@ class NotesLibraryUiTest {
     }
 
     @Test
-    fun filtersNotesAndMaterialsAndExposesCompleteUserFacingMetadata() {
+    fun filtersNotesAndMaterialsAndShowsCompactMetadataWithoutLosingDraftAction() {
         val events = mutableListOf<NotesEvent>()
         val document = document()
         val material = material()
@@ -153,10 +154,13 @@ class NotesLibraryUiTest {
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
         composeRule.onNodeWithText("跑步训练笔记").assertIsDisplayed()
         composeRule.onNodeWithText("待整理的视频素材").assertIsDisplayed()
-        composeRule.onNodeWithText("#跑步 #训练 · 1 个关联").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("本地已保存").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("ima · 学习资料 · 根目录 · 已同步")
-            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("跑步训练摘要").assertIsDisplayed()
+        composeRule.onNodeWithText("#跑步 #训练 · 1 个关联").assertDoesNotExist()
+        composeRule.onNodeWithTag(
+            "notes-note-footer-note:${document.cardId.value}:${document.generation.cardVersion}",
+            useUnmergedTree = true,
+        ).assertIsDisplayed().assertTextContains("已保存", substring = true)
+        composeRule.onNodeWithContentDescription("ima · 学习资料 · 根目录 · 已同步").assertDoesNotExist()
         composeRule.onNodeWithText("kb-secret").assertDoesNotExist()
 
         composeRule.onNodeWithTag("notes-filter-saved").performClick()

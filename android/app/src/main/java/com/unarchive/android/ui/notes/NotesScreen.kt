@@ -2,7 +2,6 @@ package com.unarchive.android.ui.notes
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +45,7 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.ui.components.AppIcon
 import com.unarchive.android.ui.components.AppIcons
+import com.unarchive.android.ui.components.CompactNoteItem
 import com.unarchive.android.ui.components.AnchoredMenu
 import com.unarchive.android.ui.components.AnchoredMenuItem
 import com.unarchive.android.ui.components.CupertinoSegmentedControl
@@ -221,77 +221,56 @@ private fun NotesLibraryCard(
     val document = item.document
     val cardModifier = Modifier
         .fillMaxWidth()
-        .then(if (document != null) Modifier.clickable { onOpenEditor(document) } else Modifier)
-        .testTag("notes-item-${item.stableKey}")
+        .then(if (document == null) Modifier.testTag("notes-item-${item.stableKey}") else Modifier)
     Surface(modifier = cardModifier, color = MaterialTheme.colorScheme.surface,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(
             topStart = if (first) UnarchiveShapes.medium else 0.dp, topEnd = if (first) UnarchiveShapes.medium else 0.dp,
             bottomStart = if (last) UnarchiveShapes.medium else 0.dp, bottomEnd = if (last) UnarchiveShapes.medium else 0.dp)) {
         Column {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NotesThumbnail(item)
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top,
+            if (document != null) {
+                CompactNoteItem(
+                    item = item,
+                    coverRetrying = coverRetrying,
+                    onOpen = { onOpenEditor(document) },
+                    onRetryCover = { onRetryCover(document) },
+                    modifier = Modifier.testTag("notes-item-${item.stableKey}"),
+                )
+            } else {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        NotesThumbnail(item)
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
-                            Text(
-                                item.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (item.summary.isNotBlank()) {
-                            Text(
-                                item.summary,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        StatusSummary(item)
-                        if (item.tags.isNotEmpty() || item.relationCount > 0) {
-                            val tagSummary = item.tags.take(3).joinToString(" ") { "#$it" }
-                            val relationSummary = item.relationCount.takeIf { it > 0 }?.let { "$it 个关联" }
-                            Text(
-                                listOfNotNull(tagSummary.takeIf(String::isNotBlank), relationSummary).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Text(item.title, style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (item.summary.isNotBlank()) {
+                                Text(item.summary, style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            StatusSummary(item)
+                            if (item.tags.isNotEmpty() || item.relationCount > 0) {
+                                val tagSummary = item.tags.take(3).joinToString(" ") { "#$it" }
+                                val relationSummary = item.relationCount.takeIf { it > 0 }?.let { "$it 个关联" }
+                                Text(listOfNotNull(tagSummary.takeIf(String::isNotBlank), relationSummary).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
-                    if (document != null) AppIcon(AppIcons.Chevron, contentDescription = null,
-                        modifier = Modifier.align(Alignment.CenterVertically).size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                item.coverStatusLabel?.let { coverStatus ->
-                    Text(
-                        coverStatus,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.testTag("notes-cover-status-${item.stableKey}"),
-                    )
-                }
-                if (document != null) {
-                    if (item.canRetryCover) {
-                        UnarchiveTextButton(
-                            enabled = !coverRetrying,
-                            onClick = { onRetryCover(document) },
-                            modifier = Modifier.testTag("notes-cover-retry-${item.stableKey}"),
-                        ) {
-                            Text(if (coverRetrying) "封面重试中..." else "重试封面")
-                        }
+                    item.coverStatusLabel?.let { coverStatus ->
+                        Text(coverStatus, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("notes-cover-status-${item.stableKey}"))
                     }
-                } else {
                     val material = requireNotNull(item.material)
                     UnarchiveButton(
                         enabled = canGenerateDraft,

@@ -57,6 +57,7 @@ class NotesLibraryStateTest {
         assertEquals("cover.jpg", item.thumbnailPath)
         assertEquals(NotesThumbnailKind.COVER, item.thumbnailCandidates.first().kind)
         assertEquals(false, item.canRetryCover)
+        assertTrue(item.coverRetrySupported)
 
         val missing = buildNotesLibraryItems(
             noteDocuments = listOf(document),
@@ -90,6 +91,19 @@ class NotesLibraryStateTest {
         assertNull(item.thumbnailPath)
         assertNull(item.coverStatusLabel)
         assertFalse(item.canRetryCover)
+        assertFalse(item.coverRetrySupported)
+    }
+
+    @Test
+    fun coverCompletionRevisionIsScopedToThePreciseVersion() {
+        val document = note("reload", 3L, "摘要")
+        val key = NoteVersionKey(document.cardId, document.generation.cardVersion)
+        val item = buildNotesLibraryItems(
+            noteDocuments = listOf(document), noteCards = listOf(card(document)), storedResults = emptyList(),
+            coverReloadRevisions = mapOf(key to 2L, NoteVersionKey(document.cardId, "other-version") to 99L),
+        ).single()
+        assertEquals(2L, item.coverReloadRevision)
+        assertTrue(item.coverRetrySupported)
     }
 
     @Test

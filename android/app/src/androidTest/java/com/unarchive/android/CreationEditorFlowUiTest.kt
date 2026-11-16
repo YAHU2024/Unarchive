@@ -257,7 +257,10 @@ class CreationEditorFlowUiTest {
             }
         }
         rule.onNodeWithTag("bottom-nav-notes").performClick()
-        rule.onNodeWithContentDescription("本地已保存").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag(
+            "notes-note-footer-note:${document.cardId.value}:${document.generation.cardVersion}",
+            useUnmergedTree = true,
+        ).performScrollTo().assertIsDisplayed().assertTextContains("已保存", substring = true)
         rule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}").performScrollTo().performClick()
         waitForEditor()
         rule.onNodeWithTag("note-editor-destinations").performClick()

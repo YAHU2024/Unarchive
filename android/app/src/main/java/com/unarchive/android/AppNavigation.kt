@@ -260,6 +260,11 @@ internal fun UnarchiveNavigationHost(
                     onEvent = onCreateEvent,
                     onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
                     onOpenLatestNote = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
+                    onRetryCover = { document ->
+                        onNotesEvent(NotesEvent.RetryCover(
+                            document.cardId.platform, document.cardId.videoId, document.generation.cardVersion,
+                        ))
+                    },
                     onOpenBatchCreate = { navController.navigate(AppRoutes.BATCH_CREATE) },
                     onOpenDeveloperTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
                 )

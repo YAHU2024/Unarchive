@@ -6,7 +6,6 @@ import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
-import com.unarchive.android.card.NoteBlockType
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.result.StoredVideoResult
 import java.time.Instant
@@ -50,6 +49,9 @@ internal data class NotesLibraryItem(
     val canRetryCover: Boolean = false,
     val document: NoteDocument? = null,
     val material: StoredVideoResult? = null,
+    val compactStatus: CompactNoteStatus = document?.compactStatus() ?: CompactNoteStatus.SAVED,
+    val coverRetrySupported: Boolean = canRetryCover,
+    val coverReloadRevision: Long = 0L,
 ) {
     init {
         require((document == null) != (material == null)) {
@@ -76,6 +78,7 @@ internal fun buildNotesLibraryItems(
     syncRecords: List<KnowledgeSyncRecord> = emptyList(),
     thumbnailPaths: Map<Pair<KnowledgeCardId, String>, String> = emptyMap(),
     thumbnailCandidates: Map<Pair<KnowledgeCardId, String>, List<NotesThumbnailCandidate>> = emptyMap(),
+    coverReloadRevisions: Map<NoteVersionKey, Long> = emptyMap(),
 ): List<NotesLibraryItem> {
     val cardsByVersion = noteCards.associateBy { it.cardId to it.cardVersion }
     val savedIds = noteDocuments.mapTo(mutableSetOf(), NoteDocument::cardId)
@@ -96,7 +99,7 @@ internal fun buildNotesLibraryItems(
         NotesLibraryItem(
             kind = NotesLibraryItemKind.SAVED_NOTE,
             title = document.title,
-            summary = document.summaryText(),
+            summary = document.compactSummaryPreview(),
             ownerName = document.source.ownerName,
             durationSeconds = document.source.durationMs / 1_000L,
             tags = document.tags,
@@ -117,6 +120,9 @@ internal fun buildNotesLibraryItems(
             canRetryCover = card?.cardId?.platform == "bilibili" &&
                 (card.cover.state != CoverState.AVAILABLE || !coverCandidateAvailable),
             document = document,
+            compactStatus = document.compactStatus(currentRecords),
+            coverRetrySupported = card?.cardId?.platform == "bilibili",
+            coverReloadRevision = coverReloadRevisions[NoteVersionKey(document.cardId, document.generation.cardVersion)] ?: 0L,
         )
     }
 
@@ -162,16 +168,6 @@ internal fun formatNotesUpdatedAt(
         }
     }
 }
-
-private fun NoteDocument.summaryText(): String =
-    blocks.firstOrNull { it.type == NoteBlockType.SUMMARY }?.text
-        ?.normalizedPreview()
-        ?.takeIf(String::isNotEmpty)
-        ?: blocks.firstOrNull { it.type == NoteBlockType.KEY_POINT || it.type == NoteBlockType.USER_NOTE }
-            ?.text
-            ?.normalizedPreview()
-            ?.takeIf(String::isNotEmpty)
-        ?: sourceTranscript.joinToString(" ") { it.text }.normalizedPreview()
 
 private fun String.normalizedPreview(): String = trim().replace(Regex("\\s+"), " ")
 

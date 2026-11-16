@@ -2,7 +2,6 @@ package com.unarchive.android.ui.create
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,9 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.unarchive.android.card.NoteBlockType
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.SingleCardRecoveryState
 import com.unarchive.android.ui.components.AppIcon
@@ -32,6 +29,7 @@ import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.GlassBottomSheet
 import com.unarchive.android.ui.components.CupertinoTextField
 import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.CompactNoteItem
 import com.unarchive.android.ui.components.RecoveryCard
 import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
@@ -40,7 +38,8 @@ import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.state.CreateEvent
 import com.unarchive.android.ui.state.CreateProcessingStage
 import com.unarchive.android.ui.state.CreateUiState
-import com.unarchive.android.ui.state.formatNotesUpdatedAt
+import com.unarchive.android.ui.state.NoteVersionKey
+import com.unarchive.android.ui.state.buildNotesLibraryItems
 import com.unarchive.android.ui.state.displayLabel
 import com.unarchive.android.ui.theme.LocalMotionPolicy
 
@@ -52,6 +51,7 @@ internal fun CreateScreen(
     onOpenLatestNote: (NoteDocument) -> Unit,
     onOpenBatchCreate: () -> Unit = {},
     onOpenDeveloperTest: () -> Unit,
+    onRetryCover: (NoteDocument) -> Unit = {},
 ) {
     var recoveryToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     var recoverySheetVisible by rememberSaveable { mutableStateOf(false) }
@@ -235,51 +235,22 @@ internal fun CreateScreen(
         }
         state.latestNoteDocument?.let { document ->
             item {
-                ReadingSurface(modifier = Modifier.fillMaxWidth().testTag("create-latest-local-note")) {
-                    val summary = (
-                        document.blocks.firstOrNull { it.type == NoteBlockType.SUMMARY && it.text.isNotBlank() }?.text
-                            ?: document.blocks.firstOrNull {
-                                (it.type == NoteBlockType.KEY_POINT || it.type == NoteBlockType.USER_NOTE) && it.text.isNotBlank()
-                            }?.text
-                            ?: document.sourceTranscript.take(3).joinToString(" ") { it.text }
-                        ).trim().replace(Regex("\\s+"), " ")
-                    Row(
-                        Modifier.fillMaxWidth().clickable { onOpenLatestNote(document) }.testTag("create-latest-note"),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(document.title, style = MaterialTheme.typography.titleMedium,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (summary.isNotBlank()) Text(
-                                summary, style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                listOfNotNull(
-                                    formatNotesUpdatedAt(document.updatedAtEpochMs),
-                                    if (document.cardId.platform == "bilibili") "B 站" else null,
-                                ).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            when {
-                                document.editing.lastSaveError != null -> Text(
-                                    "本地保存失败", style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.semantics {
-                                        contentDescription = "本地保存失败，修改仍保留，请进入笔记重试保存"
-                                    },
-                                )
-                                document.editing.dirty -> Text(
-                                    "有未保存修改", style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        AppIcon(AppIcons.Chevron, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                val noteItem = state.latestNoteItem?.takeIf {
+                    it.document?.cardId == document.cardId &&
+                        it.document.generation.cardVersion == document.generation.cardVersion
+                } ?: buildNotesLibraryItems(listOf(document), emptyList(), emptyList()).single()
+                ReadingSurface(
+                    modifier = Modifier.fillMaxWidth().testTag("create-latest-local-note"),
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    CompactNoteItem(
+                        item = noteItem,
+                        coverRetrying = NoteVersionKey(document.cardId, document.generation.cardVersion) in state.coverRetryKeys,
+                        onOpen = { onOpenLatestNote(document) },
+                        onRetryCover = { onRetryCover(document) },
+                        modifier = Modifier.testTag("create-latest-note"),
+                        tagPrefix = "create",
+                    )
                 }
             }
         } ?: item {
