@@ -40,7 +40,7 @@ class RootHeaderAlignmentUiTest(private val dark: Boolean, private val scale: Fl
     private val events = mutableListOf<NotesEvent>()
 
     @Test
-    fun filledPagesAlignAndActionsSurviveCollapseAndTabRestoration() {
+    fun filledPagesAlignAndActionsSurviveShrinkAndTabRestoration() {
         mount(filled = true)
         inspectPages("filled")
         if (baseline) return
@@ -60,14 +60,16 @@ class RootHeaderAlignmentUiTest(private val dark: Boolean, private val scale: Fl
         rule.onNodeWithContentDescription("返回").performClick()
 
         rule.onNodeWithTag("notes-scroll").performScrollToIndex(10)
-        rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+        rule.onNodeWithTag("root-large-title").assertIsDisplayed()
+        rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
         rule.onAllNodesWithTag("notes-refresh").assertCountEquals(1)
         rule.onAllNodesWithTag("notes-more").assertCountEquals(1)
-        capture("filled-notes-collapsed")
+        capture("filled-notes-minimum")
         val pinned = bounds("notes-more")
         rule.onNodeWithTag("bottom-nav-me").performClick()
         rule.onNodeWithTag("bottom-nav-notes").performClick()
-        rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+        rule.onNodeWithTag("root-large-title").assertIsDisplayed()
+        rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
         assertEquals(pinned, bounds("notes-more"))
         rule.onNodeWithTag("notes-refresh").performTouchInput { click(center) }
         rule.runOnIdle { assertEquals(listOf(NotesEvent.Refresh, NotesEvent.Refresh), events) }
@@ -171,7 +173,7 @@ class RootHeaderAlignmentUiTest(private val dark: Boolean, private val scale: Fl
     private fun px(dp: Float) = with(rule.density) { dp.dp.toPx() }
     private fun rectangle(rect: Rect) = JSONArray(listOf(rect.left, rect.top, rect.right, rect.bottom))
     private fun directory(): File = File(ApplicationProvider.getApplicationContext<Context>()
-        .getExternalFilesDir(null), "root-header-$phase").apply { mkdirs() }
+        .getExternalFilesDir(null), "root-header-collapse-$phase").apply { mkdirs() }
 
     private fun capture(name: String) {
         rule.waitForIdle()

@@ -49,7 +49,6 @@ import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.AnchoredMenu
 import com.unarchive.android.ui.components.AnchoredMenuItem
 import com.unarchive.android.ui.components.CupertinoSegmentedControl
-import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveIconButton
 import com.unarchive.android.ui.components.UnarchiveTextButton
@@ -88,9 +87,6 @@ internal fun NotesScreen(
         actions = { NotesActions(onRefresh = { onEvent(NotesEvent.Refresh) }, onOpenLibrary = onOpenLegacyNotes) },
         contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
     ) {
-        item {
-            LibraryPageHeader("笔记", null)
-        }
         item {
             CupertinoSegmentedControl(
                 selectedIndex = when (selectedFilter) {

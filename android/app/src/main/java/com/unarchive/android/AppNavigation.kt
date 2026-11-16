@@ -81,7 +81,6 @@ import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.GlassScaffold
 import com.unarchive.android.ui.components.GlassDockItem
 import com.unarchive.android.ui.components.AppIcon
-import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.RootPage
 import com.unarchive.android.ui.components.NavigationPage
@@ -516,9 +515,6 @@ private fun GraphScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
     ) {
-        item {
-            LibraryPageHeader("图谱")
-        }
         if (state.noteDocuments.isEmpty()) {
             item {
                 GraphEmptyState(onOpenNotes = onOpenNotes)

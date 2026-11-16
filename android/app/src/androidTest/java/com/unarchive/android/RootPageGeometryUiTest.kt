@@ -47,26 +47,28 @@ class RootPageGeometryUiTest {
     }
 
     @Test
-    fun compactTitleAppearsWhenLargeTitleLeavesButDescriptionRemains() {
+    fun pinnedTitleRemainsWhileDescriptionScrollsBelowIt() {
         val description = "这段说明仍然留在滚动视口中。".repeat(6)
-        var topPaddingPx = 0
         rule.setContent {
-            topPaddingPx = with(LocalDensity.current) { 40.dp.roundToPx() }
             UnarchiveTheme(motionPolicy = MotionPolicy.Reduced) {
                 RootPage("笔记", modifier = Modifier.fillMaxWidth().testTag("geometry-list")) {
-                    item { LibraryPageHeader("笔记", description) }
+                    item { Text(description) }
                     items(20) { Text("可滚动内容 $it", Modifier.height(64.dp)) }
                 }
             }
         }
-        val largeTitleHeight = rule.onNodeWithTag("root-large-title")
-            .fetchSemanticsNode().boundsInRoot.height.toInt()
+        val title = rule.onNodeWithTag("root-large-title").fetchSemanticsNode().boundsInRoot
         rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
         rule.onNodeWithTag("geometry-list").performSemanticsAction(SemanticsActions.ScrollBy) {
-            it(0f, (largeTitleHeight + topPaddingPx + 1).toFloat())
+            it(0f, with(rule.density) { 100.dp.toPx() })
         }
         rule.onNodeWithText(description).assertIsDisplayed()
-        rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+        val small = rule.onNodeWithTag("root-large-title").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals(title.left, small.left, 1f)
+        assertEquals(with(rule.density) { 34.dp.toPx() }, small.center.y, 1f)
+        assertTrue("Title and bar must rise", small.center.y < title.center.y)
+        assertEquals(title.width * 24f / 34f, small.width, 1f)
+        rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
     }
 
     @Test
@@ -83,7 +85,6 @@ class RootPageGeometryUiTest {
                                 UnarchiveIconButton({ actionClicks++ }, Modifier.testTag("narrow-refresh")) { AppIcon(AppIcons.Refresh) }
                                 UnarchiveIconButton({ actionClicks++ }, Modifier.testTag("narrow-more")) { AppIcon(AppIcons.More) }
                             }) {
-                            item { LibraryPageHeader("笔记") }
                             item {
                                 UnarchiveButton({ bodyClicks++ }, Modifier.testTag("narrow-body")) { Text("内容操作") }
                             }
@@ -101,7 +102,7 @@ class RootPageGeometryUiTest {
             "size=${textLayout.size}, paragraph=${textLayout.multiParagraph.width}x${textLayout.multiParagraph.height}, " +
             "constraints=${textLayout.layoutInput.constraints}"
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
-        val directory = java.io.File(context.getExternalFilesDir(null), "root-header-after").apply { mkdirs() }
+        val directory = java.io.File(context.getExternalFilesDir(null), "root-header-collapse-after").apply { mkdirs() }
         java.io.File(directory, "narrow-layout.txt").writeText(textDetails)
         val bitmap = rule.onRoot().captureToImage().asAndroidBitmap()
         java.io.File(directory, "narrow-large.png").outputStream().use {
@@ -123,7 +124,8 @@ class RootPageGeometryUiTest {
         rule.onNodeWithTag("narrow-refresh").performTouchInput { click(center) }
         rule.onNodeWithTag("narrow-body").performTouchInput { click(center) }
         rule.onNodeWithTag("narrow-list").performScrollToIndex(10)
-        rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+        rule.onNodeWithTag("root-large-title").assertIsDisplayed()
+        rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
         rule.onNodeWithTag("narrow-more").performTouchInput { click(center) }
         rule.runOnIdle {
             assertEquals(2, actionClicks)
@@ -155,10 +157,11 @@ class RootPageGeometryUiTest {
         val heading = rule.onNodeWithTag("geometry-heading").fetchSemanticsNode().boundsInRoot
         assertTrue("Dock must occupy the bottom region", dock.top > root.center.y)
         assertTrue("Dock must stay below the heading", dock.top > heading.bottom)
-        rule.onNodeWithTag("geometry-list").performScrollToIndex(21)
+        rule.onNodeWithTag("geometry-list").performScrollToIndex(22)
         rule.onNodeWithTag("geometry-end").assertIsDisplayed()
         val end = rule.onNodeWithTag("geometry-end").fetchSemanticsNode().boundsInRoot
         assertTrue("Last item must fully clear Dock", end.bottom <= dock.top)
-        rule.onNodeWithTag("root-compact-title").assertIsDisplayed()
+        rule.onNodeWithTag("root-large-title").assertIsDisplayed()
+        rule.onAllNodesWithTag("root-compact-title").assertCountEquals(0)
     }
 }

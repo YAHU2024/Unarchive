@@ -29,7 +29,6 @@ import com.unarchive.android.ui.components.InsetGroupedList
 import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.AppIcon
 import com.unarchive.android.ui.components.NavigationSettingsRow
-import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.PageHeader
 import com.unarchive.android.ui.state.MeEvent
 import com.unarchive.android.ui.state.MeUiState
@@ -52,7 +51,6 @@ internal fun MeScreen(
             .padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { LibraryPageHeader("我的", "") }
         item {
             InsetGroupedList(modifier = Modifier.testTag("me-workspace")) {
                 Row(Modifier.padding(20.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {

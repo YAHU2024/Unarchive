@@ -31,7 +31,6 @@ import com.unarchive.android.ui.components.AppIcon
 import com.unarchive.android.ui.components.AppIcons
 import com.unarchive.android.ui.components.GlassBottomSheet
 import com.unarchive.android.ui.components.CupertinoTextField
-import com.unarchive.android.ui.components.LibraryPageHeader
 import com.unarchive.android.ui.components.ReadingSurface
 import com.unarchive.android.ui.components.RecoveryCard
 import com.unarchive.android.ui.components.StatusBannerTone
@@ -76,9 +75,6 @@ internal fun CreateScreen(
             UnarchiveTextButton(onOpenBatchCreate, Modifier.testTag("create-batch-create")) { Text("批量") }
         },
     ) {
-        item {
-            LibraryPageHeader(title = "创作")
-        }
         item {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
