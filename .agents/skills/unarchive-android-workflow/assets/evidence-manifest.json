@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "taskId": "replace-with-current-task-id",
+  "requirementIds": [],
+  "checks": [
+    {"id": "jvm", "kind": "junit", "required": true, "path": "evidence/junit"},
+    {"id": "debug-build", "kind": "build", "required": true, "path": "evidence/build.log"},
+    {"id": "focused-device", "kind": "device", "required": true, "path": "evidence/device/result.json"},
+    {"id": "reference-comparison", "kind": "visual", "required": true, "path": "evidence/visual.json"},
+    {"id": "human-acceptance", "kind": "manual", "required": true, "path": "evidence/human.json"}
+  ]
+}

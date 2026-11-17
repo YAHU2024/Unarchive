@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI 设计稿与实现对照"
+  short_description: "逐切片对照参考与实机画面，记录视觉差异、动态状态和人工接受范围"
+  default_prompt: "使用 $ui-reference-acceptance 对照当前参考图与实际实现，生成带证据的差异报告。"
