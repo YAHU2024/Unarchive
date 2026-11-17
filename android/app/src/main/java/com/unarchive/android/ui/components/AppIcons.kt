@@ -29,6 +29,17 @@ internal object AppIcons {
     val More = icon("ellipsis", "M5 12h.01M12 12h.01M19 12h.01")
     val Folder = icon("folder", "M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z")
     val Share = icon("share-2", "M21 5a3 3 0 1 1-6 0a3 3 0 1 1 6 0", "M9 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0", "M21 19a3 3 0 1 1-6 0a3 3 0 1 1 6 0", "m8.59 13.51 6.83 3.98m-.01-10.98-6.82 3.98")
+    val Undo = icon("undo-2", "M3 7v6h6", "M21 17a9 9 0 0 0-15.5-6.5L3 13")
+    val Redo = icon("redo-2", "M21 7v6h-6", "M3 17a9 9 0 0 1 15.5-6.5L21 13")
+    val Outline = icon("list-tree", "M21 12h-8M21 6H8M21 18h-8M3 6v12h5")
+    val Bold = icon("bold", "M6 12h9a4 4 0 0 1 0 8H6z", "M6 4h8a4 4 0 0 1 0 8H6z")
+    val Italic = icon("italic", "M19 4h-9M14 20H5M15 4 9 20")
+    val List = icon("list", "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01")
+    val Task = icon("list-todo", "M13 5h8M13 12h8M13 19h8M3 10h4v4H3zM3 17h4v4H3z", "m3 3 2 2 4-4")
+    val TextStyle = icon("type", "M4 7V4h16v3M9 20h6M12 4v16")
+    // A single 24dp optical grid, including the chevron, rather than a nested icon.
+    val KeyboardHide = icon("keyboard-hide", "M4 3h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M7 7h.01M11 7h.01M15 7h.01M17 7h.01M7 11h10m-9 8 4 3 4-3")
+    val KeyboardShow = icon("keyboard", "M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z", "M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8")
 
     private fun icon(name: String, vararg paths: String, autoMirror: Boolean = false): ImageVector =
         ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f, autoMirror = autoMirror).apply {

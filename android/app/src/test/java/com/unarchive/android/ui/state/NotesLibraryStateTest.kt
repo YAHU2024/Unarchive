@@ -31,6 +31,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NotesLibraryStateTest {
+    @Test fun formalV3PresentationOverridesLegacyDisplayAndSyncRevisionWithoutMutatingV2() {
+        val document = note("v3", 2_000L, "旧摘要", contentRevision = 2L)
+        val key = document.cardId to document.generation.cardVersion
+        val formal = com.unarchive.android.card.FormalNotePresentation(document.cardId, document.generation.cardVersion,
+            7L, "新正式标题", "新正文摘要", 9_000L, emptyList())
+        val oldFailure = syncRecord(document, 2L, 10_000L).copy(state = KnowledgeSyncState.PERMANENT_FAILURE)
+        val current = syncRecord(document, 7L, 9_000L)
+        val item = buildNotesLibraryItems(listOf(document), listOf(card(document)), emptyList(),
+            listOf(oldFailure, current), formalPresentations = mapOf(key to formal)).single()
+        assertEquals("新正式标题", item.title)
+        assertEquals("新正文摘要", item.summary)
+        assertEquals(9_000L, item.updatedAtEpochMs)
+        assertEquals(CompactNoteStatus.SAVED, item.compactStatus)
+        assertEquals(document, item.document)
+        assertEquals("笔记 v3", document.title)
+        val legacy = buildNotesLibraryItems(listOf(document), listOf(card(document)), emptyList()).single()
+        assertEquals("旧摘要", legacy.summary)
+    }
+
     @Test
     fun coverCandidatePrecedesChapterScreenshotAndFailureRemainsRetryable() {
         val document = note("cover", 3L, "摘要")

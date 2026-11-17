@@ -23,8 +23,7 @@ object FormalMarkdownSnapshotResolver {
     ): FormalMarkdownSnapshot {
         val v3 = content?.takeIf {
             it.cardId == card.cardId &&
-                it.cardVersion == card.cardVersion &&
-                it.markdown.isNotBlank()
+                it.cardVersion == card.cardVersion
         }
         if (v3 != null) {
             return FormalMarkdownSnapshot(

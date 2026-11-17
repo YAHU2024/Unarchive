@@ -62,9 +62,7 @@ class ImaSyncService(
         try {
             if (noteId == null) {
                 val rendered = MarkdownCardRenderer.embedAssetsWithStats(card.markdown, card.assets, readAsset)
-                val imageMarkdown = rendered.missingPaths.fold(rendered.markdown) { current, path ->
-                    current.replace("![]($path)", "")
-                }
+                val imageMarkdown = rendered.markdownWithoutMissingAssets
                 // A private relative path is not usable by ima. Remove any
                 // unresolved non-data image marker from the remote payload.
                 val textOnlyMarkdown = imageMarkdown.replace(RELATIVE_IMAGE_LINK, "")

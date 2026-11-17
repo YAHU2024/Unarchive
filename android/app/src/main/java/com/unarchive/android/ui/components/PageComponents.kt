@@ -111,9 +111,10 @@ internal fun UnarchiveIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    hapticFeedback: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    CupertinoIconAction(onClick = onClick, enabled = enabled, modifier = modifier, icon = content)
+    CupertinoIconAction(onClick = onClick, enabled = enabled, modifier = modifier, hapticFeedback = hapticFeedback, icon = content)
 }
 
 @Composable

@@ -26,6 +26,8 @@ data class MarkdownAiProposal(
     val model: String,
     val createdAtEpochMs: Long,
     val status: MarkdownAiProposalStatus = MarkdownAiProposalStatus.PENDING,
+    /** Absent on schema-1 candidates created before asset-bound proposals. */
+    val baseAssetsFingerprint: String? = null,
 ) {
     init {
         require(proposalId.isNotBlank()) { "proposalId cannot be blank" }
@@ -37,6 +39,7 @@ data class MarkdownAiProposal(
         }
         require(model.isNotBlank()) { "model cannot be blank" }
         require(createdAtEpochMs >= 0L) { "createdAtEpochMs cannot be negative" }
+        require(baseAssetsFingerprint == null || baseAssetsFingerprint.matches(Regex("[0-9a-f]{64}")))
     }
 
     fun diffAgainst(markdown: String): MarkdownAiDiff = MarkdownAiDiff.between(markdown, proposedMarkdown)
@@ -94,15 +97,26 @@ object MarkdownAiProposalBuilder {
             proposedMarkdown = proposedMarkdown,
             model = model,
             createdAtEpochMs = createdAtEpochMs,
+            baseAssetsFingerprint = markdownAiAssetsFingerprint(content.structuredMetadata.assets),
         )
     }
 }
+
+fun markdownAiAssetsFingerprint(assets: List<com.unarchive.android.card.CardAsset>): String =
+    NoteContent.markdownFingerprint(assets.sortedBy { it.assetId }.joinToString("\n") { it.toString() })
 
 /** Re-checks untrusted AI output before it can enter the editor draft. */
 object MarkdownAiSafetyValidator {
     data class Result(val errors: List<String>) {
         val isSafe: Boolean get() = errors.isEmpty()
     }
+
+    /** New document editor policy; keeps legacy source-page allowlists unchanged. */
+    fun validateForNote(
+        markdown: String,
+        assets: List<com.unarchive.android.card.CardAsset>,
+        isManagedAssetAvailable: (com.unarchive.android.card.CardAsset) -> Boolean,
+    ): Result = com.unarchive.android.editor.ai.AiMarkdownSafety.validate(markdown, assets, isManagedAssetAvailable)
 
     fun validate(markdown: String): Result {
         val errors = mutableListOf<String>()

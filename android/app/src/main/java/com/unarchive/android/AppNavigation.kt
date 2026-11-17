@@ -1,6 +1,7 @@
 package com.unarchive.android
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -51,6 +52,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,11 +73,10 @@ import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
 import com.unarchive.android.editor.MarkdownAiProposalGenerator
 import com.unarchive.android.editor.MarkdownAiProposalRepository
-import com.unarchive.android.editor.MarkdownEditorMigrationRoute
+import com.unarchive.android.editor.ui.MarkdownNoteMigrationRoute
 import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
 import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.editor.NoteEditorRoute
-import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.batch.BatchCreateScreen
 import com.unarchive.android.ui.components.GlassDock
 import com.unarchive.android.ui.components.AppIcons
@@ -91,7 +93,6 @@ import com.unarchive.android.ui.components.UnarchiveIconButton
 import com.unarchive.android.ui.components.UnarchiveTextButton
 import com.unarchive.android.ui.create.CreateScreen
 import com.unarchive.android.ui.destination.DestinationScreen
-import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.ui.me.MeScreen
 import com.unarchive.android.ui.me.MoreToolsScreen
 import com.unarchive.android.ui.notes.NotesScreen
@@ -131,6 +132,7 @@ internal object AppRoutes {
 
     fun noteEditor(document: NoteDocument): String =
         "notes/${Uri.encode(document.cardId.platform)}/${Uri.encode(document.cardId.videoId)}/${Uri.encode(document.generation.cardVersion)}/edit"
+
 
     fun destinations(document: NoteDocument): String =
         "destinations/${Uri.encode(document.cardId.platform)}/${Uri.encode(document.cardId.videoId)}/${Uri.encode(document.generation.cardVersion)}"
@@ -192,6 +194,7 @@ internal fun UnarchiveNavigationHost(
     noteDocumentRepository: NoteDocumentRepository? = null,
     noteContentRepository: FileNoteContentRepository? = null,
     knowledgeCardRepository: KnowledgeCardRepository? = null,
+    onFormalNoteCommitted: (com.unarchive.android.card.NoteContent) -> Unit = {},
 ) {
     val navController = rememberNavController()
     val motion = LocalMotionPolicy.current
@@ -301,57 +304,35 @@ internal fun UnarchiveNavigationHost(
                 )
             }
             appPage(AppRoutes.NOTE_EDITOR, navController, selectedMainRoute, dockPosition) { entry ->
-                val platform = entry.arguments?.getString("platform")
-                val videoId = entry.arguments?.getString("videoId")
-                val cardVersion = entry.arguments?.getString("cardVersion")
-                val document = state.notes.noteDocumentVersions
-                    .ifEmpty { state.notes.noteDocuments }
-                    .firstOrNull {
-                    it.cardId.platform == platform &&
-                        it.cardId.videoId == videoId &&
-                        it.generation.cardVersion == cardVersion
+                val document = state.notes.noteDocumentVersions.ifEmpty { state.notes.noteDocuments }.firstOrNull {
+                    it.cardId.platform == entry.arguments?.getString("platform") &&
+                        it.cardId.videoId == entry.arguments?.getString("videoId") &&
+                        it.generation.cardVersion == entry.arguments?.getString("cardVersion")
                 }
-                if (document == null || noteDocumentRepository == null) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Text("找不到这篇笔记")
-                        UnarchiveTextButton(onClick = { navController.popBackStack() }) { Text("返回") }
+                if (document != null && noteContentRepository != null && noteDocumentRepository != null) {
+                    val context = LocalContext.current
+                    val originalCard = state.notes.noteCards.firstOrNull { it.cardId == document.cardId && it.cardVersion == document.generation.cardVersion }
+                    val importer = remember(originalCard, knowledgeCardRepository) {
+                        if (originalCard != null && knowledgeCardRepository != null)
+                            com.unarchive.android.editor.assets.NoteAssetStore(knowledgeCardRepository, originalCard, context.cacheDir) else null
                     }
-                } else if (noteContentRepository != null) {
-                    val card = state.notes.noteCards.firstOrNull { candidate ->
-                        candidate.cardId == document.cardId &&
-                            candidate.cardVersion == document.generation.cardVersion
-                    }
-                    MarkdownEditorMigrationRoute(
-                        document = document,
-                        contentRepository = noteContentRepository,
-                        documentRepository = noteDocumentRepository,
-                        aiProposalGenerator = markdownAiProposalGenerator,
-                        aiProposalRepository = markdownAiProposalRepository,
-                        onBack = { navController.popBackStack() },
-                        onOpenDestinations = {
-                            onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                    MarkdownNoteMigrationRoute(document, noteContentRepository, noteDocumentRepository,
+                        onBack = { navController.popBackStack() }, onFormalCommitted = onFormalNoteCommitted,
+                        onOpenExternal = { request ->
+                            onDestinationEvent(DestinationEvent.OpenFormal(request))
                             navController.navigate(AppRoutes.destinations(document))
-                        },
-                        assetResolver = if (card != null && knowledgeCardRepository != null) {
-                            cardAssetMarkdownResolver(card, knowledgeCardRepository)
-                        } else {
-                            com.unarchive.android.ui.markdown.NoOpMarkdownAssetResolver
-                        },
-                        imageOptions = card?.assets?.let(::markdownImageOptions).orEmpty(),
-                    )
-                } else {
-                    NoteEditorRoute(
-                        document = document,
-                        repository = noteDocumentRepository,
-                        aiProposalGenerator = aiProposalGenerator,
-                        proposalRepository = proposalRepository,
-                        onBack = { navController.popBackStack() },
-                        onOpenDestinations = {
-                            onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
-                            navController.navigate(AppRoutes.destinations(document))
-                        },
-                    )
-                }
+                        }, imageImporter = importer, aiRepository = markdownAiProposalRepository,
+                        aiGenerator = markdownAiProposalGenerator, isManagedAssetAvailable = { asset ->
+                            originalCard != null && knowledgeCardRepository != null &&
+                                com.unarchive.android.card.KnowledgeCardExport.readManagedAsset(asset,
+                                    knowledgeCardRepository.assetFile(originalCard.copy(assets = listOf(asset)), asset))
+                                    ?.let { bytes -> com.unarchive.android.card.KnowledgeCard.sha256(bytes) == asset.sha256 } == true
+                        }, readAsset = { asset ->
+                            if (originalCard != null && knowledgeCardRepository != null)
+                                com.unarchive.android.card.KnowledgeCardExport.readManagedAsset(asset,
+                                    knowledgeCardRepository.assetFile(originalCard.copy(assets = listOf(asset)), asset)) else null
+                        })
+                } else Column { Text("找不到这篇笔记"); UnarchiveTextButton(onClick = { navController.popBackStack() }) { Text("返回") } }
             }
             appPage(AppRoutes.GRAPH, navController, selectedMainRoute, dockPosition) {
                 GraphScreen(
@@ -361,7 +342,9 @@ internal fun UnarchiveNavigationHost(
                 )
             }
             appPage(AppRoutes.DESTINATIONS, navController, selectedMainRoute, dockPosition) { entry ->
-                val card = state.destinations.card ?: run {
+                val back = { onDestinationEvent(DestinationEvent.Close); navController.popBackStack(); Unit }
+                BackHandler(onBack = back)
+                val card = state.destinations.card ?: if (state.destinations.cardError != null) null else run {
                     val platform = entry.arguments?.getString("platform")
                     val videoId = entry.arguments?.getString("videoId")
                     val cardVersion = entry.arguments?.getString("cardVersion")
@@ -379,7 +362,7 @@ internal fun UnarchiveNavigationHost(
                 DestinationScreen(
                     state = state.destinations.copy(card = card),
                     onEvent = onDestinationEvent,
-                    onBack = { navController.popBackStack() },
+                    onBack = back,
                     onOpenSecuritySettings = { navController.navigate(AppRoutes.SECURITY) },
                 )
             }

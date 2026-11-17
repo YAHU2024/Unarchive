@@ -9,6 +9,21 @@ import org.junit.Test
 
 class FormalMarkdownSnapshotTest {
     @Test
+    fun emptyCommittedV3BodyRemainsAuthoritativeOverLegacyTextAndRecoveryDraft() {
+        val legacy = card(markdown = "# legacy text which must not return")
+        val content = NoteContent(
+            cardId = legacy.cardId, cardVersion = legacy.cardVersion, markdown = "",
+            markdownRevision = 8L, structuredMetadata = legacy.toNoteDocument(),
+            draftState = NoteDraftState("# unsaved", 8L, NoteContent.markdownFingerprint("# unsaved"), 3L),
+            createdAtEpochMs = 1L, updatedAtEpochMs = 2L,
+        )
+        val snapshot = FormalMarkdownSnapshotResolver.resolve(legacy, content)
+        assertEquals(FormalMarkdownSource.MARKDOWN_V3, snapshot.source)
+        assertEquals("", snapshot.card.markdown)
+        assertEquals(8L, snapshot.markdownRevision)
+    }
+
+    @Test
     fun v3FormalContentReplacesLegacyCardAndUsesMarkdownRevision() {
         val legacy = card(title = "旧标题", markdown = "# 旧正文")
         val metadata = legacy.toNoteDocument().copy(title = "正式标题")

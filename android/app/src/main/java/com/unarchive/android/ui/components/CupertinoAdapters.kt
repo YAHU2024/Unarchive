@@ -135,6 +135,7 @@ internal fun CupertinoIconAction(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     contentDescription: String? = null,
+    hapticFeedback: Boolean = false,
     icon: @Composable () -> Unit,
 ) {
     var feedbackSequence by remember { mutableStateOf(0) }
@@ -148,13 +149,17 @@ internal fun CupertinoIconAction(
         }
     }
     var pressed by remember { mutableStateOf(false) }
+    val feedbackView = androidx.compose.ui.platform.LocalView.current
     val emphasized = enabled && (pressed || activated)
     val scale by animateFloatAsState(
         if (emphasized && motion.animateLayout) 0.9f else 1f,
         animationSpec = if (motion.animateLayout) spring(stiffness = 900f) else snap(), label = "icon-press",
     )
     CupertinoIconButton(
-        onClick = { activated = true; feedbackSequence++; onClick() },
+        onClick = {
+            if (hapticFeedback && motion.animateLayout) feedbackView.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+            activated = true; feedbackSequence++; onClick()
+        },
         modifier = modifier.size(48.dp)
             .pointerInput(enabled) {
                 if (enabled) awaitEachGesture {

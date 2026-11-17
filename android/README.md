@@ -10,6 +10,13 @@ flow processes one Bilibili link, downloads its audio, transcribes it on device,
 and persists a timestamped result that can be restored, copied, shared, or rerun.
 The local-audio ASR benchmark remains available for engine and device checks.
 
+Notes open in reading mode. Tap Edit to write in one continuous document; the
+blue check publishes a formal local revision and returns to reading. Drafts
+are protected quietly and offered for explicit recovery when reopening. The
+editor includes formatting, outline/search, source editing, local pictures,
+undo/redo, and reviewable AI candidates. Sharing and synchronization use a
+formally saved revision; unsaved changes require an explicit version choice.
+
 **v0.1.0 released 2026-08-14** (see
 [GitHub Releases](https://github.com/YAHU2024/Unarchive/releases)): signed APK,
 corresponding-source archive, CycloneDX SBOM, and checksums. Requires Android

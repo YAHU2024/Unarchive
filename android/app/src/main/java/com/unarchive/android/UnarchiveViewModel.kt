@@ -278,6 +278,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     var imaFolderKnowledgeBaseId by mutableStateOf("")
     var destinationCardId by mutableStateOf<String?>(null)
     var destinationCardVersion by mutableStateOf<String?>(null)
+    private var destinationFormalRequest: com.unarchive.android.editor.FormalOperationRequest? = null
     var destinationCardError by mutableStateOf<String?>(null)
     var destinationExportMessage by mutableStateOf("")
     var destinationExportEmbeddedAssetCount by mutableIntStateOf(0)
@@ -361,6 +362,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
     var noteDocuments by mutableStateOf<List<NoteDocument>>(noteDocumentRepository.listAllVersions())
         private set
+    var formalNotePresentations by mutableStateOf<Map<Pair<com.unarchive.android.card.KnowledgeCardId, String>, com.unarchive.android.card.FormalNotePresentation>>(emptyMap())
+        private set
+    private var formalPresentationGeneration = 0L
     var singleCardRecoveries by mutableStateOf(loadRecoveryRecords())
         private set
     private var noteDocumentsRefreshGeneration = 0L
@@ -955,7 +959,10 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun syncKnowledgeCard(card: KnowledgeCard, requestedTarget: KnowledgeSyncTarget?) {
-        syncKnowledgeCard(card, requestedTarget, contentRevisionFor(card))
+        val revision = runCatching {
+            formalMarkdownSnapshot(card, destinationFormalRequest?.takeIf { isDestinationCard(card) }).markdownRevision
+        }.getOrElse { status = "指定正式版本不可用，请返回笔记重新选择"; return }
+        syncKnowledgeCard(card, requestedTarget, revision)
     }
 
     private fun syncKnowledgeCard(
@@ -964,7 +971,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         contentRevision: Long,
     ) {
         if (imaSyncing || generateJob != null || runningJob != null || exportJob != null) return
-        val snapshot = formalMarkdownSnapshot(card)
+        val snapshot = runCatching { formalMarkdownSnapshot(card, destinationFormalRequest?.takeIf { isDestinationCard(card) }) }
+            .getOrElse { status = "指定正式版本不可用，请返回笔记重新选择"; return }
         if (snapshot.markdownRevision != contentRevision) {
             status = "本地 Markdown 已更新，请刷新笔记后再同步。"
             return
@@ -990,7 +998,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 val result = ImaSyncService(
                     ImaClient(clientId, apiKey),
                     imaSyncStateRepository,
-                    readAsset = { asset -> knowledgeCardRepository.assetFile(externalCard, asset)?.takeIf(File::isFile)?.readBytes() },
+                    readAsset = { asset -> readFormalAsset(externalCard, asset) },
                 ).sync(
                     externalCard, target.id.trim(), target.folderId.trim(),
                     targetName = target.name, folderName = target.folderName,
@@ -1222,6 +1230,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
      * not hide already readable notes.
      */
     fun refreshNoteDocuments() {
+        refreshFormalNotePresentations()
         val cards = knowledgeCards
         val refreshGeneration = ++noteDocumentsRefreshGeneration
         viewModelScope.launch {
@@ -1245,9 +1254,29 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
     private fun publishNoteDocuments(refreshGeneration: Long, documents: List<NoteDocument>) {
         if (refreshGeneration != noteDocumentsRefreshGeneration) return
         noteDocuments = documents
+        refreshFormalNotePresentations()
         if (graphSelectedCardId == null || documents.none { it.cardId.value == graphSelectedCardId }) {
             graphSelectedCardId = documents.firstOrNull()?.cardId?.value
         }
+    }
+
+    /** Formal-only overlay shared by Notes and Create, also rebuilt on cold open. */
+    fun refreshFormalNotePresentations() {
+        val generation = ++formalPresentationGeneration
+        val identities = (noteDocuments.map { it.cardId to it.generation.cardVersion } +
+            knowledgeCardVersions.map { it.cardId to it.cardVersion }).distinct()
+        viewModelScope.launch {
+            val presentations = withContext(Dispatchers.IO) {
+                identities.mapNotNull { key -> noteContentRepository.find(key.first, key.second)?.let {
+                    key to com.unarchive.android.card.FormalNotePresentation.from(it)
+                } }.toMap()
+            }
+            if (generation == formalPresentationGeneration) formalNotePresentations = presentations
+        }
+    }
+
+    private fun readFormalAsset(card: KnowledgeCard, asset: com.unarchive.android.card.CardAsset): ByteArray? {
+        return KnowledgeCardExport.readManagedAsset(asset, knowledgeCardRepository.assetFile(card, asset))
     }
 
     fun selectGraphNote(cardId: String) {
@@ -1389,28 +1418,19 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         MarkdownAiProposalGenerator { content ->
             val apiKey = apiKeyStore.get()?.takeIf { it.isNotBlank() }
                 ?: error("请先配置 DeepSeek API Key，再生成 Markdown AI 整理建议。")
-            val metadata = content.structuredMetadata
-            val analysis = cardAnalyzer.analyze(
-                apiKey = apiKey,
-                segments = metadata.sourceTranscript,
-                audioDurationMs = metadata.source.durationMs,
-                thinkingEnabled = thinkingEnabled,
-            )
-            val candidateDocument = NoteDocumentAiCandidateBuilder.fromAnalysis(
-                current = metadata,
-                analysis = analysis,
-                model = "deepseek-v4-flash",
-                signature = "deepseek-thinking=$thinkingEnabled",
-                updatedAtEpochMs = System.currentTimeMillis(),
-            )
-            MarkdownAiGenerationResult(
-                markdown = com.unarchive.android.card.NoteMarkdownProjection.render(candidateDocument),
-                model = candidateDocument.generation.model ?: "deepseek-v4-flash",
-            )
+            val response = com.unarchive.android.analyzer.LlmClient().chat(apiKey,
+                systemPrompt = com.unarchive.android.editor.MarkdownAiSourcePrompt.SYSTEM,
+                userPrompt = com.unarchive.android.editor.MarkdownAiSourcePrompt.user(content),
+                thinkingEnabled = thinkingEnabled)
+            com.unarchive.android.editor.MarkdownAiSourcePrompt.result(response, "deepseek-v4-flash")
         }
 
-    fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> =
-        knowledgeSyncRecordsForCards(listOf(card))
+    fun knowledgeSyncRecords(card: KnowledgeCard): List<KnowledgeSyncRecord> {
+        val fixed = destinationFormalRequest?.takeIf { isDestinationCard(card) }
+        if (fixed == null) return knowledgeSyncRecordsForCards(listOf(card))
+        return imaSyncStateRepository.list().filter { it.key.cardId == card.cardId && it.key.cardVersion == card.cardVersion &&
+            it.key.contentRevision == fixed.revision }.sortedByDescending { it.updatedAtEpochMs }
+    }
 
     internal fun knowledgeSyncRecordsForCards(cards: Collection<KnowledgeCard>): List<KnowledgeSyncRecord> {
         knowledgeSyncRevision
@@ -1441,7 +1461,12 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
      * The v2 revision remains the compatibility source until a card enters
      * the v3 editor; a recovery draft is deliberately ignored here.
      */
-    private fun formalMarkdownSnapshot(card: KnowledgeCard): FormalMarkdownSnapshot {
+    private fun formalMarkdownSnapshot(card: KnowledgeCard, fixedRequest: com.unarchive.android.editor.FormalOperationRequest? = null): FormalMarkdownSnapshot {
+        fixedRequest?.takeIf { it.cardId == card.cardId && it.cardVersion == card.cardVersion }?.let { request ->
+            val content = com.unarchive.android.editor.NoteExternalActionCoordinator.resolve(request, noteContentRepository)
+                ?: error("指定正式版本暂不可用，请返回笔记重新选择分享版本")
+            return FormalMarkdownSnapshotResolver.resolve(card, content)
+        }
         val document = noteDocuments.firstOrNull {
             it.cardId == card.cardId && it.generation.cardVersion == card.cardVersion
         }
@@ -1492,6 +1517,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
     fun openDestination(card: KnowledgeCard) {
+        destinationFormalRequest = null
         destinationCardId = card.cardId.value
         destinationCardVersion = card.cardVersion
         destinationCardError = null
@@ -1503,7 +1529,22 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         ensureImaTargetsLoaded()
     }
 
+    fun openFormalDestination(request: com.unarchive.android.editor.FormalOperationRequest) {
+        val card = knowledgeCardVersions.firstOrNull { it.cardId == request.cardId && it.cardVersion == request.cardVersion }
+        val content = com.unarchive.android.editor.NoteExternalActionCoordinator.resolve(request, noteContentRepository)
+        if (card == null || content == null) { reportDestinationCardMissing(request.cardId.value, request.cardVersion); return }
+        openDestination(card)
+        destinationFormalRequest = request
+    }
+
+    fun closeDestination() { destinationFormalRequest = null }
+    fun fixedDestinationError(): String? = destinationFormalRequest?.let { request ->
+        if (com.unarchive.android.editor.NoteExternalActionCoordinator.resolve(request, noteContentRepository) == null)
+            "指定正式版本暂不可用，请返回笔记重新选择分享版本" else null
+    }
+
     fun reportDestinationCardMissing(cardId: String, cardVersion: String?) {
+        destinationFormalRequest = null
         destinationCardId = cardId
         destinationCardVersion = cardVersion
         destinationCardError = if (cardVersion.isNullOrBlank()) {
@@ -1521,7 +1562,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     (destinationCardVersion == null || candidate.cardVersion == destinationCardVersion)
             }
         } ?: return null
-        return formalMarkdownSnapshot(card).card
+        return runCatching { formalMarkdownSnapshot(card, destinationFormalRequest).card }.getOrNull()
     }
 
     fun exportDestinationCard() {
@@ -1536,7 +1577,11 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun exportKnowledgeCard(card: KnowledgeCard) {
         if (generateJob != null || runningJob != null || exportJob != null || imaSyncing) return
-        val snapshot = formalMarkdownSnapshot(card)
+        val snapshot = runCatching { formalMarkdownSnapshot(card, destinationFormalRequest?.takeIf { isDestinationCard(card) }) }
+            .getOrElse {
+                destinationExportFailed = true; destinationExportMessage = "指定正式版本不可用，请返回笔记重新选择"
+                return
+            }
         val externalCard = snapshot.card
         if (isDestinationCard(externalCard)) {
             destinationExportMessage = ""
@@ -1558,7 +1603,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val artifact = withContext(Dispatchers.IO) {
                     KnowledgeCardExport.portable(externalCard) { asset ->
-                        knowledgeCardRepository.assetFile(externalCard, asset)?.readBytes()
+                        readFormalAsset(externalCard, asset)
                     }
                 }
                 withContext(Dispatchers.IO) {
@@ -2153,7 +2198,7 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                     val result = ImaSyncService(
                         client,
                         imaSyncStateRepository,
-                        readAsset = { asset -> knowledgeCardRepository.assetFile(externalCard, asset)?.takeIf(File::isFile)?.readBytes() },
+                        readAsset = { asset -> readFormalAsset(externalCard, asset) },
                     ).sync(
                         externalCard, kbId, folderId, targetName = targetName, folderName = folderName,
                         contentRevision = snapshot.markdownRevision,

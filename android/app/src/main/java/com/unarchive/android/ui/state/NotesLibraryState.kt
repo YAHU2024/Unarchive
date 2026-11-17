@@ -7,6 +7,7 @@ import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.KnowledgeSyncRecord
 import com.unarchive.android.card.KnowledgeSyncState
 import com.unarchive.android.card.NoteDocument
+import com.unarchive.android.card.FormalNotePresentation
 import com.unarchive.android.result.StoredVideoResult
 import java.time.Instant
 import java.time.ZoneId
@@ -79,6 +80,7 @@ internal fun buildNotesLibraryItems(
     thumbnailPaths: Map<Pair<KnowledgeCardId, String>, String> = emptyMap(),
     thumbnailCandidates: Map<Pair<KnowledgeCardId, String>, List<NotesThumbnailCandidate>> = emptyMap(),
     coverReloadRevisions: Map<NoteVersionKey, Long> = emptyMap(),
+    formalPresentations: Map<Pair<KnowledgeCardId, String>, FormalNotePresentation> = emptyMap(),
 ): List<NotesLibraryItem> {
     val cardsByVersion = noteCards.associateBy { it.cardId to it.cardVersion }
     val savedIds = noteDocuments.mapTo(mutableSetOf(), NoteDocument::cardId)
@@ -86,6 +88,7 @@ internal fun buildNotesLibraryItems(
     val notes = noteDocuments.map { document ->
         val card = cardsByVersion[document.cardId to document.generation.cardVersion]
         val key = document.cardId to document.generation.cardVersion
+        val formal = formalPresentations[key]
         val candidates = thumbnailCandidates[key]
             ?: card?.let { thumbnailCandidates[it.cardId to it.cardVersion] }
             ?: thumbnailPaths[key]?.let { listOf(NotesThumbnailCandidate(it, NotesThumbnailKind.CHAPTER_SCREENSHOT)) }
@@ -94,18 +97,19 @@ internal fun buildNotesLibraryItems(
         val currentRecords = syncRecords.filter { record ->
             record.key.cardId == document.cardId &&
                 record.key.cardVersion == document.generation.cardVersion &&
-                record.key.contentRevision == document.editing.contentRevision
+                record.key.contentRevision == (formal?.formalRevision ?: document.editing.contentRevision)
         }
         NotesLibraryItem(
             kind = NotesLibraryItemKind.SAVED_NOTE,
-            title = document.title,
-            summary = document.compactSummaryPreview(),
+            title = formal?.title ?: document.title,
+            summary = formal?.summary?.ifEmpty { "暂无摘要" } ?: document.compactSummaryPreview(),
             ownerName = document.source.ownerName,
             durationSeconds = document.source.durationMs / 1_000L,
             tags = document.tags,
             relationCount = document.relations.count { it.type == CardRelationType.USER_LINK },
-            updatedAtEpochMs = document.updatedAtEpochMs,
+            updatedAtEpochMs = formal?.updatedAtEpochMs ?: document.updatedAtEpochMs,
             localStatusLabel = when {
+                formal != null -> "本地已保存"
                 document.editing.lastSaveError != null -> "本地保存失败"
                 document.editing.dirty -> "有未保存更改"
                 else -> "本地已保存"
@@ -120,7 +124,7 @@ internal fun buildNotesLibraryItems(
             canRetryCover = card?.cardId?.platform == "bilibili" &&
                 (card.cover.state != CoverState.AVAILABLE || !coverCandidateAvailable),
             document = document,
-            compactStatus = document.compactStatus(currentRecords),
+            compactStatus = document.compactStatus(currentRecords, formal?.formalRevision),
             coverRetrySupported = card?.cardId?.platform == "bilibili",
             coverReloadRevision = coverReloadRevisions[NoteVersionKey(document.cardId, document.generation.cardVersion)] ?: 0L,
         )

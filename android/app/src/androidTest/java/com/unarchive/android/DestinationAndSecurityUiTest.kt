@@ -1,8 +1,12 @@
 package com.unarchive.android
 
 import android.content.Context
+import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
+import com.unarchive.android.card.FileKnowledgeCardRepository
+import com.unarchive.android.card.FileNoteContentRepository
 import com.unarchive.android.card.FileNoteDocumentRepository
+import com.unarchive.android.editor.NoteExternalActionCoordinator
 import java.io.File
 import org.junit.Before
 import org.junit.After
@@ -16,7 +20,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -59,21 +63,29 @@ import org.junit.Test
 
 class DestinationAndSecurityUiTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     private lateinit var fixtureDirectory: File
     private lateinit var noteRepository: FileNoteDocumentRepository
+    private lateinit var noteContentRepository: FileNoteContentRepository
+    private lateinit var cardRepository: FileKnowledgeCardRepository
 
     @Before
     fun prepareEditorRepository() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         fixtureDirectory = File(context.cacheDir, "destination-editor-route-${System.nanoTime()}")
-        noteRepository = FileNoteDocumentRepository(fixtureDirectory)
+        noteRepository = FileNoteDocumentRepository(File(fixtureDirectory, "v2"))
+        noteContentRepository = FileNoteContentRepository(File(fixtureDirectory, "v3"))
+        cardRepository = FileKnowledgeCardRepository(File(fixtureDirectory, "cards"))
         check(noteRepository.save(document()).isComplete)
+        cardRepository.save(card())
     }
 
     @After
     fun cleanEditorRepository() {
+        composeRule.runOnUiThread { composeRule.activity.viewModelStore.clear() }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        check(fixtureDirectory.canonicalPath.startsWith(context.cacheDir.canonicalPath + File.separator))
         fixtureDirectory.deleteRecursively()
     }
 
@@ -81,10 +93,19 @@ class DestinationAndSecurityUiTest {
         val document = document()
         composeRule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}")
             .performScrollTo().performClick()
-        composeRule.waitUntil(5_000L) {
-            composeRule.onAllNodesWithTag("note-editor-destinations").fetchSemanticsNodes().isNotEmpty()
+        composeRule.waitUntil(12_000L) {
+            composeRule.onAllNodesWithTag("markdown-note-edit").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag("note-editor-destinations").performClick()
+        composeRule.onNodeWithTag("markdown-note-edit").assertIsDisplayed()
+        composeRule.onNodeWithTag("markdown-editor-preview").assertDoesNotExist()
+        check(noteContentRepository.find(document.cardId, document.generation.cardVersion) != null)
+        check(noteContentRepository.migrationBackup(document.cardId, document.generation.cardVersion) != null)
+        composeRule.onNodeWithTag("markdown-note-more").performClick()
+        composeRule.onNodeWithText("分享与同步").performScrollTo().performClick()
+        composeRule.waitUntil(8_000L) {
+            composeRule.onAllNodesWithTag("destination-scroll").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("destination-back").assertIsDisplayed()
     }
 
     @Test
@@ -188,6 +209,8 @@ class DestinationAndSecurityUiTest {
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
                     noteDocumentRepository = noteRepository,
+                    noteContentRepository = noteContentRepository,
+                    knowledgeCardRepository = cardRepository,
                 )
             }
         }
@@ -230,6 +253,8 @@ class DestinationAndSecurityUiTest {
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
                     noteDocumentRepository = noteRepository,
+                    noteContentRepository = noteContentRepository,
+                    knowledgeCardRepository = cardRepository,
                 )
             }
         }
@@ -303,6 +328,8 @@ class DestinationAndSecurityUiTest {
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
                     noteDocumentRepository = noteRepository,
+                    noteContentRepository = noteContentRepository,
+                    knowledgeCardRepository = cardRepository,
                 )
             }
         }
@@ -353,6 +380,8 @@ class DestinationAndSecurityUiTest {
                     legacySettingsContent = { _ -> Text("legacy settings") },
                     securityContent = { _ -> Text("security") },
                     noteDocumentRepository = noteRepository,
+                    noteContentRepository = noteContentRepository,
+                    knowledgeCardRepository = cardRepository,
                 )
             }
         }
@@ -403,6 +432,8 @@ class DestinationAndSecurityUiTest {
                         legacySettingsContent = { _ -> Text("legacy settings") },
                         securityContent = { _ -> Text("security") },
                         noteDocumentRepository = noteRepository,
+                        noteContentRepository = noteContentRepository,
+                        knowledgeCardRepository = cardRepository,
                     )
                 }
             }
@@ -411,7 +442,13 @@ class DestinationAndSecurityUiTest {
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
         openDestinationsFromSavedRow()
         composeRule.runOnIdle {
-            assertEquals(listOf(DestinationEvent.OpenCard(card.cardId.value, card.cardVersion)), events)
+            val request = events.filterIsInstance<DestinationEvent.OpenFormal>().single().request
+            val formal = checkNotNull(noteContentRepository.find(card.cardId, card.cardVersion))
+            assertEquals(card.cardId, request.cardId)
+            assertEquals(card.cardVersion, request.cardVersion)
+            assertEquals(formal.markdownRevision, request.revision)
+            assertEquals(formal.markdown, NoteExternalActionCoordinator.resolve(request, noteContentRepository)?.markdown)
+            assertEquals(listOf(DestinationEvent.OpenFormal(request)), events)
         }
         // The larger Cupertino controls can put this lazy item outside composition.
         composeRule.onNodeWithTag("destination-scroll").performScrollToNode(hasTestTag("destination-sync-ima"))

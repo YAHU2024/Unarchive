@@ -1,12 +1,13 @@
 package com.unarchive.android
 
 import android.content.Context
+import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -23,6 +24,8 @@ import com.unarchive.android.card.CardRelationType
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.FileNoteContentRepository
 import com.unarchive.android.card.FileNoteDocumentRepository
+import com.unarchive.android.card.FileKnowledgeCardRepository
+import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
 import com.unarchive.android.card.NoteBlock
 import com.unarchive.android.card.NoteBlockOrigin
@@ -52,7 +55,7 @@ import java.io.File
 
 class NotesLibraryUiTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
     fun notesPresentationCanMountWithoutNavigationHostAndForwardsRefresh() {
@@ -210,17 +213,26 @@ class NotesLibraryUiTest {
         val document = document()
         val v2Repository = FileNoteDocumentRepository(File(directory, "v2"))
         val v3Repository = FileNoteContentRepository(File(directory, "v3"))
+        val cardRepository = FileKnowledgeCardRepository(File(directory, "cards"))
+        val card = KnowledgeCard(document.cardId, document.generation.cardVersion,
+            document.source.canonicalUrl, document.title, document.source.ownerName,
+            document.source.durationMs / 1_000L, document.source.timingAccuracy, document.sourceTranscript,
+            createdAtEpochMs = document.createdAtEpochMs, updatedAtEpochMs = document.updatedAtEpochMs,
+            markdown = "# ${document.title}\n\n跑步训练摘要")
         try {
             check(v2Repository.save(document).isComplete)
+            cardRepository.save(card)
+            val initial = state(document, material())
             composeRule.setContent {
                 UnarchiveTheme {
                     UnarchiveNavigationHost(
-                        state = state(document, material()),
+                        state = initial.copy(notes = initial.notes.copy(noteCards = listOf(card))),
                         onCreateEvent = {},
                         onNotesEvent = {},
                         onMeEvent = {},
                         noteDocumentRepository = v2Repository,
                         noteContentRepository = v3Repository,
+                        knowledgeCardRepository = cardRepository,
                         legacyTestContent = { _, _ -> Text("legacy test") },
                         legacyResultsContent = { _ -> Text("legacy results") },
                         legacyLogContent = { _ -> Text("legacy log") },
@@ -232,14 +244,33 @@ class NotesLibraryUiTest {
             composeRule.onNodeWithTag("bottom-nav-notes").performClick()
             composeRule.onNodeWithTag("notes-filter-saved").performClick()
             composeRule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}").performScrollTo().performClick()
-            composeRule.waitUntil(timeoutMillis = 2_500L) {
-                composeRule.onAllNodesWithTag("markdown-editor-preview").fetchSemanticsNodes().isNotEmpty()
+            composeRule.waitUntil(timeoutMillis = 12_000L) {
+                composeRule.onAllNodesWithTag("markdown-note-edit").fetchSemanticsNodes().isNotEmpty()
             }
 
-            composeRule.onNodeWithTag("markdown-editor-preview").assertIsDisplayed()
-            check(v3Repository.find(document.cardId, document.generation.cardVersion) != null)
+            composeRule.onNodeWithTag("markdown-note-edit").assertIsDisplayed()
+            composeRule.onNodeWithTag("markdown-editor-preview").assertDoesNotExist()
+            composeRule.onNodeWithTag("markdown-editor-edit-tab").assertDoesNotExist()
+            val migrated = checkNotNull(v3Repository.find(document.cardId, document.generation.cardVersion))
             check(v3Repository.migrationBackup(document.cardId, document.generation.cardVersion) != null)
+            composeRule.onNodeWithTag("markdown-note-more").performClick()
+            composeRule.onNodeWithText("全文源码").performScrollTo().performClick()
+            composeRule.waitUntil(8_000L) {
+                composeRule.onAllNodesWithTag("markdown-note-source-panel").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("markdown-note-source-panel").assertIsDisplayed()
+            composeRule.onNodeWithText("取消").performClick()
+            composeRule.waitUntil(8_000L) {
+                composeRule.onAllNodesWithTag("markdown-note-source-panel").fetchSemanticsNodes().isEmpty()
+            }
+            composeRule.onNodeWithTag("markdown-note-edit").assertIsDisplayed()
+            val afterViewing = checkNotNull(v3Repository.find(document.cardId, document.generation.cardVersion))
+            assertEquals(migrated.markdown, afterViewing.markdown)
+            assertEquals(migrated.markdownRevision, afterViewing.markdownRevision)
+            check(v3Repository.loadRecoveryState(document.cardId, document.generation.cardVersion).isEmpty())
         } finally {
+            composeRule.runOnUiThread { composeRule.activity.viewModelStore.clear() }
+            check(directory.canonicalPath.startsWith(context.cacheDir.canonicalPath + File.separator))
             directory.deleteRecursively()
         }
     }

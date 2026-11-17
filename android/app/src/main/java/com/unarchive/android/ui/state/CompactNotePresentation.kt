@@ -19,14 +19,14 @@ internal enum class CompactNoteStatus(val label: String, val isError: Boolean = 
 }
 
 /** A display projection only; local persistence and sync records remain unchanged. */
-internal fun NoteDocument.compactStatus(syncRecords: List<KnowledgeSyncRecord> = emptyList()): CompactNoteStatus {
-    if (editing.lastSaveError != null) return CompactNoteStatus.SAVE_FAILED
-    if (editing.dirty) return CompactNoteStatus.UNSAVED
+internal fun NoteDocument.compactStatus(syncRecords: List<KnowledgeSyncRecord> = emptyList(), formalRevision: Long? = null): CompactNoteStatus {
+    if (formalRevision == null && editing.lastSaveError != null) return CompactNoteStatus.SAVE_FAILED
+    if (formalRevision == null && editing.dirty) return CompactNoteStatus.UNSAVED
 
     val current = syncRecords.asSequence()
         .filter {
             it.key.cardId == cardId && it.key.cardVersion == generation.cardVersion &&
-                it.key.contentRevision == editing.contentRevision
+                it.key.contentRevision == (formalRevision ?: editing.contentRevision)
         }
         .groupBy(KnowledgeSyncRecord::key)
         .values

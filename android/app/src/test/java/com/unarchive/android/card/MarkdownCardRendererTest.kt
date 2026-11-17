@@ -171,17 +171,17 @@ class MarkdownCardRendererTest {
         val asset = CardAsset(
             assetId = "chapter-000",
             kind = CardAssetKind.CHAPTER_SCREENSHOT,
-            mimeType = "image/jpeg",
+            mimeType = "image/png",
             relativePath = "assets/chapter-000.jpg",
-            byteCount = 3,
-            sha256 = "unused",
+            byteCount = PortableImageFixtures.png.size.toLong(),
+            sha256 = KnowledgeCard.sha256(PortableImageFixtures.png),
             chapterIndex = 0,
         )
         val markdown = "# Note\n\n![](assets/chapter-000.jpg)"
 
-        val exported = MarkdownCardRenderer.embedAssets(markdown, listOf(asset)) { byteArrayOf(1, 2, 3) }
+        val exported = MarkdownCardRenderer.embedAssets(markdown, listOf(asset)) { PortableImageFixtures.png }
 
-        assertTrue(exported.contains("![](data:image/jpeg;base64,AQID)"))
+        assertTrue(exported.contains("![](data:image/png;base64,${java.util.Base64.getEncoder().encodeToString(PortableImageFixtures.png)})"))
         assertFalse(exported.contains("assets/chapter-000.jpg"))
     }
 
@@ -190,23 +190,23 @@ class MarkdownCardRendererTest {
         val present = CardAsset(
             assetId = "present",
             kind = CardAssetKind.CHAPTER_SCREENSHOT,
-            mimeType = "image/jpeg",
+            mimeType = "image/png",
             relativePath = "assets/present.jpg",
-            byteCount = 2,
-            sha256 = "unused",
+            byteCount = PortableImageFixtures.png.size.toLong(),
+            sha256 = KnowledgeCard.sha256(PortableImageFixtures.png),
         )
         val missing = present.copy(assetId = "missing", relativePath = "assets/missing.jpg")
 
         val result = MarkdownCardRenderer.embedAssetsWithStats(
             "![](assets/present.jpg)\n![](assets/missing.jpg)",
             listOf(present, missing),
-        ) { asset -> if (asset.assetId == "present") byteArrayOf(1, 2) else null }
+        ) { asset -> if (asset.assetId == "present") PortableImageFixtures.png else null }
 
         assertEquals(2, result.requestedCount)
         assertEquals(1, result.embeddedCount)
-        assertEquals(2L, result.embeddedBytes)
+        assertEquals(PortableImageFixtures.png.size.toLong(), result.embeddedBytes)
         assertEquals(1, result.missingCount)
-        assertTrue(result.markdown.contains("data:image/jpeg;base64,AQI="))
+        assertTrue(result.markdown.contains("data:image/png;base64,"))
         assertTrue(result.markdown.contains("assets/missing.jpg"))
     }
 }

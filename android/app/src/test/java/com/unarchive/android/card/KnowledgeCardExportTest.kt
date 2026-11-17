@@ -10,20 +10,20 @@ import org.junit.Test
 class KnowledgeCardExportTest {
     @Test
     fun portableEmbedsAssetsAndReportsUtf8Size() {
-        val asset = asset("chapter-1", "assets/chapter-1.jpg", byteCount = 3)
+        val asset = asset("chapter-1", "assets/chapter-1.png", byteCount = PortableImageFixtures.png.size.toLong())
         val card = card(
             title = "跑姿: 入门",
-            markdown = "# 跑姿\n\n![](assets/chapter-1.jpg)",
+            markdown = "# 跑姿\n\n![](assets/chapter-1.png)",
             assets = listOf(asset),
         )
 
-        val exported = KnowledgeCardExport.portable(card) { byteArrayOf(1, 2, 3) }
+        val exported = KnowledgeCardExport.portable(card) { PortableImageFixtures.png }
 
         assertEquals("跑姿 入门.md", exported.fileName)
-        assertTrue(exported.markdown.contains("data:image/jpeg;base64,AQID"))
-        assertFalse(exported.markdown.contains("assets/chapter-1.jpg"))
+        assertTrue(exported.markdown.contains("data:image/png;base64,"))
+        assertFalse(exported.markdown.contains("assets/chapter-1.png"))
         assertEquals(1, exported.assets.embeddedCount)
-        assertEquals(3L, exported.assets.embeddedBytes)
+        assertEquals(PortableImageFixtures.png.size.toLong(), exported.assets.embeddedBytes)
         assertEquals(0, exported.assets.missingCount)
         assertTrue(exported.isFullyPortable)
         assertEquals(exported.markdown.toByteArray(Charsets.UTF_8).size.toLong(), exported.markdownBytes)
@@ -60,10 +60,10 @@ class KnowledgeCardExportTest {
     private fun asset(assetId: String, path: String, byteCount: Long) = CardAsset(
         assetId = assetId,
         kind = CardAssetKind.CHAPTER_SCREENSHOT,
-        mimeType = "image/jpeg",
+        mimeType = "image/png",
         relativePath = path,
         byteCount = byteCount,
-        sha256 = "hash-$assetId",
+        sha256 = KnowledgeCard.sha256(PortableImageFixtures.png),
     )
 
     private fun card(

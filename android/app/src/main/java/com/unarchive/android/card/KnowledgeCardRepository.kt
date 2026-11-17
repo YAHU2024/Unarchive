@@ -116,7 +116,7 @@ data class KnowledgeCard(
     init {
         require(cardVersion.isNotBlank()) { "cardVersion cannot be blank" }
         require(canonicalUrl.isNotBlank()) { "canonicalUrl cannot be blank" }
-        require(markdown.isNotBlank()) { "markdown cannot be blank" }
+        // A complete schema-v3 formal snapshot may intentionally have no body.
     }
 
     companion object {

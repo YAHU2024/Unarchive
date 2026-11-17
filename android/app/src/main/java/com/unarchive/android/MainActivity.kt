@@ -205,6 +205,8 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         },
         onDestinationEvent = { event ->
             when (event) {
+                is DestinationEvent.OpenFormal -> vm.openFormalDestination(event.request)
+                DestinationEvent.Close -> vm.closeDestination()
                 is DestinationEvent.OpenCard -> vm.knowledgeCardVersions
                     .firstOrNull { it.cardId.value == event.cardId &&
                         (event.cardVersion == null || it.cardVersion == event.cardVersion) }
@@ -236,6 +238,7 @@ private fun UnarchiveApp(vm: UnarchiveViewModel) {
         noteDocumentRepository = vm.noteDocumentRepository,
         noteContentRepository = vm.noteContentRepository,
         knowledgeCardRepository = vm.knowledgeCardRepository,
+        onFormalNoteCommitted = { vm.refreshFormalNotePresentations() },
     )
 }
 

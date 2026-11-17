@@ -9,6 +9,7 @@ plugins {
 
 val sherpaAar = file("libs/sherpa_onnx-release.aar")
 val sherpaEnabled = sherpaAar.isFile
+val notePerformanceHarness = providers.gradleProperty("enableNotePerformanceHarness").orNull == "true"
 
 // Release signing: loaded from the git-ignored android/keystore.properties
 // (see android/README.md). Absent properties -> release builds are unsigned,
@@ -20,6 +21,7 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.unarchive.android"
+    testBuildType = providers.gradleProperty("notePerformanceBuildType").orElse("debug").get()
     compileSdk = 37
 
     defaultConfig {
@@ -29,7 +31,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = if (notePerformanceHarness)
+            "com.unarchive.android.editor.performance.NoteReleasePerformanceInstrumentation"
+        else "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -51,7 +55,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = if (notePerformanceHarness) signingConfigs.getByName("debug") else signingConfigs.findByName("release")
+            if (notePerformanceHarness) {
+                proguardFiles("note-performance-proguard.pro")
+                testProguardFiles("note-performance-test-proguard.pro")
+            }
         }
     }
 
@@ -106,6 +114,7 @@ android {
     }
 
     sourceSets {
+        if (notePerformanceHarness) getByName("main").kotlin.directories.add("src/performance/java")
         if (sherpaEnabled) {
             getByName("main").kotlin.directories.add("src/sherpa/java")
         }
@@ -140,6 +149,8 @@ dependencies {
     implementation("io.github.kyant0:backdrop:2.0.1")
     // D1.5 isolated Markdown reading spike. Keep this behind MarkdownProjectionRenderer.
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.28.0")
+    // Owned Markdown sessions use the parser explicitly, never a transitive editor codec.
+    implementation("org.jetbrains:markdown:0.7.9")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // QR code rendering for Bilibili scan-to-login.
     implementation("com.google.zxing:core:3.5.3")

@@ -270,6 +270,8 @@ internal sealed interface NotesEvent {
 }
 
 internal sealed interface DestinationEvent {
+    data object Close : DestinationEvent
+    data class OpenFormal(val request: com.unarchive.android.editor.FormalOperationRequest) : DestinationEvent
     data class OpenCard(val cardId: String, val cardVersion: String? = null) : DestinationEvent
     data object ExportMarkdown : DestinationEvent
     data object SyncIma : DestinationEvent
@@ -370,8 +372,9 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
         syncRecords = syncRecords,
         thumbnailCandidates = thumbnailCandidates,
         coverReloadRevisions = coverReloadRevisions,
+        formalPresentations = formalNotePresentations,
     )
-    val latestCreateDocument = selectedKnowledgeCard?.let { selected ->
+    val latestCreateDocument = libraryItems.firstOrNull { it.kind == NotesLibraryItemKind.SAVED_NOTE }?.document ?: selectedKnowledgeCard?.let { selected ->
         noteDocuments.firstOrNull {
             it.cardId == selected.cardId && it.generation.cardVersion == selected.cardVersion
         }
@@ -387,6 +390,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             syncRecords = syncRecords,
             thumbnailCandidates = thumbnailCandidates,
             coverReloadRevisions = coverReloadRevisions,
+            formalPresentations = formalNotePresentations,
         ).single()
     }
     return UnarchiveUiState(
@@ -456,7 +460,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
         notes = NotesUiState(
             noteCount = libraryItems.count { it.kind == NotesLibraryItemKind.SAVED_NOTE },
             materialCount = libraryItems.count { it.kind == NotesLibraryItemKind.MATERIAL },
-            noteTitles = effectiveDocuments.map { it.title }.take(6),
+            noteTitles = libraryItems.filter { it.kind == NotesLibraryItemKind.SAVED_NOTE }.map { it.title }.take(6),
             noteCards = knowledgeCardVersions,
             noteDocuments = effectiveDocuments,
             noteDocumentVersions = noteDocuments,
@@ -517,7 +521,7 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             }
             DestinationUiState(
                 card = card,
-                cardError = destinationCardError,
+                cardError = destinationCardError ?: fixedDestinationError(),
                 localSaved = card != null,
                 exportState = when {
                     exportJob?.isActive == true -> DestinationOperationState.RUNNING

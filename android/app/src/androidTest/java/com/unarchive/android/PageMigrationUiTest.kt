@@ -27,12 +27,15 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -46,12 +49,12 @@ import com.unarchive.android.asr.TranscriptTimingAccuracy
 import com.unarchive.android.card.CardStageState
 import com.unarchive.android.card.KnowledgeCard
 import com.unarchive.android.card.KnowledgeCardId
+import com.unarchive.android.card.FileNoteContentRepository
 import com.unarchive.android.card.NoteContentMigration
 import com.unarchive.android.card.NoteContentMigrationDecision
 import com.unarchive.android.editor.MarkdownAiProposalBuilder
-import com.unarchive.android.editor.MarkdownEditorEvent
-import com.unarchive.android.editor.MarkdownEditorScreen
-import com.unarchive.android.editor.MarkdownEditorUiState
+import com.unarchive.android.editor.FileMarkdownAiProposalRepository
+import com.unarchive.android.editor.ui.MarkdownNoteRoute
 import com.unarchive.android.ui.components.AdaptiveActions
 import com.unarchive.android.ui.components.UnarchiveButton
 import com.unarchive.android.ui.components.UnarchiveSecondaryButton
@@ -73,6 +76,7 @@ import com.unarchive.android.ui.theme.UnarchiveTheme
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -82,6 +86,15 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean, private val fontScale: Float) {
     @get:Rule val rule = createComposeRule()
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+    private val noteRoot = File(context.cacheDir, "page-note-production-${System.nanoTime()}")
+    private var noteOwner: androidx.lifecycle.ViewModelStoreOwner? = null
+
+    @After fun clearSyntheticNoteFixtures() {
+        rule.runOnIdle { noteOwner?.viewModelStore?.clear() }
+        check(noteRoot.canonicalPath.startsWith(context.cacheDir.canonicalPath + File.separator))
+        noteRoot.deleteRecursively()
+    }
 
     @Composable
     private fun Theme(content: @Composable () -> Unit) {
@@ -183,17 +196,32 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
     fun markdownCandidateKeepsBodyAndExplicitReviewActionsAtNativeDensity() {
         val content = fixtureContent(fixtureCard())
         val proposal = MarkdownAiProposalBuilder.create(content, "# AI 候选\n\n待确认的测试摘要。", "dc6-fixture", "fixture", 2_000L)
-        val events = mutableListOf<MarkdownEditorEvent>()
+        val repository = FileNoteContentRepository(File(noteRoot, "v3"))
+        check(repository.save(content).isComplete)
+        val proposals = FileMarkdownAiProposalRepository(File(noteRoot, "proposals"))
+        proposals.save(proposal)
         rule.setContent {
-            Theme { MarkdownEditorScreen(MarkdownEditorUiState(content, aiProposal = proposal), events::add, {}) }
+            noteOwner = androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current
+            Theme { MarkdownNoteRoute(content.cardId, content.cardVersion, repository, onBack = {}, aiRepository = proposals) }
         }
-        rule.onNodeWithTag("markdown-reading-surface").assertIsDisplayed()
-        rule.onNodeWithTag("markdown-editor-save").assertHeightIsAtLeast(48.dp).assertIsDisplayed()
-        rule.runOnIdle { assertTrue(events.isEmpty()) }
-        rule.onNodeWithTag("markdown-ai-proposal-apply").performScrollTo().assertIsDisplayed().performClick()
-        rule.onNodeWithTag("markdown-ai-proposal-reject").performScrollTo().assertIsDisplayed().performClick()
-        rule.runOnIdle { assertEquals(listOf(MarkdownEditorEvent.ApplyAiProposal, MarkdownEditorEvent.RejectAiProposal), events) }
+        rule.waitUntil(12_000) { rule.onAllNodesWithTag("markdown-note-edit").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("markdown-note-screen").assertIsDisplayed()
+        rule.onNodeWithTag("markdown-editor-edit-tab").assertDoesNotExist()
+        rule.onNodeWithTag("markdown-note-more").performClick()
+        rule.onNodeWithText("AI 整理", substring = true).performScrollTo().performClick()
+        rule.waitUntil(8_000) { rule.onAllNodesWithText("查看候选").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("查看候选").performClick()
+        rule.waitUntil(8_000) { rule.onAllNodesWithTag("ai-review-screen").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("ai-review-apply").assertHeightIsAtLeast(48.dp).assertIsEnabled()
+        rule.onNodeWithTag("ai-review-reject").assertHeightIsAtLeast(48.dp).assertIsEnabled()
         screenshot("markdown-candidate")
+        rule.onNodeWithTag("ai-review-back").performClick()
+        assertEquals(proposal.proposalId, proposals.find(content.cardId.value, content.cardVersion)?.proposalId)
+        rule.onNodeWithText("查看候选").performClick()
+        rule.onNodeWithTag("ai-review-reject").performClick()
+        rule.waitUntil(8_000) { proposals.find(content.cardId.value, content.cardVersion) == null }
+        assertEquals(content.markdown, repository.find(content.cardId, content.cardVersion)?.markdown)
+        assertEquals(0L, repository.find(content.cardId, content.cardVersion)?.markdownRevision)
     }
 
     @Test
@@ -286,7 +314,8 @@ class PageMigrationUiTest(private val dark: Boolean, private val glass: Boolean,
 
     private fun screenshot(page: String) {
         rule.waitForIdle()
-        val bitmap = rule.onRoot().captureToImage().asAndroidBitmap()
+        val bitmap = (if (page == "markdown-candidate") rule.onNodeWithTag("ai-review-screen") else rule.onRoot())
+            .captureToImage().asAndroidBitmap()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val directory = File(context.getExternalFilesDir(null), "d-c6-fixtures").apply { mkdirs() }
         val name = page + "-" + (if (dark) "dark" else "light") + "-glass-" + glass + "-font-" + fontScale + ".png"

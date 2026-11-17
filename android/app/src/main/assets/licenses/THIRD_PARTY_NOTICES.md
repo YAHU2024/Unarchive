@@ -17,7 +17,7 @@ in the dependency resource named in the table:
 | smart-exception Java/common | 0.2.1 | BSD-3-Clause (Taner Sener) | `smart-exception-BSD-3-Clause.txt` |
 | AndroidX / Jetpack Compose / Kotlin / kotlinx.coroutines | dependency versions in `android/app/build.gradle.kts` | Apache-2.0 | `apache-2.0.txt` |
 | multiplatform-markdown-renderer-m3 | 0.28.0; isolated Markdown reading Spike | Apache-2.0 + bundled MarkdownComposer MIT attribution | `apache-2.0.txt` and `multiplatform-markdown-renderer-NOTICE.txt` |
-| JetBrains Markdown parser | 0.7.3; transitive renderer dependency | Apache-2.0 | `apache-2.0.txt` |
+| JetBrains Markdown parser | 0.7.9; explicit source-session AST parser and renderer dependency | Apache-2.0 | `apache-2.0.txt` |
 | compose-cupertino | 0.1.0-alpha04 | Apache-2.0 | `apache-2.0.txt`; https://github.com/alexzhirkevich/compose-cupertino |
 | AndroidLiquidGlass / Backdrop | 2.0.1; upstream commit `65ab177e90e5c1d8c62e70cf7755841982da65f6` | Apache-2.0 | `apache-2.0.txt`; https://github.com/Kyant0/AndroidLiquidGlass |
 | Lucide selected icons | 0.468.0; adapted to `AppIcons.kt` | ISC / inherited Feather MIT portions | `Lucide.txt` |
