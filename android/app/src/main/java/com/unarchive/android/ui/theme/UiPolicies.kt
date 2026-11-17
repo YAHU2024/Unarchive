@@ -35,9 +35,11 @@ internal data class LiquidGlassPolicy(
             if (inputs.apiLevel < 31) {
                 return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = false)
             }
-            // D-C0 deliberately selects the project-owned simulation. Native blur and
-            // Android 13+ liquid glass remain D-C1/D-C2 adapter candidates.
-            return LiquidGlassPolicy(LiquidGlassMode.Simulated, usesTransparency = true)
+            return if (inputs.apiLevel >= 33) {
+                LiquidGlassPolicy(LiquidGlassMode.LiquidGlass, usesTransparency = true)
+            } else {
+                LiquidGlassPolicy(LiquidGlassMode.Blur, usesTransparency = true)
+            }
         }
 
         fun fromUserSetting(enabled: Boolean, apiLevel: Int = 35): LiquidGlassPolicy = resolve(
@@ -55,6 +57,12 @@ internal data class MotionPolicy(
     val springStiffness: Float = 500f,
     val springDampingRatio: Float = 0.82f,
     val pageTravelFraction: Float = 0.18f,
+    val secondaryPageEnterDurationMillis: Int = 320,
+    val secondaryPageExitDurationMillis: Int = 280,
+    val secondaryPageCancelDurationMillis: Int = 200,
+    val secondaryPageParallaxFraction: Float = 0.23f,
+    val automaticPageEnterDurationMillis: Int = 320,
+    val automaticPageExitDurationMillis: Int = 280,
     val stateTravelDp: Float = 8f,
     val stateInitialAlpha: Float = 0.92f,
     val sheetTravelDp: Float = 32f,
@@ -64,11 +72,17 @@ internal data class MotionPolicy(
     companion object {
         val Reduced = MotionPolicy(
             mode = MotionMode.Reduced,
-            shortDurationMillis = 90,
-            standardDurationMillis = 120,
+            shortDurationMillis = 0,
+            standardDurationMillis = 0,
             springStiffness = 1000f,
             springDampingRatio = 1f,
             pageTravelFraction = 0f,
+            secondaryPageEnterDurationMillis = 0,
+            secondaryPageExitDurationMillis = 0,
+            secondaryPageCancelDurationMillis = 0,
+            secondaryPageParallaxFraction = 0f,
+            automaticPageEnterDurationMillis = 0,
+            automaticPageExitDurationMillis = 0,
             stateTravelDp = 0f,
             stateInitialAlpha = 1f,
             sheetTravelDp = 0f,

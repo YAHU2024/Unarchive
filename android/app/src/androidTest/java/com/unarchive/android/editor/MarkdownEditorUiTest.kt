@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -34,6 +36,24 @@ import java.io.File
 class MarkdownEditorUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test fun deliveryOnlyOpensAfterFormalSave() {
+        var saveState by androidx.compose.runtime.mutableStateOf(MarkdownEditorSaveState.CLEAN)
+        var opened = 0
+        composeRule.setContent {
+            UnarchiveTheme {
+                MarkdownEditorScreen(state = MarkdownEditorUiState(content(), saveState = saveState), onEvent = {}, onBack = {}, onOpenDestinations = { opened++ })
+            }
+        }
+        composeRule.onNodeWithTag("note-editor-destinations").assertIsEnabled().performClick()
+        for (blocked in MarkdownEditorSaveState.entries.filter { it !in setOf(MarkdownEditorSaveState.CLEAN, MarkdownEditorSaveState.SAVED) }) {
+            composeRule.runOnIdle { saveState = blocked }
+            composeRule.onNodeWithTag("note-editor-destinations").assertIsNotEnabled()
+        }
+        composeRule.runOnIdle { saveState = MarkdownEditorSaveState.SAVED }
+        composeRule.onNodeWithTag("note-editor-destinations").assertIsEnabled().performClick()
+        composeRule.runOnIdle { org.junit.Assert.assertEquals(2, opened) }
+    }
 
     @Test
     fun rendersLivePreviewAndEditsHeadingInPlace() {

@@ -8,19 +8,26 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unarchive.android.card.SingleCardRecoveryState
+import com.unarchive.android.ui.components.GlassBottomSheet
 import com.unarchive.android.ui.components.SaveStateIndicator
 import com.unarchive.android.ui.components.StatusBannerTone
 import com.unarchive.android.ui.components.TaskProgressCard
@@ -62,7 +69,7 @@ class MotionStateUiTest {
         rule.runOnUiThread { stage = "AI 整理中" }
         rule.mainClock.advanceTimeByFrame()
         rule.onNodeWithText("AI 整理中").assertIsDisplayed()
-        rule.onNodeWithText("转写中").assertDoesNotExist()
+        rule.onAllNodesWithText("转写中").assertCountEquals(0)
         rule.onNodeWithText("取消处理").performClick()
         assertEquals(1, cancels)
         rule.mainClock.advanceTimeBy(2000)
@@ -102,7 +109,7 @@ class MotionStateUiTest {
         rule.mainClock.advanceTimeByFrame()
         rule.onNodeWithText("保存失败，草稿已保留").assertIsDisplayed()
         rule.onNodeWithText("请重试本地保存").assertIsDisplayed()
-        rule.onNodeWithText("本机已保存").assertDoesNotExist()
+        rule.onAllNodesWithText("本机已保存").assertCountEquals(0)
         rule.mainClock.autoAdvance = true
     }
 
@@ -121,7 +128,7 @@ class MotionStateUiTest {
         rule.runOnUiThread { label = "同步失败，本机内容仍在" }
         rule.mainClock.advanceTimeByFrame()
         rule.onNodeWithText("同步失败，本机内容仍在").assertIsDisplayed()
-        rule.onNodeWithText("本机已保存").assertDoesNotExist()
+        rule.onAllNodesWithText("本机已保存").assertCountEquals(0)
         rule.mainClock.advanceTimeBy(2000)
         rule.onNodeWithText("同步失败，本机内容仍在").assertIsDisplayed()
         rule.mainClock.autoAdvance = true
@@ -181,8 +188,93 @@ class MotionStateUiTest {
         rule.onNodeWithTag("glass-bottom-sheet").assertIsDisplayed()
         assertTrue(events.isEmpty())
         rule.onNodeWithTag("create-recovery-dismiss").performClick()
-        rule.onNodeWithTag("glass-bottom-sheet").assertDoesNotExist()
+        rule.onAllNodesWithTag("glass-bottom-sheet").assertCountEquals(0)
         assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun sheetDragBelowThresholdReboundsWithoutDismissing() {
+        var visible by mutableStateOf(true)
+        var dismissRequests = 0
+        rule.setContent {
+            UnarchiveTheme(liquidGlassEnabled = false, motionPolicy = MotionPolicy()) {
+                GlassBottomSheet(
+                    title = "拖动测试",
+                    visible = visible,
+                    onDismissRequest = { dismissRequests++; visible = false },
+                ) { Text("抽屉内容") }
+            }
+        }
+        rule.mainClock.autoAdvance = false
+        rule.onNodeWithTag("glass-bottom-sheet").assertIsDisplayed()
+        rule.onNodeWithTag("sheet-drag-handle").performTouchInput {
+            down(Offset(centerX, centerY))
+            moveTo(Offset(centerX, centerY + 48f), delayMillis = 120)
+            up()
+        }
+        rule.mainClock.advanceTimeBy(1000)
+        rule.onNodeWithTag("glass-bottom-sheet").assertIsDisplayed()
+        rule.runOnIdle {
+            assertTrue(visible)
+            assertEquals(0, dismissRequests)
+        }
+        rule.mainClock.autoAdvance = true
+    }
+
+    @Test
+    fun sheetDragPastThresholdDismissesOnlyTheSheet() {
+        var visible by mutableStateOf(true)
+        var dismissRequests = 0
+        rule.setContent {
+            UnarchiveTheme(liquidGlassEnabled = false, motionPolicy = MotionPolicy()) {
+                GlassBottomSheet(
+                    title = "拖动测试",
+                    visible = visible,
+                    onDismissRequest = { dismissRequests++; visible = false },
+                ) { Text("抽屉内容") }
+            }
+        }
+        rule.mainClock.autoAdvance = false
+        rule.onNodeWithTag("sheet-drag-handle").performTouchInput {
+            val distance = with(rule.density) { 120.dp.toPx() }
+            down(Offset(centerX, centerY))
+            moveTo(Offset(centerX, centerY + distance), delayMillis = 160)
+            up()
+        }
+        rule.runOnIdle { assertEquals(1, dismissRequests) }
+        rule.mainClock.advanceTimeBy(1000)
+        rule.onAllNodesWithTag("glass-bottom-sheet").assertCountEquals(0)
+        rule.runOnIdle { assertEquals(1, dismissRequests) }
+        rule.mainClock.autoAdvance = true
+    }
+
+    @Test
+    fun reopeningDuringSheetExitCancelsDismissedCallback() {
+        var visible by mutableStateOf(true)
+        var dismissed = 0
+        rule.setContent {
+            UnarchiveTheme(liquidGlassEnabled = false, motionPolicy = MotionPolicy()) {
+                GlassBottomSheet(
+                    title = "重开测试",
+                    visible = visible,
+                    onDismissRequest = { visible = false },
+                    onDismissed = { dismissed++ },
+                ) { Text("抽屉内容") }
+            }
+        }
+        rule.mainClock.autoAdvance = false
+        rule.runOnUiThread { visible = false }
+        rule.mainClock.advanceTimeBy(100)
+        rule.runOnUiThread { visible = true }
+        rule.mainClock.advanceTimeBy(1000)
+        rule.onNodeWithTag("glass-bottom-sheet").assertIsDisplayed()
+        rule.runOnIdle { assertEquals(0, dismissed) }
+
+        rule.runOnUiThread { visible = false }
+        rule.mainClock.advanceTimeBy(1000)
+        rule.onAllNodesWithTag("glass-bottom-sheet").assertCountEquals(0)
+        rule.runOnIdle { assertEquals(1, dismissed) }
+        rule.mainClock.autoAdvance = true
     }
 
     @Test
@@ -209,19 +301,25 @@ class MotionStateUiTest {
         rule.onNodeWithText("继续生成这篇笔记？").assertIsDisplayed().assertIsFocused()
         assertTrue(events.isEmpty())
         if (useBack) Espresso.pressBack() else rule.onNodeWithTag("create-recovery-dismiss").performClick()
-        rule.mainClock.advanceTimeByFrame()
-        rule.onNodeWithTag("glass-bottom-sheet").assertDoesNotExist()
+        if (useBack) rule.mainClock.advanceTimeBy((MotionPolicy().standardDurationMillis + 100).toLong())
+        else rule.mainClock.advanceTimeByFrame()
+        rule.onAllNodesWithTag("glass-bottom-sheet").assertCountEquals(0)
         assertTrue(events.isEmpty())
         rule.mainClock.autoAdvance = true
         openRecovery()
         rule.onNodeWithTag("create-recovery-confirm").performClick()
-        rule.onNodeWithTag("glass-bottom-sheet").assertDoesNotExist()
+        rule.onAllNodesWithTag("glass-bottom-sheet").assertCountEquals(0)
         rule.runOnIdle { assertEquals(listOf(CreateEvent.ResumeSingleCard("motion-recovery")), events) }
     }
 
     private fun openRecovery() {
         rule.onNodeWithTag("create-recovery-resume-motion-recovery").performScrollTo().performClick()
-        if (!rule.mainClock.autoAdvance) rule.mainClock.advanceTimeByFrame()
+        if (!rule.mainClock.autoAdvance) {
+            rule.mainClock.advanceTimeByFrame()
+            rule.waitForIdle()
+            rule.mainClock.advanceTimeBy(400)
+        }
+        rule.waitForIdle()
         rule.onNodeWithTag("glass-bottom-sheet").assertIsDisplayed()
     }
 

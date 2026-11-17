@@ -46,10 +46,22 @@ class UiPoliciesTest {
     }
 
     @Test
-    fun normalDeviceUsesSimulatedModeUntilAdapterIsAccepted() {
+    fun api33DeviceUsesAndroidLiquidGlassAdapter() {
         val policy = LiquidGlassPolicy.resolve(LiquidGlassInputs(userEnabled = true, apiLevel = 35))
-        assertEquals(LiquidGlassMode.Simulated, policy.mode)
+        assertEquals(LiquidGlassMode.LiquidGlass, policy.mode)
         assertTrue(policy.usesTransparency)
+    }
+
+    @Test
+    fun api31And32DevicesUseBlurAdapter() {
+        assertEquals(
+            LiquidGlassMode.Blur,
+            LiquidGlassPolicy.resolve(LiquidGlassInputs(userEnabled = true, apiLevel = 31)).mode,
+        )
+        assertEquals(
+            LiquidGlassMode.Blur,
+            LiquidGlassPolicy.resolve(LiquidGlassInputs(userEnabled = true, apiLevel = 32)).mode,
+        )
     }
 
     @Test
@@ -57,6 +69,8 @@ class UiPoliciesTest {
         assertEquals(MotionMode.Reduced, MotionPolicy.Reduced.mode)
         assertTrue(MotionPolicy.Reduced.shortDurationMillis < MotionPolicy().shortDurationMillis)
         assertTrue(MotionPolicy.Reduced.standardDurationMillis < MotionPolicy().standardDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.secondaryPageEnterDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.secondaryPageExitDurationMillis)
         assertFalse(MotionPolicy.Reduced.animateLayout)
         assertEquals(0f, MotionPolicy.Reduced.pageTravelFraction)
         assertEquals(0f, MotionPolicy.Reduced.stateTravelDp)
@@ -64,9 +78,32 @@ class UiPoliciesTest {
     }
 
     @Test
+    fun secondaryPageMotionUsesSlowerEntryAndQuickExitWithoutChangingSharedMotion() {
+        val policy = MotionPolicy()
+        assertEquals(320, policy.secondaryPageEnterDurationMillis)
+        assertEquals(280, policy.secondaryPageExitDurationMillis)
+        assertEquals(200, policy.secondaryPageCancelDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.secondaryPageCancelDurationMillis)
+        assertEquals(260, policy.standardDurationMillis)
+        assertEquals(180, policy.shortDurationMillis)
+        assertEquals(0.18f, policy.pageTravelFraction)
+        assertEquals(0.23f, policy.secondaryPageParallaxFraction)
+        assertEquals(0f, MotionPolicy.Reduced.secondaryPageParallaxFraction)
+    }
+
+    @Test
     fun systemRemoveAnimationsSelectsStaticSpatialPolicy() {
         assertEquals(MotionPolicy.Reduced, MotionPolicy.fromAnimatorDurationScale(0f))
         assertEquals(MotionMode.Full, MotionPolicy.fromAnimatorDurationScale(0.5f).mode)
         assertEquals(MotionMode.Full, MotionPolicy.fromAnimatorDurationScale(2f).mode)
+    }
+
+    @Test
+    fun automaticTimingIsSeparateFromInteractiveReleaseAndReducedMotion() {
+        val changed = MotionPolicy().copy(automaticPageExitDurationMillis = 500)
+        assertEquals(280, changed.secondaryPageExitDurationMillis)
+        assertEquals(200, changed.secondaryPageCancelDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.automaticPageEnterDurationMillis)
+        assertEquals(0, MotionPolicy.Reduced.automaticPageExitDurationMillis)
     }
 }

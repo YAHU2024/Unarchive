@@ -1,7 +1,11 @@
 package com.unarchive.android
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -37,6 +41,24 @@ import org.junit.Test
 class NoteEditorUiTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test fun deliveryOnlyOpensAfterFormalSave() {
+        var saveState by androidx.compose.runtime.mutableStateOf(NoteEditorSaveState.CLEAN)
+        var opened = 0
+        composeRule.setContent {
+            UnarchiveTheme {
+                NoteEditorScreen(state = NoteEditorUiState(document(), saveState = saveState), onEvent = {}, onBack = {}, onOpenDestinations = { opened++ })
+            }
+        }
+        composeRule.onNodeWithTag("note-editor-destinations").assertIsEnabled().performClick()
+        for (blocked in NoteEditorSaveState.entries.filter { it !in setOf(NoteEditorSaveState.CLEAN, NoteEditorSaveState.SAVED) }) {
+            composeRule.runOnIdle { saveState = blocked }
+            composeRule.onNodeWithTag("note-editor-destinations").assertIsNotEnabled()
+        }
+        composeRule.runOnIdle { saveState = NoteEditorSaveState.SAVED }
+        composeRule.onNodeWithTag("note-editor-destinations").assertIsEnabled().performClick()
+        composeRule.runOnIdle { org.junit.Assert.assertEquals(2, opened) }
+    }
 
     @Test
     fun reducedMotionSaveFailureKeepsLegacyDraftAndExplicitRetryReachable() {

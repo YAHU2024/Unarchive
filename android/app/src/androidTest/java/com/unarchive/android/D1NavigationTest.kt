@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
@@ -34,6 +35,7 @@ import com.unarchive.android.platform.bilibili.BilibiliFavoriteVideo
 import com.unarchive.android.platform.PlatformVideoId
 import com.unarchive.android.ui.theme.UnarchiveTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -96,7 +98,10 @@ class D1NavigationTest {
 
         composeRule.onNodeWithText("添加 B 站视频").assertIsDisplayed()
         composeRule.onNodeWithText("图谱").performClick()
-        composeRule.onNodeWithText("局部关系").assertIsDisplayed()
+        composeRule.onNodeWithTag("graph-empty-state").assertIsDisplayed()
+        composeRule.onNodeWithText("从一条关系开始").assertIsDisplayed()
+        composeRule.onNodeWithTag("graph-empty-open-notes").performClick()
+        composeRule.onNodeWithTag("bottom-nav-notes").assertIsSelected()
     }
 
     @Test
@@ -133,7 +138,7 @@ class D1NavigationTest {
         }
 
         composeRule.onNodeWithTag("bottom-nav-me").performClick()
-        composeRule.onNodeWithTag("me-more-tools").performClick()
+        composeRule.onNodeWithTag("me-more-tools").performScrollTo().performClick()
         composeRule.onNodeWithText("更多工具").assertIsDisplayed()
 
         composeRule.onNodeWithTag("more-tools-test").performClick()
@@ -173,7 +178,7 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithText("开始生成笔记草稿").performClick()
+        composeRule.onNodeWithTag("create-generate-note").performClick()
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.GenerateNoteDraft), events)
@@ -197,7 +202,7 @@ class D1NavigationTest {
             }
         }
 
-        composeRule.onNodeWithTag("create-batch-create").performClick()
+        composeRule.onNodeWithTag("create-batch-create").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("batch-create-screen").assertIsDisplayed()
         composeRule.onNodeWithText("批量创作").assertIsDisplayed()
     }
@@ -378,6 +383,9 @@ class D1NavigationTest {
         }
 
         composeRule.onNodeWithTag("create-cancel").performClick()
+        composeRule.onNodeWithTag("create-cancel-confirm").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(events.isEmpty()) }
+        composeRule.onNodeWithTag("create-cancel-confirm").performClick()
 
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.CancelProcessing), events)
@@ -408,6 +416,32 @@ class D1NavigationTest {
         composeRule.runOnIdle {
             assertEquals(listOf(CreateEvent.ResumeBatch), events)
         }
+    }
+
+    @Test
+    fun meAppearanceOpensExistingSettingsRouteWithoutDeveloperEvent() {
+        val events = mutableListOf<com.unarchive.android.ui.state.MeEvent>()
+        composeRule.setContent {
+            UnarchiveTheme {
+                UnarchiveNavigationHost(
+                    state = sampleState(), onCreateEvent = {}, onNotesEvent = {}, onMeEvent = events::add,
+                    legacyTestContent = { _, _ -> Text("legacy test") },
+                    legacyResultsContent = { _ -> Text("legacy results") },
+                    legacyLogContent = { _ -> Text("legacy log") },
+                    appearanceContent = { onBack ->
+                        LegacyRouteFrame(title = "legacy settings", onBack = onBack) {
+                            Text("界面效果设置样板", Modifier.testTag("appearance-settings"))
+                        }
+                    },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("bottom-nav-me").performClick()
+        composeRule.onNodeWithTag("me-appearance").performScrollTo().performClick()
+        composeRule.onNodeWithTag("appearance-settings").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("返回").performClick()
+        composeRule.onNodeWithTag("me-appearance").performScrollTo().assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(emptyList<com.unarchive.android.ui.state.MeEvent>(), events) }
     }
 
     private fun sampleState() = UnarchiveUiState(

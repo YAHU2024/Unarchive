@@ -5,9 +5,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -75,7 +77,61 @@ class NotesLibraryUiTest {
     }
 
     @Test
-    fun filtersNotesAndMaterialsAndExposesCompleteUserFacingMetadata() {
+    fun notesMoreMenuOpensAnchoredLibraryActionWithoutDuplicateRefresh() {
+        var openedLibrary = 0
+        composeRule.setContent {
+            UnarchiveTheme {
+                NotesScreen(
+                    state = state(document(), material()).notes,
+                    onEvent = {},
+                    onOpenLegacyNotes = { openedLibrary++ },
+                    onOpenEditor = {},
+                    onOpenDestinations = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("notes-more").performClick()
+        composeRule.onNodeWithTag("notes-more-menu").assertIsDisplayed()
+        composeRule.onNodeWithTag("notes-more-open-library-icon", useUnmergedTree = true).assertIsDisplayed()
+        val anchorBounds = composeRule.onNodeWithTag("notes-more").fetchSemanticsNode().boundsInWindow
+        val menuBounds = composeRule.onNodeWithTag("notes-more-menu").fetchSemanticsNode().boundsInWindow
+        val menuWidthDp = menuBounds.width / composeRule.density.density
+        org.junit.Assert.assertTrue(
+            "the menu should match the compact 176-224dp design width: $menuWidthDp dp",
+            menuWidthDp > 175f && menuWidthDp <= 224f && menuBounds.height > 0f,
+        )
+        composeRule.onNodeWithTag("notes-more-open-library").performClick()
+        composeRule.runOnIdle { assertEquals(1, openedLibrary) }
+    }
+
+    @Test
+    fun emptyRecentLibraryOpensCreateWithoutRefreshingOrOpeningLegacyLibrary() {
+        val events = mutableListOf<NotesEvent>()
+        var openedCreate = 0
+        var openedLegacy = 0
+        composeRule.setContent {
+            UnarchiveTheme {
+                NotesScreen(
+                    state = NotesUiState(0, 0, emptyList()),
+                    onEvent = events::add,
+                    onOpenLegacyNotes = { openedLegacy++ },
+                    onOpenEditor = {},
+                    onOpenDestinations = {},
+                    onOpenCreate = { openedCreate++ },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("notes-empty-action").performScrollTo().performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, openedCreate)
+            assertEquals(0, openedLegacy)
+            assertEquals(emptyList<NotesEvent>(), events)
+        }
+    }
+
+    @Test
+    fun filtersNotesAndMaterialsAndShowsCompactMetadataWithoutLosingDraftAction() {
         val events = mutableListOf<NotesEvent>()
         val document = document()
         val material = material()
@@ -98,10 +154,13 @@ class NotesLibraryUiTest {
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
         composeRule.onNodeWithText("跑步训练笔记").assertIsDisplayed()
         composeRule.onNodeWithText("待整理的视频素材").assertIsDisplayed()
-        composeRule.onNodeWithText("#跑步 #训练 · 1 个关联").assertIsDisplayed()
-        composeRule.onNodeWithText("本地已保存").assertIsDisplayed()
-        composeRule.onNodeWithText("ima · 学习资料 · 根目录 · 已同步；分享与去向中可查看详情，本地笔记仍可编辑。")
-            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("跑步训练摘要").assertIsDisplayed()
+        composeRule.onNodeWithText("#跑步 #训练 · 1 个关联").assertDoesNotExist()
+        composeRule.onNodeWithTag(
+            "notes-note-footer-note:${document.cardId.value}:${document.generation.cardVersion}",
+            useUnmergedTree = true,
+        ).assertIsDisplayed().assertTextContains("已保存", substring = true)
+        composeRule.onNodeWithContentDescription("ima · 学习资料 · 根目录 · 已同步").assertDoesNotExist()
         composeRule.onNodeWithText("kb-secret").assertDoesNotExist()
 
         composeRule.onNodeWithTag("notes-filter-saved").performClick()
@@ -172,7 +231,7 @@ class NotesLibraryUiTest {
 
             composeRule.onNodeWithTag("bottom-nav-notes").performClick()
             composeRule.onNodeWithTag("notes-filter-saved").performClick()
-            composeRule.onNodeWithText("编辑").performClick()
+            composeRule.onNodeWithTag("notes-item-note:${document.cardId.value}:${document.generation.cardVersion}").performScrollTo().performClick()
             composeRule.waitUntil(timeoutMillis = 2_500L) {
                 composeRule.onAllNodesWithTag("markdown-editor-preview").fetchSemanticsNodes().isNotEmpty()
             }

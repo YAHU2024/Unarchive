@@ -193,6 +193,8 @@ internal data class CreateUiState(
     val latestNoteDocument: NoteDocument? = null,
     val recoveries: List<RecoveryUiItem> = emptyList(),
     val processing: CreateProcessingUiState = CreateProcessingUiState(),
+    val latestNoteItem: NotesLibraryItem? = null,
+    val coverRetryKeys: Set<NoteVersionKey> = emptySet(),
 )
 
 internal data class RecoveryUiItem(
@@ -367,7 +369,26 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
         storedResults = storedResults,
         syncRecords = syncRecords,
         thumbnailCandidates = thumbnailCandidates,
+        coverReloadRevisions = coverReloadRevisions,
     )
+    val latestCreateDocument = selectedKnowledgeCard?.let { selected ->
+        noteDocuments.firstOrNull {
+            it.cardId == selected.cardId && it.generation.cardVersion == selected.cardVersion
+        }
+    } ?: noteDocuments.firstOrNull()
+    val latestCreateItem = latestCreateDocument?.let { document ->
+        libraryItems.firstOrNull {
+            it.document?.cardId == document.cardId &&
+                it.document.generation.cardVersion == document.generation.cardVersion
+        } ?: buildNotesLibraryItems(
+            noteDocuments = listOf(document),
+            noteCards = knowledgeCardVersions,
+            storedResults = emptyList(),
+            syncRecords = syncRecords,
+            thumbnailCandidates = thumbnailCandidates,
+            coverReloadRevisions = coverReloadRevisions,
+        ).single()
+    }
     return UnarchiveUiState(
         create = CreateUiState(
             videoReference = videoReference,
@@ -375,12 +396,9 @@ internal fun UnarchiveViewModel.toUnarchiveUiState(): UnarchiveUiState {
             statusMessage = status,
             hasRecovery = batchRecoveryAvailable,
             storedResultCount = storedResults.size,
-            latestNoteDocument = selectedKnowledgeCard?.let { selected ->
-                noteDocuments.firstOrNull {
-                    it.cardId == selected.cardId &&
-                        it.generation.cardVersion == selected.cardVersion
-                }
-            } ?: noteDocuments.firstOrNull(),
+            latestNoteDocument = latestCreateDocument,
+            latestNoteItem = latestCreateItem,
+            coverRetryKeys = coverRetryKeys,
             recoveries = singleCardRecoveries.mapNotNull { record ->
                 if (record.state !in setOf(
                         SingleCardRecoveryState.RECOVERABLE,

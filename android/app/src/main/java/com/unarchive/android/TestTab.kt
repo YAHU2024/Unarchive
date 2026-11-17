@@ -17,20 +17,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unarchive.android.log.AppLogger
 import com.unarchive.android.log.LogLevel
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
 
 @Composable
 internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
@@ -61,7 +62,7 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
 
         HorizontalDivider()
         Text("本地音频测试", style = MaterialTheme.typography.titleMedium)
-        OutlinedButton(
+        UnarchiveSecondaryButton(
             enabled = vm.runningJob == null,
             onClick = { audioPicker.launch(arrayOf("audio/*")) },
         ) {
@@ -70,13 +71,13 @@ internal fun TestTab(vm: UnarchiveViewModel, onOpenLogs: () -> Unit) {
         Text(vm.selectedAudioName ?: "未选择文件")
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
+            UnarchiveButton(
                 enabled = vm.selectedAudio != null && vm.runningJob == null,
                 onClick = { vm.startLocalAudio() },
             ) {
                 Text("开始测试")
             }
-            OutlinedButton(
+            UnarchiveSecondaryButton(
                 enabled = vm.runningJob != null,
                 onClick = { vm.cancel() },
             ) {

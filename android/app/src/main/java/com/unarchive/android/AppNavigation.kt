@@ -1,100 +1,110 @@
 package com.unarchive.android
 
 import android.net.Uri
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.items
-import androidx.compose.ui.Alignment
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.unarchive.android.ui.components.GlassSurface
-import com.unarchive.android.ui.components.GlassDock
-import com.unarchive.android.ui.components.GlassDockItem
+import com.unarchive.android.card.CardRelationType
+import com.unarchive.android.card.FileNoteContentRepository
+import com.unarchive.android.card.GraphRelationItem
+import com.unarchive.android.card.KnowledgeCardRepository
 import com.unarchive.android.card.NoteDocument
 import com.unarchive.android.card.NoteDocumentRepository
-import com.unarchive.android.card.FileNoteContentRepository
-import com.unarchive.android.card.KnowledgeCardRepository
-import com.unarchive.android.card.CardRelationType
-import com.unarchive.android.card.GraphRelationItem
-import com.unarchive.android.card.KnowledgeCard
-import com.unarchive.android.card.toNoteDocument
-import com.unarchive.android.editor.NoteEditorRoute
-import com.unarchive.android.editor.MarkdownEditorMigrationRoute
-import com.unarchive.android.editor.markdownImageOptions
-import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
-import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
-import com.unarchive.android.editor.NoteDocumentProposalRepository
 import com.unarchive.android.editor.MarkdownAiProposalGenerator
 import com.unarchive.android.editor.MarkdownAiProposalRepository
-import com.unarchive.android.ui.create.CreateScreen
+import com.unarchive.android.editor.MarkdownEditorMigrationRoute
+import com.unarchive.android.editor.NoteDocumentAiProposalGenerator
+import com.unarchive.android.editor.NoteDocumentProposalRepository
+import com.unarchive.android.editor.NoteEditorRoute
+import com.unarchive.android.editor.markdownImageOptions
 import com.unarchive.android.ui.batch.BatchCreateScreen
-import com.unarchive.android.ui.state.BatchCreateEvent
-import com.unarchive.android.ui.state.CreateEvent
-import com.unarchive.android.ui.state.DestinationEvent
-import com.unarchive.android.ui.state.DestinationUiState
-import com.unarchive.android.ui.state.GraphUiState
-import com.unarchive.android.ui.state.GraphEvent
-import com.unarchive.android.ui.state.GraphRelationOperationState
-import com.unarchive.android.ui.state.MeEvent
-import com.unarchive.android.ui.state.MeUiState
-import com.unarchive.android.ui.state.NotesEvent
-import com.unarchive.android.ui.state.NotesUiState
-import com.unarchive.android.ui.state.UnarchiveUiState
+import com.unarchive.android.ui.components.GlassDock
+import com.unarchive.android.ui.components.AppIcons
+import com.unarchive.android.ui.components.GlassScaffold
+import com.unarchive.android.ui.components.GlassDockItem
+import com.unarchive.android.ui.components.AppIcon
+import com.unarchive.android.ui.components.ReadingSurface
+import com.unarchive.android.ui.components.RootPage
+import com.unarchive.android.ui.components.NavigationPage
+import com.unarchive.android.ui.components.NavigationBackHost
+import com.unarchive.android.ui.components.AutomaticNavigationHost
+import com.unarchive.android.ui.components.UnarchiveButton
+import com.unarchive.android.ui.components.UnarchiveIconButton
+import com.unarchive.android.ui.components.UnarchiveTextButton
+import com.unarchive.android.ui.create.CreateScreen
 import com.unarchive.android.ui.destination.DestinationScreen
+import com.unarchive.android.ui.markdown.cardAssetMarkdownResolver
 import com.unarchive.android.ui.me.MeScreen
 import com.unarchive.android.ui.me.MoreToolsScreen
 import com.unarchive.android.ui.notes.NotesScreen
+import com.unarchive.android.ui.notes.NotesLibraryScreen
+import com.unarchive.android.ui.state.BatchCreateEvent
+import com.unarchive.android.ui.state.CreateEvent
+import com.unarchive.android.ui.state.DestinationEvent
+import com.unarchive.android.ui.state.GraphEvent
+import com.unarchive.android.ui.state.GraphRelationOperationState
+import com.unarchive.android.ui.state.GraphUiState
+import com.unarchive.android.ui.state.MeEvent
+import com.unarchive.android.ui.state.NotesEvent
+import com.unarchive.android.ui.state.UnarchiveUiState
 import com.unarchive.android.ui.theme.LocalMotionPolicy
 import com.unarchive.android.ui.theme.pageEnter
 import com.unarchive.android.ui.theme.pageExit
@@ -103,8 +113,13 @@ internal object AppRoutes {
     const val CREATE = "create"
     const val BATCH_CREATE = "create/batch"
     const val NOTES = "notes"
+    const val NOTES_LIBRARY = "notes/library"
     const val GRAPH = "graph"
     const val ME = "me"
+    const val APPEARANCE = "me/appearance"
+    const val SETTINGS = "me/settings"
+    const val SETTINGS_DETAIL = "me/settings/{section}"
+    const val SECURITY_DETAIL = "security/{profile}"
     const val MORE_TOOLS = "more-tools"
     const val NOTE_EDITOR = "notes/{platform}/{videoId}/{cardVersion}/edit"
     const val DESTINATIONS = "destinations/{platform}/{videoId}/{cardVersion}"
@@ -128,10 +143,10 @@ private data class MainDestination(
 )
 
 private val mainDestinations = listOf(
-    MainDestination(AppRoutes.CREATE, "创作", Icons.Filled.Edit),
-    MainDestination(AppRoutes.NOTES, "笔记", Icons.AutoMirrored.Filled.List),
-    MainDestination(AppRoutes.GRAPH, "图谱", Icons.Filled.Share),
-    MainDestination(AppRoutes.ME, "我的", Icons.Filled.AccountCircle),
+    MainDestination(AppRoutes.CREATE, "创作", AppIcons.Add),
+    MainDestination(AppRoutes.NOTES, "笔记", AppIcons.Notes),
+    MainDestination(AppRoutes.GRAPH, "图谱", AppIcons.GraphNodes),
+    MainDestination(AppRoutes.ME, "我的", AppIcons.Me),
 )
 
 private fun isMainDestinationChange(initialRoute: String?, targetRoute: String?): Boolean =
@@ -154,20 +169,24 @@ internal fun UnarchiveNavigationHost(
     legacyResultsContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("历史结果暂不可用")
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
     legacyLogContent: @Composable (onBack: () -> Unit) -> Unit,
     legacySettingsContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("设置暂不可用")
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
+    settingsDetailContent: (@Composable (section: com.unarchive.android.ui.settings.SettingsSection, onBack: () -> Unit) -> Unit)? = null,
+    appearanceContent: (@Composable (onBack: () -> Unit) -> Unit)? = null,
+    securityDetailContent: (@Composable (profile: com.unarchive.android.security.SecurityProfile, onBack: () -> Unit) -> Unit)? = null,
+    securityOverviewContent: (@Composable (onBack: () -> Unit, onOpen: (com.unarchive.android.security.SecurityProfile) -> Unit) -> Unit)? = null,
     securityContent: @Composable (onBack: () -> Unit) -> Unit = { onBack ->
         Column(modifier = Modifier.padding(20.dp)) {
             Text("安全设置暂不可用")
-            TextButton(onClick = onBack) { Text("返回") }
+            UnarchiveTextButton(onClick = onBack) { Text("返回") }
         }
     },
     noteDocumentRepository: NoteDocumentRepository? = null,
@@ -178,75 +197,91 @@ internal fun UnarchiveNavigationHost(
     val motion = LocalMotionPolicy.current
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    val backStack by navController.currentBackStack.collectAsState()
     val selectedMainRoute = mainDestinations
         .firstOrNull { it.route == currentRoute }
         ?.route
+    var lastMainIndex by rememberSaveable { mutableIntStateOf(0) }
+    val mainIndex = mainDestinations.indexOfFirst { it.route == selectedMainRoute }.takeIf { it >= 0 }
+    SideEffect { if (mainIndex != null) lastMainIndex = mainIndex }
+    val dockPosition = animateFloatAsState(
+        targetValue = (mainIndex ?: lastMainIndex).toFloat(),
+        animationSpec = if (motion.animateLayout) {
+            spring(dampingRatio = motion.springDampingRatio, stiffness = motion.springStiffness)
+        } else snap(),
+        label = "root-dock-selection",
+    )
 
-    Scaffold(
-        bottomBar = {
-            if (selectedMainRoute != null) {
-                AppBottomNavigation(
-                    currentRoute = selectedMainRoute,
-                    onSelect = { destination ->
-                        navController.navigateMainDestination(destination.route)
-                    },
-                )
-            }
-        },
-    ) { innerPadding ->
+    NavigationBackHost(
+        routeId = backStackEntry?.id,
+        enabled = currentRoute != null && selectedMainRoute == null,
+        canGoBack = navController.previousBackStackEntry != null,
+    ) { backGesture ->
+        AutomaticNavigationHost(
+            entryId = backStackEntry?.id,
+            backStackIds = backStack.map { it.id },
+            main = selectedMainRoute != null,
+            interactive = backGesture.seeking,
+        ) {
         NavHost(
             navController = navController,
             startDestination = AppRoutes.CREATE,
             enterTransition = {
-                motion.pageEnter(
+                if (!isMainDestinationChange(initialState.destination.route, targetState.destination.route)) EnterTransition.None else motion.pageEnter(
                     forward = true,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
                 )
             },
             exitTransition = {
-                motion.pageExit(
+                if (!isMainDestinationChange(initialState.destination.route, targetState.destination.route)) ExitTransition.None else motion.pageExit(
                     forward = true,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
                 )
             },
             popEnterTransition = {
-                motion.pageEnter(
+                if (!backGesture.seeking && !isMainDestinationChange(initialState.destination.route, targetState.destination.route)) EnterTransition.None else motion.pageEnter(
                     forward = false,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                    interactiveBack = backGesture.seeking,
                 )
             },
             popExitTransition = {
-                motion.pageExit(
+                if (!backGesture.seeking && !isMainDestinationChange(initialState.destination.route, targetState.destination.route)) ExitTransition.None else motion.pageExit(
                     forward = false,
                     mainDestination = isMainDestinationChange(initialState.destination.route, targetState.destination.route),
+                    interactiveBack = backGesture.seeking,
                 )
             },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
+            modifier = Modifier.fillMaxSize().clipToBounds(),
         ) {
-            composable(AppRoutes.CREATE) {
+            appPage(AppRoutes.CREATE, navController, selectedMainRoute, dockPosition) {
                 CreateScreen(
                     state = state.create,
                     onEvent = onCreateEvent,
                     onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
                     onOpenLatestNote = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
+                    onRetryCover = { document ->
+                        onNotesEvent(NotesEvent.RetryCover(
+                            document.cardId.platform, document.cardId.videoId, document.generation.cardVersion,
+                        ))
+                    },
                     onOpenBatchCreate = { navController.navigate(AppRoutes.BATCH_CREATE) },
                     onOpenDeveloperTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
                 )
             }
-            composable(AppRoutes.BATCH_CREATE) {
+            appPage(AppRoutes.BATCH_CREATE, navController, selectedMainRoute, dockPosition) {
                 BatchCreateScreen(
                     state = state.batchCreate,
                     onEvent = onBatchCreateEvent,
                     onBack = { navController.popBackStack() },
                 )
             }
-            composable(AppRoutes.NOTES) {
+            appPage(AppRoutes.NOTES, navController, selectedMainRoute, dockPosition) {
                 NotesScreen(
                     state = state.notes,
                     onEvent = onNotesEvent,
-                    onOpenLegacyNotes = { navController.navigate(AppRoutes.LEGACY_RESULTS) },
+                    onOpenCreate = { navController.navigateMainDestination(AppRoutes.CREATE) },
+                    onOpenLegacyNotes = { navController.navigate(AppRoutes.NOTES_LIBRARY) },
                     onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
                     onOpenDestinations = { document ->
                         onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
@@ -254,7 +289,18 @@ internal fun UnarchiveNavigationHost(
                     },
                 )
             }
-            composable(AppRoutes.NOTE_EDITOR) { entry ->
+            appPage(AppRoutes.NOTES_LIBRARY, navController, selectedMainRoute, dockPosition) {
+                NotesLibraryScreen(
+                    state = state.notes,
+                    onBack = { navController.popBackStack() },
+                    onOpenEditor = { document -> navController.navigate(AppRoutes.noteEditor(document)) },
+                    onOpenDestinations = { document ->
+                        onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                        navController.navigate(AppRoutes.destinations(document))
+                    },
+                )
+            }
+            appPage(AppRoutes.NOTE_EDITOR, navController, selectedMainRoute, dockPosition) { entry ->
                 val platform = entry.arguments?.getString("platform")
                 val videoId = entry.arguments?.getString("videoId")
                 val cardVersion = entry.arguments?.getString("cardVersion")
@@ -268,7 +314,7 @@ internal fun UnarchiveNavigationHost(
                 if (document == null || noteDocumentRepository == null) {
                     Column(modifier = Modifier.padding(20.dp)) {
                         Text("找不到这篇笔记")
-                        TextButton(onClick = { navController.popBackStack() }) { Text("返回") }
+                        UnarchiveTextButton(onClick = { navController.popBackStack() }) { Text("返回") }
                     }
                 } else if (noteContentRepository != null) {
                     val card = state.notes.noteCards.firstOrNull { candidate ->
@@ -282,6 +328,10 @@ internal fun UnarchiveNavigationHost(
                         aiProposalGenerator = markdownAiProposalGenerator,
                         aiProposalRepository = markdownAiProposalRepository,
                         onBack = { navController.popBackStack() },
+                        onOpenDestinations = {
+                            onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                            navController.navigate(AppRoutes.destinations(document))
+                        },
                         assetResolver = if (card != null && knowledgeCardRepository != null) {
                             cardAssetMarkdownResolver(card, knowledgeCardRepository)
                         } else {
@@ -296,13 +346,21 @@ internal fun UnarchiveNavigationHost(
                         aiProposalGenerator = aiProposalGenerator,
                         proposalRepository = proposalRepository,
                         onBack = { navController.popBackStack() },
+                        onOpenDestinations = {
+                            onDestinationEvent(DestinationEvent.OpenCard(document.cardId.value, document.generation.cardVersion))
+                            navController.navigate(AppRoutes.destinations(document))
+                        },
                     )
                 }
             }
-            composable(AppRoutes.GRAPH) {
-                GraphScreen(state = state.graph, onEvent = onGraphEvent)
+            appPage(AppRoutes.GRAPH, navController, selectedMainRoute, dockPosition) {
+                GraphScreen(
+                    state = state.graph,
+                    onEvent = onGraphEvent,
+                    onOpenNotes = { navController.navigateMainDestination(AppRoutes.NOTES) },
+                )
             }
-            composable(AppRoutes.DESTINATIONS) { entry ->
+            appPage(AppRoutes.DESTINATIONS, navController, selectedMainRoute, dockPosition) { entry ->
                 val card = state.destinations.card ?: run {
                     val platform = entry.arguments?.getString("platform")
                     val videoId = entry.arguments?.getString("videoId")
@@ -325,15 +383,18 @@ internal fun UnarchiveNavigationHost(
                     onOpenSecuritySettings = { navController.navigate(AppRoutes.SECURITY) },
                 )
             }
-            composable(AppRoutes.ME) {
+            appPage(AppRoutes.ME, navController, selectedMainRoute, dockPosition) {
                 MeScreen(
                     state = state.me,
                     onEvent = onMeEvent,
                     onOpenSecurity = { navController.navigate(AppRoutes.SECURITY) },
                     onOpenMoreTools = { navController.navigate(AppRoutes.MORE_TOOLS) },
+                    onOpenAppearance = { navController.navigate(AppRoutes.APPEARANCE) },
+                    onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) },
+                    noteCount = state.notes.noteCount,
                 )
             }
-            composable(AppRoutes.MORE_TOOLS) {
+            appPage(AppRoutes.MORE_TOOLS, navController, selectedMainRoute, dockPosition) {
                 MoreToolsScreen(
                     onBack = { navController.popBackStack() },
                     onOpenTest = { navController.navigate(AppRoutes.LEGACY_TEST) },
@@ -342,23 +403,73 @@ internal fun UnarchiveNavigationHost(
                     onOpenSettings = { navController.navigate(AppRoutes.LEGACY_SETTINGS) },
                 )
             }
-            composable(AppRoutes.LEGACY_TEST) {
+            appPage(AppRoutes.LEGACY_TEST, navController, selectedMainRoute, dockPosition) {
                 legacyTestContent(
                     { navController.popBackStack() },
                     { navController.navigate(AppRoutes.LEGACY_LOG) },
                 )
             }
-            composable(AppRoutes.LEGACY_RESULTS) {
+            appPage(AppRoutes.LEGACY_RESULTS, navController, selectedMainRoute, dockPosition) {
                 legacyResultsContent { navController.popBackStack() }
             }
-            composable(AppRoutes.LEGACY_LOG) {
+            appPage(AppRoutes.LEGACY_LOG, navController, selectedMainRoute, dockPosition) {
                 legacyLogContent { navController.popBackStack() }
             }
-            composable(AppRoutes.LEGACY_SETTINGS) {
+            appPage(AppRoutes.LEGACY_SETTINGS, navController, selectedMainRoute, dockPosition) {
                 legacySettingsContent { navController.popBackStack() }
             }
-            composable(AppRoutes.SECURITY) {
-                securityContent { navController.popBackStack() }
+            appPage(AppRoutes.APPEARANCE, navController, selectedMainRoute, dockPosition) {
+                if (appearanceContent != null) appearanceContent { navController.popBackStack() }
+                else legacySettingsContent { navController.popBackStack() }
+            }
+            appPage(AppRoutes.SETTINGS, navController, selectedMainRoute, dockPosition) {
+                com.unarchive.android.ui.settings.SettingsOverviewScreen({ navController.popBackStack() }) { section -> navController.navigate("me/settings/${section.name}") }
+            }
+            appPage(AppRoutes.SETTINGS_DETAIL, navController, selectedMainRoute, dockPosition) { entry ->
+                val section = com.unarchive.android.ui.settings.SettingsSection.entries.firstOrNull { it.name == entry.arguments?.getString("section") }
+                if (section != null && settingsDetailContent != null) settingsDetailContent(section) { navController.popBackStack() }
+                else legacySettingsContent { navController.popBackStack() }
+            }
+            appPage(AppRoutes.SECURITY, navController, selectedMainRoute, dockPosition) {
+                if (securityOverviewContent != null) securityOverviewContent({ navController.popBackStack() }) { profile -> navController.navigate("security/${profile.name}") }
+                else securityContent { navController.popBackStack() }
+            }
+            appPage(AppRoutes.SECURITY_DETAIL, navController, selectedMainRoute, dockPosition) { entry ->
+                val profile = com.unarchive.android.security.SecurityProfile.entries.firstOrNull { it.name == entry.arguments?.getString("profile") }
+                if (profile != null && securityDetailContent != null) securityDetailContent(profile) { navController.popBackStack() }
+                else securityContent { navController.popBackStack() }
+            }
+        }
+        }
+    }
+}
+
+/** Every route shares the same opaque page and depth treatment. */
+private fun NavGraphBuilder.appPage(
+    route: String,
+    navController: NavHostController,
+    selectedMainRoute: String?,
+    dockPosition: State<Float>,
+    content: @Composable (NavBackStackEntry) -> Unit,
+) {
+    composable(route) { entry ->
+        NavigationPage(route, entry.id) {
+            if (mainDestinations.any { it.route == route }) {
+                // Dock and its measured clearance belong to this page for the entire
+                // push/pop, including the period when it is visible underneath.
+                GlassScaffold(bottomBar = {
+                    AppBottomNavigation(selectedMainRoute ?: route, if (selectedMainRoute != null) dockPosition else null) { destination ->
+                        if (navController.currentBackStackEntry?.id == entry.id) {
+                            navController.navigateMainDestination(destination.route)
+                        }
+                    }
+                }) { content(entry) }
+            } else {
+                // Background/shadow stay full-window; only interactive content is inset.
+                // Consumption prevents nested Material Scaffolds from padding twice.
+                Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+                    content(entry)
+                }
             }
         }
     }
@@ -367,11 +478,13 @@ internal fun UnarchiveNavigationHost(
 @Composable
 private fun AppBottomNavigation(
     currentRoute: String,
+    dockPosition: State<Float>? = null,
     onSelect: (MainDestination) -> Unit,
 ) {
     GlassDock(
         selectedIndex = mainDestinations.indexOfFirst { it.route == currentRoute },
         itemCount = mainDestinations.size,
+        positionOverride = dockPosition?.value,
     ) {
         mainDestinations.forEach { destination ->
             GlassDockItem(
@@ -397,38 +510,28 @@ private fun NavHostController.navigateMainDestination(route: String) {
 private fun GraphScreen(
     state: GraphUiState,
     onEvent: (GraphEvent) -> Unit,
+    onOpenNotes: () -> Unit = {},
 ) {
-    LazyColumn(
+    RootPage(
+        title = "图谱",
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
             .testTag("graph-scroll"),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
     ) {
-        item {
-            Text("图谱", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "从一篇笔记出发，查看可解释、可编辑的一跳连接。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         if (state.noteDocuments.isEmpty()) {
             item {
-                GlassSurface(modifier = Modifier.fillMaxWidth(), emphasized = true) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("局部关系", style = MaterialTheme.typography.titleLarge)
-                        Text("还没有可显示的关系", style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            "先从创作页生成一篇笔记，再添加第一个关联。",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                GraphEmptyState(onOpenNotes = onOpenNotes)
             }
         } else {
             item {
-                Text("当前笔记", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "当前笔记",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -452,7 +555,10 @@ private fun GraphScreen(
                 }
             }
             item {
-                GraphPreview(state)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("局部关系", style = MaterialTheme.typography.titleMedium)
+                    GraphPreview(state)
+                }
             }
             item {
                 Row(
@@ -461,14 +567,14 @@ private fun GraphScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
-                        Text("关系列表", style = MaterialTheme.typography.titleLarge)
+                        Text("关系列表", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "${state.relationCount} 条一跳关系 · 图形不可用时仍可操作",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Button(
+                    UnarchiveButton(
                         onClick = { onEvent(GraphEvent.StartAddRelation) },
                         enabled = !state.isAddingRelation && state.noteDocuments.size > 1,
                         modifier = Modifier.testTag("graph-add-relation"),
@@ -482,7 +588,7 @@ private fun GraphScreen(
             }
             if (state.errorMessage != null) {
                 item {
-                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                    ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             state.errorMessage,
                             color = MaterialTheme.colorScheme.error,
@@ -506,7 +612,7 @@ private fun GraphScreen(
             }
             if (state.outgoing.isEmpty() && state.incoming.isEmpty()) {
                 item {
-                    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+                    ReadingSurface(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             "还没有可显示的关系。可以先添加一个用户关联。",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -526,11 +632,50 @@ private fun GraphScreen(
 }
 
 @Composable
+private fun GraphEmptyState(onOpenNotes: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(360.dp)
+            .testTag("graph-empty-state")
+            .semantics { contentDescription = "图谱为空：从一条关系开始" },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        AppIcon(
+            imageVector = AppIcons.GraphNodes,
+            contentDescription = null,
+            modifier = Modifier.height(48.dp).width(48.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "从一条关系开始",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "在笔记中连接相关内容，\n在这里查看它们的联系。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        UnarchiveButton(
+            onClick = onOpenNotes,
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .testTag("graph-empty-open-notes"),
+        ) {
+            Text("查看笔记")
+        }
+    }
+}
+
+@Composable
 private fun GraphPreview(state: GraphUiState) {
     val nodes = (state.outgoing.map { it.targetTitle } + state.incoming.map { it.sourceTitle })
         .distinct()
     val relationLineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .height(188.dp)
@@ -542,7 +687,6 @@ private fun GraphPreview(state: GraphUiState) {
                     else append("连接到：${nodes.joinToString("、") }。")
                 }
             },
-        emphasized = true,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Canvas(modifier = Modifier.matchParentSize()) {
@@ -601,7 +745,7 @@ private fun RelationEditor(
     state: GraphUiState,
     onEvent: (GraphEvent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth().testTag("graph-relation-editor")) {
+    ReadingSurface(modifier = Modifier.fillMaxWidth().testTag("graph-relation-editor")) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("添加用户关联", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -643,13 +787,13 @@ private fun RelationEditor(
                 minLines = 2,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
+                UnarchiveButton(
                     onClick = { onEvent(GraphEvent.CreateUserLink) },
                     enabled = state.targetCardIdInput.isNotBlank() &&
                         state.operationState != GraphRelationOperationState.SAVING,
                     modifier = Modifier.testTag("graph-save-relation"),
                 ) { Text(if (state.operationState == GraphRelationOperationState.SAVING) "保存中..." else "保存关联") }
-                TextButton(onClick = { onEvent(GraphEvent.CancelAddRelation) }) { Text("取消") }
+                UnarchiveTextButton(onClick = { onEvent(GraphEvent.CancelAddRelation) }) { Text("取消") }
             }
         }
     }
@@ -660,7 +804,7 @@ private fun RelationListItem(
     item: GraphRelationItem,
     onEvent: (GraphEvent) -> Unit,
 ) {
-    GlassSurface(
+    ReadingSurface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("graph-relation-${item.relation.relationId}")
@@ -692,7 +836,7 @@ private fun RelationListItem(
                     )
                 }
                 if (item.canDelete && item.direction.name == "OUTGOING") {
-                    TextButton(
+                    UnarchiveTextButton(
                         onClick = { onEvent(GraphEvent.RemoveRelation(item.relation.relationId)) },
                         modifier = Modifier.testTag("graph-remove-${item.relation.relationId}"),
                     ) { Text("移除") }
@@ -720,21 +864,7 @@ internal fun LegacyRouteFrame(
     onBack: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
-                )
-            }
-            Text(title, style = MaterialTheme.typography.titleLarge)
-        }
+    com.unarchive.android.ui.components.SecondaryPage(title, onBack) {
         content()
     }
 }

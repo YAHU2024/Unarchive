@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -96,8 +97,11 @@ class AccessibilityAndSecurityUiTest {
         }
 
         composeRule.onNodeWithTag("security-clear-confirm").assertIsDisplayed()
+        composeRule.mainClock.autoAdvance = false
         composeRule.onNodeWithTag("security-clear-cancel").performClick()
-        composeRule.onNodeWithTag("security-clear-confirm").assertDoesNotExist()
+        composeRule.onNodeWithTag("glass-bottom-sheet").assertIsDisplayed()
+        composeRule.mainClock.advanceTimeBy(1000)
+        composeRule.onAllNodesWithTag("security-clear-confirm").assertCountEquals(0)
         composeRule.onNodeWithContentDescription(
             "API Key，已配置，新值输入已掩码",
         ).assertExists()
@@ -106,6 +110,7 @@ class AccessibilityAndSecurityUiTest {
             assertFalse(confirmed)
             assertTrue(state.presence(SecureCredential.IMA_API_KEY).configured)
         }
+        composeRule.mainClock.autoAdvance = true
     }
 
     @Test

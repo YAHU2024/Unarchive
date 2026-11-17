@@ -12,7 +12,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -21,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.unarchive.android.result.LOCAL_AUDIO_PLATFORM
 import com.unarchive.android.result.StoredVideoResult
 import com.unarchive.android.result.asTimestamp
+import com.unarchive.android.ui.components.UnarchiveSecondaryButton
 import com.unarchive.android.ui.state.ResultsEvent
 import com.unarchive.android.ui.state.ResultsUiState
 
@@ -41,7 +41,7 @@ internal fun ResultsScreen(
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("历史结果", style = MaterialTheme.typography.headlineMedium)
-            OutlinedButton(onClick = onBack) { Text("返回") }
+            UnarchiveSecondaryButton(onClick = onBack) { Text("返回") }
         }
         if (state.results.isEmpty()) {
             Text(
@@ -52,7 +52,7 @@ internal fun ResultsScreen(
         } else {
             state.results.forEach { stored ->
                 val selected = stored.key == state.selected?.key
-                OutlinedButton(
+                UnarchiveSecondaryButton(
                     modifier = Modifier.fillMaxWidth().testTag("result-${stored.key.platform}-${stored.key.videoId}"),
                     enabled = !state.isBusy,
                     onClick = { onEvent(ResultsEvent.Select(stored.key)) },
@@ -84,25 +84,25 @@ private fun ResultDetail(
     Text("耗时：${stored.processingDurationMs} ms")
     Text("音频：${stored.audioDurationMs} ms")
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(enabled = !busy, onClick = { onEvent(ResultsEvent.CopyTranscript) }) { Text("复制转写") }
-        OutlinedButton(enabled = !busy, onClick = { onEvent(ResultsEvent.Share) }) { Text("分享") }
+        UnarchiveSecondaryButton(enabled = !busy, onClick = { onEvent(ResultsEvent.CopyTranscript) }) { Text("复制转写") }
+        UnarchiveSecondaryButton(enabled = !busy, onClick = { onEvent(ResultsEvent.Share) }) { Text("分享") }
     }
-    OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.ExportCard) }) {
+    UnarchiveSecondaryButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.ExportCard) }) {
         Text("导出卡片")
     }
     if (!isLocalAudio) {
-        OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.ExportAudio) }) {
+        UnarchiveSecondaryButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.ExportAudio) }) {
             Text("导出音频")
         }
     }
-    OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.GenerateCard) }) {
+    UnarchiveSecondaryButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.GenerateCard) }) {
         Text("生成 AI 卡片")
     }
     if (!isLocalAudio) {
-        OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.Rerun) }) {
+        UnarchiveSecondaryButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.Rerun) }) {
             Text("重新运行")
         }
-        OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.RerunFresh) }) {
+        UnarchiveSecondaryButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = { onEvent(ResultsEvent.RerunFresh) }) {
             Text("重新下载并运行")
         }
     }

@@ -381,6 +381,9 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
         private set
     internal var coverRetryKeys by mutableStateOf<Set<NoteVersionKey>>(emptySet())
         private set
+    /** Presentation invalidation survives a retry whose busy edge is never drawn. */
+    internal var coverReloadRevisions by mutableStateOf<Map<NoteVersionKey, Long>>(emptyMap())
+        private set
 
     var favoriteFolders by mutableStateOf<List<BilibiliFavoriteFolder>>(emptyList())
         private set
@@ -1177,6 +1180,8 @@ class UnarchiveViewModel(application: Application) : AndroidViewModel(applicatio
                 refreshKnowledgeCardsAndWait()
                 status = "封面暂不可用，可稍后重试。"
         } finally {
+                coverReloadRevisions = coverReloadRevisions +
+                    (versionKey to ((coverReloadRevisions[versionKey] ?: 0L) + 1L))
                 coverRetryKeys = coverRetryKeys - versionKey
                 coverRetryInProgress = coverRetryKeys.isNotEmpty()
             }

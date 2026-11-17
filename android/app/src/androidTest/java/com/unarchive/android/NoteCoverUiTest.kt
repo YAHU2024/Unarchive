@@ -6,13 +6,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithContentDescription
-import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unarchive.android.asr.TranscriptSegment
@@ -74,13 +75,16 @@ class NoteCoverUiTest {
 
         openNotes()
 
-        composeRule.onNodeWithContentDescription("${document.title} 的视频封面").assertIsDisplayed()
+        waitForTag("notes-thumbnail-cover-${stableKey(document)}")
+        composeRule.onNodeWithTag("notes-thumbnail-cover-${stableKey(document)}", useUnmergedTree = true)
+            .assertIsDisplayed()
         assertEquals(
             0,
-            composeRule.onAllNodesWithContentDescription("${document.title} 的章节截图")
+            composeRule.onAllNodesWithTag("notes-thumbnail-chapter_screenshot-${stableKey(document)}", useUnmergedTree = true)
                 .fetchSemanticsNodes().size,
         )
-        composeRule.onNodeWithText("重试封面").assertDoesNotExist()
+        composeRule.onNodeWithTag("notes-cover-retry-${stableKey(document)}", useUnmergedTree = true)
+            .assertDoesNotExist()
     }
 
     @Test
@@ -103,9 +107,14 @@ class NoteCoverUiTest {
 
         openNotes()
 
-        composeRule.onNodeWithContentDescription("${document.title} 的章节截图").assertIsDisplayed()
-        composeRule.onNodeWithText("封面文件缺失").assertIsDisplayed()
-        composeRule.onNodeWithTag("notes-cover-retry-${stableKey(document)}").performClick()
+        waitForTag("notes-thumbnail-chapter_screenshot-${stableKey(document)}")
+        composeRule.onNodeWithTag("notes-thumbnail-chapter_screenshot-${stableKey(document)}", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("notes-cover-status-${stableKey(document)}", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("封面文件缺失").assertDoesNotExist()
+        composeRule.onNodeWithTag("notes-cover-retry-${stableKey(document)}", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("note-editor-title").assertDoesNotExist()
         composeRule.runOnIdle {
             assertEquals(
                 listOf(NotesEvent.RetryCover("bilibili", document.cardId.videoId, CARD_VERSION)),
@@ -128,6 +137,7 @@ class NoteCoverUiTest {
 
         openNotes()
 
+        waitForTag("notes-cover-status-${stableKey(document)}")
         composeRule.onNodeWithTag(
             "notes-thumbnail-placeholder-${stableKey(document)}",
             useUnmergedTree = true,
@@ -138,7 +148,7 @@ class NoteCoverUiTest {
             "notes-cover-status-${stableKey(document)}",
             useUnmergedTree = true,
         ).performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("编辑").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("notes-item-${stableKey(document)}").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("note-editor-title").assertIsDisplayed()
     }
 
@@ -159,6 +169,7 @@ class NoteCoverUiTest {
 
         openNotes()
 
+        waitForTag("notes-cover-status-${stableKey(document)}")
         composeRule.onNodeWithTag(
             "notes-cover-status-${stableKey(document)}",
             useUnmergedTree = true,
@@ -172,9 +183,45 @@ class NoteCoverUiTest {
             .performScrollTo()
             .assertIsDisplayed()
             .performClick()
-        composeRule.onNodeWithText("编辑").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("note-editor-title").assertDoesNotExist()
+        composeRule.onNodeWithTag("notes-item-${stableKey(document)}").performScrollTo().assertIsDisplayed()
         composeRule.runOnIdle {
             assertEquals(1, events.filterIsInstance<NotesEvent.RetryCover>().size)
+        }
+    }
+
+    @Test
+    fun createAndNotesCoverActionsUseSamePreciseVersionWithoutOpeningEditor() {
+        val events = mutableListOf<NotesEvent>()
+        val document = document("SHARED_RETRY")
+        setNotesContent(
+            item(
+                document = document,
+                candidates = emptyList(),
+                coverStatusLabel = "封面暂不可用",
+                canRetryCover = true,
+            ),
+            onNotesEvent = events::add,
+            includeLatestNote = true,
+        )
+
+        composeRule.onNodeWithTag("create-screen")
+            .performScrollToNode(hasTestTag("create-latest-note"))
+        waitForTag("create-cover-retry-${stableKey(document)}")
+        composeRule.onNodeWithTag("create-cover-retry-${stableKey(document)}", useUnmergedTree = true)
+            .assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("create-latest-note").assertIsDisplayed()
+        composeRule.onNodeWithTag("note-editor-title").assertDoesNotExist()
+
+        openNotes()
+        waitForTag("notes-cover-retry-${stableKey(document)}")
+        composeRule.onNodeWithTag("notes-cover-retry-${stableKey(document)}", useUnmergedTree = true)
+            .assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("notes-item-${stableKey(document)}").assertIsDisplayed()
+        composeRule.onNodeWithTag("note-editor-title").assertDoesNotExist()
+        composeRule.runOnIdle {
+            val expected = NotesEvent.RetryCover("bilibili", document.cardId.videoId, CARD_VERSION)
+            assertEquals(listOf(expected, expected), events)
         }
     }
 
@@ -182,13 +229,18 @@ class NoteCoverUiTest {
         item: NotesLibraryItem,
         onNotesEvent: (NotesEvent) -> Unit = {},
         fontScale: Float = 1f,
+        includeLatestNote: Boolean = false,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val noteRepository = FileNoteDocumentRepository(
             File(context.cacheDir, "note-cover-ui-repository"),
         )
         val state = UnarchiveUiState(
-            create = CreateUiState("", false, "", false, 0),
+            create = CreateUiState(
+                "", false, "", false, 0,
+                latestNoteDocument = item.document.takeIf { includeLatestNote },
+                latestNoteItem = item.takeIf { includeLatestNote },
+            ),
             notes = NotesUiState(
                 noteCount = 1,
                 materialCount = 0,
@@ -220,6 +272,12 @@ class NoteCoverUiTest {
 
     private fun openNotes() {
         composeRule.onNodeWithTag("bottom-nav-notes").performClick()
+    }
+
+    private fun waitForTag(tag: String) {
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun item(

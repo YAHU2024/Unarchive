@@ -7,33 +7,44 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.unarchive.android.ui.theme.UnarchiveDimensions
+import io.github.alexzhirkevich.cupertino.ExperimentalCupertinoApi
+import io.github.alexzhirkevich.cupertino.section.CupertinoSection
+import io.github.alexzhirkevich.cupertino.section.SectionStyle
+import io.github.alexzhirkevich.cupertino.section.rememberSectionState
 
 /** A restrained grouped container with an optional section title. */
+@OptIn(ExperimentalCupertinoApi::class)
 @Composable
 internal fun InsetGroupedList(
     modifier: Modifier = Modifier,
@@ -47,15 +58,18 @@ internal fun InsetGroupedList(
         title?.let {
             Text(
                 text = it,
-                modifier = Modifier.padding(horizontal = 4.dp),
-                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp).semantics { heading() },
+                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Surface(
+        CupertinoSection(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            style = SectionStyle.InsetGrouped,
+            state = rememberSectionState(canCollapse = false),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Column(content = content)
         }
@@ -94,11 +108,11 @@ internal fun SettingsRow(
     ) {
         leadingContent?.invoke()
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(text = title, style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 24.sp))
             description?.let {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -114,15 +128,42 @@ internal fun IosLikeButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
-    Button(
+    UnarchiveButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier.heightIn(min = UnarchiveDimensions.touchTarget),
-        shape = RoundedCornerShape(16.dp),
-        contentPadding = ButtonDefaults.ContentPadding,
     ) {
+        leadingContent?.invoke()
+        if (leadingContent != null) Spacer(Modifier.width(8.dp))
         Text(text)
+    }
+}
+
+/** A text-first segment; caller owns selection and scrolling. */
+@Composable
+internal fun IosLikeFilterSegment(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        modifier = modifier.clip(shape)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
+            .heightIn(min = UnarchiveDimensions.touchTarget),
+        shape = shape,
+        color = if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant,
+        shadowElevation = if (selected) 2.dp else 0.dp,
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelLarge,
+        )
     }
 }
 
@@ -135,7 +176,7 @@ internal fun IosLikeIconButton(
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    IconButton(
+    UnarchiveIconButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
@@ -196,7 +237,7 @@ internal fun StatusBanner(
     }
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(com.unarchive.android.ui.theme.UnarchiveShapes.medium),
         color = MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
@@ -269,11 +310,13 @@ internal fun TaskProgressCard(
                     color = progressColor ?: MaterialTheme.colorScheme.primary,
                 )
             }
-            Text(
-                statusMessage,
-                modifier = statusModifier,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            statusMessage.takeIf(String::isNotBlank)?.let {
+                Text(
+                    it,
+                    modifier = statusModifier,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             checkpointMessage?.takeIf(String::isNotBlank)?.let {
                 Text(
                     it,
@@ -285,7 +328,7 @@ internal fun TaskProgressCard(
                 Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (showCancel && onCancel != null) {
-                OutlinedButton(
+                UnarchiveSecondaryButton(
                     onClick = onCancel,
                     enabled = cancelEnabled,
                     modifier = cancelModifier.heightIn(min = UnarchiveDimensions.touchTarget),
@@ -309,6 +352,7 @@ internal fun RecoveryCard(
     statusTone: StatusBannerTone = StatusBannerTone.WARNING,
     actionLabel: String? = null,
     actionEnabled: Boolean = true,
+    primaryAction: Boolean = true,
     actionModifier: Modifier = Modifier,
     onAction: (() -> Unit)? = null,
 ) {
@@ -335,17 +379,21 @@ internal fun RecoveryCard(
                 Text(it, color = MaterialTheme.colorScheme.error)
             }
             if (actionLabel != null && onAction != null) {
-                IosLikeButton(
-                    text = actionLabel,
-                    onClick = onAction,
-                    enabled = actionEnabled,
-                    modifier = actionModifier,
-                )
+                if (primaryAction) {
+                    IosLikeButton(
+                        text = actionLabel, onClick = onAction,
+                        enabled = actionEnabled, modifier = actionModifier,
+                    )
+                } else {
+                    UnarchiveSecondaryButton(onClick = onAction, enabled = actionEnabled, modifier = actionModifier) {
+                        Text(actionLabel)
+                    }
+                }
             }
         }
     }
     if (wrapSurface) {
-        GlassSurface(modifier = motionModifier, content = content)
+        ReadingSurface(modifier = motionModifier, content = content)
     } else {
         content()
     }
@@ -402,7 +450,7 @@ internal fun EmptyStateCard(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
-    GlassSurface(modifier = modifier, emphasized = true) {
+    ReadingSurface(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
